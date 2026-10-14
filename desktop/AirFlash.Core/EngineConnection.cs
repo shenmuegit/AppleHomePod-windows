@@ -67,11 +67,29 @@ public sealed class ProcessEngineConnection : IEngineConnection
     }
     public async ValueTask<JsonElement?> ReadAsync(CancellationToken cancellation)
     {
-        var line = await _process.StandardOutput.ReadLineAsync(cancellation).ConfigureAwait(false);
+        var line = await ReadBoundedLineAsync(_process.StandardOutput, cancellation).ConfigureAwait(false);
         if (line is null) return null;
-        if (line.Length > 65536) throw new IOException(L.Get("The audio engine returned too much data."));
         using var document = JsonDocument.Parse(line);
         return document.RootElement.Clone();
+    }
+    internal static async Task<string?> ReadBoundedLineAsync(TextReader reader, CancellationToken cancellation)
+    {
+        var line = new StringBuilder();
+        var character = new char[1];
+        while (await reader.ReadAsync(character.AsMemory(), cancellation).ConfigureAwait(false) != 0)
+        {
+            if (character[0] == '\n') return line.ToString().TrimEnd('\r');
+            if (line.Length == 65536)
+            {
+                // A CRLF terminator does not consume the payload allowance.
+                if (character[0] == '\r' &&
+                    (await reader.ReadAsync(character.AsMemory(), cancellation).ConfigureAwait(false) == 0 || character[0] == '\n'))
+                    return line.ToString();
+                throw new IOException(L.Get("The audio engine returned too much data."));
+            }
+            line.Append(character[0]);
+        }
+        return line.Length == 0 ? null : line.ToString().TrimEnd('\r');
     }
     public async ValueTask DisposeAsync()
     {

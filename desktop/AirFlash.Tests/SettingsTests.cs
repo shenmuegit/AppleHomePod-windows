@@ -5,6 +5,50 @@ namespace AirFlash.Tests;
 
 public sealed class SettingsTests
 {
+    [Theory]
+    [InlineData("bad host", 7000)]
+    [InlineData("speaker;command", 7000)]
+    [InlineData("::1", 7000)]
+    [InlineData("127.0.0.1", 0)]
+    [InlineData("127.0.0.1", 65536)]
+    public void ManualReceiverRejectsInvalidAddressBeforeSaving(string host, int port)
+    {
+        var settings = new AppSettings();
+        settings.ManualReceivers.Add(new("test", "Test", host, port));
+        Assert.NotNull(settings.Validate());
+    }
+
+    [Fact]
+    public void InvalidSettingsCannotOverwriteTheExistingFile()
+    {
+        var directory = NewDirectory(); var path = Path.Combine(directory, "config.json");
+        try
+        {
+            var store = new SettingsStore(path); store.Save(new());
+            var original = File.ReadAllText(path);
+            var invalid = new AppSettings(); invalid.ManualReceivers.Add(new("bad", "Bad", "bad host", 7000));
+            Assert.Throws<InvalidOperationException>(() => store.Save(invalid));
+            Assert.Equal(original, File.ReadAllText(path));
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    [Fact]
+    public void InvalidManualEntriesLoadDefaultsAndPreserveTheOriginalBackup()
+    {
+        var directory = NewDirectory(); var path = Path.Combine(directory, "config.json");
+        const string original = "{\"schema_version\":2,\"manual_receivers\":[null]}";
+        try
+        {
+            File.WriteAllText(path, original);
+            var store = new SettingsStore(path); var settings = store.Load();
+            Assert.Empty(settings.ManualReceivers); Assert.NotNull(store.LoadWarning);
+            store.Save(settings);
+            Assert.Equal(original, File.ReadAllText(path + ".pre-wpf.bak"));
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
     [Fact]
     public void CopyFromRetainsBoundObjectsAndRoundTripsAllSettings()
     {

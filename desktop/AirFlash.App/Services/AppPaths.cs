@@ -14,7 +14,7 @@ public static class AppPaths
     public static string LogDirectory => Path.Combine(DataDirectory, "logs");
     public static void Log(string message)
     {
-        try { lock (LogLock) { Directory.CreateDirectory(LogDirectory); File.AppendAllText(Path.Combine(LogDirectory, $"wpf-{DateTime.Today:yyyy-MM-dd}.log"), $"{DateTime.Now:O} {message}{Environment.NewLine}"); } }
+        try { lock (LogLock) { Directory.CreateDirectory(LogDirectory); File.AppendAllText(Path.Combine(LogDirectory, $"wpf-{DateTime.Today:yyyy-MM-dd}.log"), $"{DateTime.Now:O} {DiagnosticText.Protect(message)}{Environment.NewLine}"); } }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
     }

@@ -46,6 +46,7 @@ public sealed class SettingsStore(string path) : ISettingsStore
             settings.ReceiverAliases ??= [];
             settings.ReceiverAliases = settings.ReceiverAliases.Where(p => ReceiverIdentity.IsBroadcast(p.Key) && !string.IsNullOrWhiteSpace(p.Value) && ReceiverIdentity.IsBroadcast(p.Value))
                 .GroupBy(p => ReceiverIdentity.Normalize(p.Key)).ToDictionary(g => g.Key, g => ReceiverIdentity.Normalize(g.First().Value), StringComparer.Ordinal);
+            if (settings.Validate() is { } validationError) throw new JsonException(validationError);
             return settings;
         }
         catch (Exception error) when (error is JsonException or IOException or UnauthorizedAccessException or InvalidOperationException)
@@ -61,6 +62,7 @@ public sealed class SettingsStore(string path) : ISettingsStore
     }
     public void Save(AppSettings settings)
     {
+        if (settings.Validate() is { } validationError) throw new InvalidOperationException(validationError);
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         if (_migrationSource is not null)
         {

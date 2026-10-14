@@ -1,6 +1,5 @@
 using AirFlash.Core;
 using AirFlash.App.Services;
-using System.Net;
 using System.Windows;
 using System.Windows.Controls;
 namespace AirFlash.App.Ui;
@@ -26,7 +25,7 @@ public sealed class ManualReceiverDialog : Window
         var add = new Button { Content = L.Get("Add"), IsDefault = true, MinWidth = 74, Margin = new(0, 0, 8, 0) };
         add.Click += (_, _) =>
         {
-            if (Uri.CheckHostName(Host) == UriHostNameType.Unknown || Uri.CheckHostName(Host) == UriHostNameType.IPv6 || !int.TryParse(_port.Text, out var port) || port is < 1 or > 65535) { _error.Text = L.Get("Enter a valid IPv4 address or hostname and a port between 1 and 65535."); return; }
+            if (!int.TryParse(_port.Text, out var port) || !new ManualReceiver("", DeviceName, Host, port).IsValid) { _error.Text = L.Get("Enter a valid IPv4 address or hostname and a port between 1 and 65535."); return; }
             DialogResult = true;
         };
         buttons.Children.Add(add); buttons.Children.Add(cancel); panel.Children.Add(buttons); Content = panel;

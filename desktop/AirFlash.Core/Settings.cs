@@ -24,7 +24,12 @@ public sealed class ReceiverOptions : ObservableObject
     private double? _StandbySeconds = null;
     public double? StandbySeconds { get => _StandbySeconds; set => Set(ref _StandbySeconds, value); }
 }
-public sealed record ManualReceiver(string Id, string Name, string Host, int Port);
+public sealed record ManualReceiver(string Id, string Name, string Host, int Port)
+{
+    public bool IsValid => Port is >= 1 and <= 65535 &&
+        (Uri.CheckHostName(Host) == UriHostNameType.IPv4 ||
+         Uri.CheckHostName(Host) == UriHostNameType.Dns && !Host.All(c => char.IsAsciiDigit(c) || c == '.'));
+}
 public sealed class AppSettings : ObservableObject
 {
     public int SchemaVersion { get; set; } = 2;
@@ -106,7 +111,7 @@ public sealed class AppSettings : ObservableObject
             if (options.CustomBufferMs is < 0 or > 2000) return L.Get("Device custom latency must be between 0 and 2000 ms.");
             if (options.StandbySeconds is { } seconds && (!double.IsFinite(seconds) || seconds is < 5 or > 300)) return L.Get("Device standby threshold must be between 5 and 300 seconds.");
         }
-        if (ManualReceivers.Any(r => string.IsNullOrWhiteSpace(r.Host) || r.Port is < 1 or > 65535)) return L.Get("Manual receivers require a valid address and port (1–65535).");
+        if (ManualReceivers is null || ManualReceivers.Any(r => r is null || !r.IsValid)) return L.Get("Manual receivers require a valid address and port (1–65535).");
         return null;
     }
     public void CopyFrom(AppSettings source)

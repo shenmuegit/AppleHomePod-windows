@@ -211,6 +211,8 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
     public void AddManual(string name, string host, int port)
     {
         if (!CanEdit) return;
+        host = host?.Trim() ?? "";
+        if (!new ManualReceiver("", name, host, port).IsValid) { Error = L.Get("Manual receivers require a valid address and port (1–65535)."); return; }
         if (Draft.ManualReceivers.Any(r => r.Host.Equals(host, StringComparison.OrdinalIgnoreCase) && r.Port == port)) { Error = L.Get("This address and port have already been added."); return; }
         var id = $"{host.ToLowerInvariant()}:{port}";
         Draft.ManualReceivers.Add(new(id, string.IsNullOrWhiteSpace(name) ? host : name, host, port));

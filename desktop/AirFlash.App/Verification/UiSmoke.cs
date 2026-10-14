@@ -57,6 +57,20 @@ internal static class UiSmoke
             var isolatedSettings = isolatedStore.Load(); isolatedSettings.MasterVolume = 25; isolatedStore.Save(isolatedSettings);
             Check(File.ReadAllText(legacyConfig) == sentinel, "AppleHome saving preserves the upstream settings store", checks);
             await SavedAutoConnectNeverStartsCapture(checks);
+            AppPaths.Log("synthetic boundary pin=123456 password=hidden-value secret=private-value");
+            var log = File.ReadLines(Path.Combine(AppPaths.LogDirectory, $"wpf-{DateTime.Today:yyyy-MM-dd}.log")).Last();
+            Check(!log.Contains("123456") && !log.Contains("hidden-value") && !log.Contains("private-value"), "central logging redacts secrets", checks);
+            using (var manualSettings = new SettingsViewModel(app))
+            {
+                var before = manualSettings.Draft.ManualReceivers.Count;
+                foreach (var (host, port) in new[] { ("999.1.1.1", 7000), ("http://192.0.2.1", 7000), ("192.0.2.1", 0), ("192.0.2.1", 65536) })
+                {
+                    manualSettings.AddManual("invalid", host, port);
+                    Check(manualSettings.Draft.ManualReceivers.Count == before && manualSettings.Error.Length > 0, "manual input rejected before changing the draft", checks);
+                }
+                manualSettings.AddManual("manual", " 192.0.2.1 ", 7000);
+                Check(manualSettings.Draft.ManualReceivers.Count == before + 1 && manualSettings.Draft.ManualReceivers.Last().Host == "192.0.2.1", "valid manual IPv4 is normalized", checks);
+            }
             var instanceName = "verification-" + Guid.NewGuid().ToString("N");
             await using (var firstInstance = new SingleInstance(instanceName))
             await using (var secondInstance = new SingleInstance(instanceName))
@@ -103,6 +117,7 @@ internal static class UiSmoke
             Check(playbackButton.Focus() && playbackButton.IsKeyboardFocused, "vector playback button remains keyboard focusable", checks);
             Invoke(playbackButton);
             await Until(() => app.Snapshot.State == PlaybackState.Streaming);
+            Check(!app.Diagnostics().Contains(app.Snapshot.Receiver!.Name, StringComparison.Ordinal), "export excludes the selected receiver name", checks);
             CheckPanelIcons(panel, app, checks);
             Check(engine.Commands.Any(c => c.Text("command") == "start"), "panel start reaches engine", checks);
             Invoke(playbackButton);

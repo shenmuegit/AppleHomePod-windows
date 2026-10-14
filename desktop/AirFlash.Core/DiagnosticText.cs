@@ -3,6 +3,13 @@ namespace AirFlash.Core;
 
 public static class DiagnosticText
 {
+    public static string ForExport(string text)
+    {
+        const string labels = @"(?:host|address|ip_?address|(?:device|receiver)_?(?:id|name)|name|old_?id|new_?id)";
+        text = Regex.Replace(Protect(text), "(?i)(\"" + labels + @"""\s*:\s*)(""(?:\\.|[^""\\])*""|[0-9]+)", "$1\"[device]\"");
+        text = Regex.Replace(text, @"\b(?:\d{1,3}\.){3}\d{1,3}\b", "[address]");
+        return Regex.Replace(text, @"(?i)\b(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b", "[device]");
+    }
     public static string Protect(string text)
     {
         foreach (var folder in new[] { Environment.SpecialFolder.UserProfile, Environment.SpecialFolder.ApplicationData, Environment.SpecialFolder.LocalApplicationData })
