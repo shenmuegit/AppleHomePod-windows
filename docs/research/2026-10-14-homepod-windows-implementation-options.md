@@ -98,4 +98,4 @@ AirFlash 自己的 Windows 10 兼容文档也要求分别验证版本，明确�
 
 只读检查发现 Python 3.11.9 可用，默认 PATH 未发现 `cargo`，`dotnet --list-sdks` 没有列出 SDK；Visual Studio 安装器报告已有 C++ 工具组件。本文没有据此安装或修改工具链。正式实施时先检查可复用的运行时路径，再决定是否需要项目范围安装，避免改变全局默认工具。
 
-设计方向已获用户确认，正式规格已另存为[设计规格](../superpowers/specs/2026-10-14-windows-homepod-audio-design.md)，待用户审阅后再依照已指定的 Superpowers 架构流程形成实施计划。规格覆盖兼容状态、访问模式、声音状态恢复、验收标准、上游版本和许可证归属。正式实现优先沿用现有调用方、测试和打包方式，不先添加家庭设备控制、麦克风转发、自研驱动、EQ、云服务或账号系统。
+设计方向与[正式设计规格](../superpowers/specs/2026-10-14-windows-homepod-audio-design.md)均已获用户确认；[实施计划](../superpowers/plans/2026-10-14-windows-homepod-audio-implementation.md)已形成，待审阅与执行方式选择。规格覆盖兼容状态、访问模式、声音状态恢复、验收标准、上游版本和许可证归属。正式实现优先沿用现有调用方、测试和打包方式，不先添加家庭设备控制、麦克风转发、自研驱动、EQ、云服务或账号系统。
