@@ -86,7 +86,7 @@
 
 包自身 `--compat-check` 退出 0，UI smoke 577 项通过；静态审核为 450 个映像、1555 个未确认导入、无阻断项，仍保留原生 `qualification=partial` 与 `production_ready=false`。这不是全硬件生产认证。
 
-正常启动后由用户手动点击开始，播放 Windows 音乐约 20 秒，随后点击停止。用户确认“HomePod 能播放音乐，停止后电脑声音正常”。应用日志确认使用 2000 ms 目标；停止后恢复文件 schema 1 的 entries 为空，应用拥有的原生引擎子进程数为 0。完整本机证据为 `package-user-acceptance.json`、`package-compat.json`、`package-ui-smoke.json`。这条路径使用实际 WASAPI 播放端点采集，未使用麦克风或参考库采集应用。
+正常启动后由用户手动点击开始、播放 Windows 音乐，随后点击停止。请求用户观察约 20 秒，实际持续时长未独立计量。用户确认“HomePod 能播放音乐，停止后电脑声音正常”。应用日志确认使用 2000 ms 目标；停止后恢复文件 schema 1 的 entries 为空，应用拥有的原生引擎子进程数为 0。完整本机证据为 `package-user-acceptance.json`、`package-compat.json`、`package-ui-smoke.json`。这条路径使用实际 WASAPI 播放端点采集，未使用麦克风或参考库采集应用。
 
 自动重连默认关闭。用户选择暂缓真实断网测试，该项保持待验收，没有主动关闭网络或改变防火墙。Windows 回调与受控崩溃恢复另有前述真实端点测试；不能将其等同于真实网络故障下的播放验证。
 
