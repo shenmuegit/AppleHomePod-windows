@@ -5,6 +5,11 @@ public sealed record Receiver(string Id, string Name, string Address, int Port =
 {
     public string DeviceId { get; init; } = "";
     public string Model { get; init; } = "";
+    public string SoftwareVersion { get; init; } = "";
+    public string GroupId { get; init; } = "";
+    public bool FollowReceiverClock => Model.StartsWith("AudioAccessory", StringComparison.Ordinal) &&
+        int.TryParse(SoftwareVersion.Split('.')[0], out var major) && major >= 27 &&
+        IsLeader && !IsGroup && StereoId.Length == 0 && GroupId.Length == 0;
     public string StereoId { get; init; } = "";
     public string GroupName { get; init; } = "";
     public bool IsLeader { get; init; }
@@ -61,6 +66,8 @@ public static class ReceiverAggregator
             {
                 DeviceId = identity,
                 Model = group.Select(Model).FirstOrDefault(v => v.Length > 0) ?? "",
+                SoftwareVersion = Field(group, "osvers"),
+                GroupId = Field(group, "pgid"),
                 StereoId = Field(group, "tsid"),
                 GroupName = Field(group, "gpn"),
                 IsLeader = Field(group, "igl") == "1",

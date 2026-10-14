@@ -294,7 +294,7 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
                 {
                     var host = await ResolveAsync(member.Address, cancellation).ConfigureAwait(false);
                     volumeHost ??= host;
-                    peers.Add(new { host, port = member.Port, codecs = member.Codecs.Select(x => (int)x).ToArray() });
+                    peers.Add(new { host, port = member.Port, codecs = member.Codecs.Select(x => (int)x).ToArray(), follow_receiver_clock = !receiver.IsGroup && member.FollowReceiverClock });
                 }
                 await using var connection = factory.Open();
                 var session = Guid.NewGuid().ToString("N");

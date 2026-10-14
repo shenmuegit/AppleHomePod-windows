@@ -5,6 +5,24 @@ namespace AirFlash.Tests;
 
 public sealed class ReceiverIdentityTests
 {
+    [Theory]
+    [InlineData("AudioAccessory5,1", "27.0", true, "", "", true)]
+    [InlineData("AudioAccessory6,1", "27.1", true, "", "", true)]
+    [InlineData("AudioAccessory5,1", "26.5", true, "", "", false)]
+    [InlineData("AudioAccessory5,1", "", true, "", "", false)]
+    [InlineData("AudioAccessory5,1", "27.0", false, "", "", false)]
+    [InlineData("AudioAccessory5,1", "27.0", true, "pair", "", false)]
+    [InlineData("AudioAccessory5,1", "27.0", true, "", "tv-group", false)]
+    [InlineData("AppleTV14,1", "27.0", true, "", "", false)]
+    public void StandaloneHomePod27RetainsClockCapability(string model, string version, bool leader, string stereo, string group, bool follows)
+    {
+        var service = Service(model: model, stereo: stereo);
+        var txt = service.Txt.ToDictionary(p => p.Key, p => p.Value);
+        txt["osvers"] = version; txt["igl"] = leader ? "1" : "0"; txt["pgid"] = group;
+        var receiver = Assert.Single(ReceiverAggregator.Build([service with { Txt = txt }]));
+        Assert.Equal(version, receiver.SoftwareVersion);
+        Assert.Equal(follows, receiver.FollowReceiverClock);
+    }
     private static ServiceRecord Service(string type = "_airplay", string? id = "AA:BB:CC:DD:EE:01", string host = "192.0.2.10", int port = 7000, string model = "AudioAccessory6,1", string stereo = "", string key = "")
         => new(type == "_raop" ? (id ?? "AABBCCDDEE01") + "@Office._raop._tcp.local" : "Office._airplay._tcp.local", type + "._tcp.local", host, port,
             new Dictionary<string, string> { ["deviceid"] = id ?? "", ["model"] = model, ["tsid"] = stereo, ["pk"] = key, ["cn"] = "0,1,2,3" });

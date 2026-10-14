@@ -3,9 +3,10 @@
 use crate::rtsp::Cancellation;
 use anyhow::{Context, Result};
 use std::{
+    collections::BTreeMap,
     net::{IpAddr, UdpSocket},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
     thread::{self, JoinHandle},
@@ -51,6 +52,55 @@ fn timestamp(out: &mut [u8], ns: u64) {
     out[..6].copy_from_slice(&(ns / 1_000_000_000).to_be_bytes()[2..]);
     out[6..10].copy_from_slice(&((ns % 1_000_000_000) as u32).to_be_bytes());
 }
+#[derive(Default)]
+struct ReceiverClock {
+    id: u64,
+    source: Option<[u8; 10]>,
+    pending: Option<(u16, u64, i128)>,
+    offset: Option<i128>,
+    last_sync_ns: u64,
+}
+impl ReceiverClock {
+    fn observe(&mut self, packet: &[u8], received_ns: u64) {
+        if packet.len() < 34 || packet[0] >> 4 != 1 || packet[1] & 0xf != 2 { return; }
+        let length = u16::from_be_bytes([packet[2], packet[3]]) as usize;
+        if length > packet.len() || length < 34 { return; }
+        let source: [u8; 10] = packet[20..30].try_into().unwrap();
+        let sequence = u16::from_be_bytes([packet[30], packet[31]]);
+        let correction = i128::from(i64::from_be_bytes(packet[8..16].try_into().unwrap())) / 65536;
+        match packet[0] & 0xf {
+            11 if length >= 64 => {
+                let id = u64::from_be_bytes(packet[53..61].try_into().unwrap());
+                if id == 0 { return; }
+                if self.id != id || self.source != Some(source) { *self = Self::default(); }
+                self.id = id; self.source = Some(source);
+            }
+            0 if length >= 44 && self.source == Some(source) && packet[6] & 2 != 0 => {
+                self.pending = Some((sequence, received_ns, correction));
+            }
+            8 if length >= 44 && self.source == Some(source) => {
+                let Some((expected, local_ns, sync_correction)) = self.pending else { return; };
+                if sequence != expected || received_ns.saturating_sub(local_ns) > 250_000_000 { return; }
+                let mut seconds = [0u8; 8]; seconds[2..].copy_from_slice(&packet[34..40]);
+                let nanos = u32::from_be_bytes(packet[40..44].try_into().unwrap());
+                if nanos >= 1_000_000_000 { return; }
+                let Some(remote_ns) = u64::from_be_bytes(seconds).checked_mul(1_000_000_000)
+                    .and_then(|s| s.checked_add(u64::from(nanos))) else { return; };
+                let offset = i128::from(remote_ns) + sync_correction + correction - i128::from(local_ns);
+                self.offset = Some(match self.offset {
+                    Some(previous) if (offset - previous).abs() <= 1_000_000 => (7 * previous + offset) / 8,
+                    _ => offset,
+                });
+                self.last_sync_ns = local_ns; self.pending = None;
+            }
+            _ => {}
+        }
+    }
+    fn sample(&self, now_ns: u64) -> Option<(u64, u64)> {
+        if now_ns.saturating_sub(self.last_sync_ns) > 3_000_000_000 { return None; }
+        u64::try_from(i128::from(now_ns) + self.offset?).ok().map(|ns| (self.id, ns))
+    }
+}
 fn tlv(data: &[u8]) -> Vec<u8> {
     let mut out = vec![0, 3];
     out.extend((data.len() as u16).to_be_bytes());
@@ -89,11 +139,12 @@ pub fn sync_pair(clock: u64, seq: u16, ns: u64) -> (Vec<u8>, Vec<u8>) {
 pub struct PtpMaster {
     pub clock_id: u64,
     pub received: Arc<AtomicU64>,
+    followed: Arc<Mutex<BTreeMap<IpAddr, ReceiverClock>>>,
     cancel: Cancellation,
     worker: Option<JoinHandle<()>>,
 }
 impl PtpMaster {
-    pub fn start(peers: Vec<IpAddr>, clock: Clock) -> Result<Self> {
+    pub fn start(peers: Vec<IpAddr>, follow_peers: Vec<IpAddr>, clock: Clock) -> Result<Self> {
         let event = UdpSocket::bind("0.0.0.0:319").context("PTP event port 319 unavailable")?;
         let general = UdpSocket::bind("0.0.0.0:320").context("PTP general port 320 unavailable")?;
         event.set_nonblocking(true)?;
@@ -101,6 +152,9 @@ impl PtpMaster {
         let clock_id = rand::random::<u64>() & 0x7fff_ffff_ffff_ffff;
         let received = Arc::new(AtomicU64::new(0));
         let rx = received.clone();
+        let followed: Arc<Mutex<BTreeMap<_, _>>> = Arc::new(Mutex::new(follow_peers.into_iter()
+            .map(|peer| (peer, ReceiverClock::default())).collect()));
+        let receiver_clocks = followed.clone();
         let cancel = Cancellation::default();
         let stop = cancel.clone();
         let worker = thread::Builder::new()
@@ -114,6 +168,7 @@ impl PtpMaster {
                     let now = Instant::now();
                     if now >= next_sync {
                         for peer in &peers {
+                            if receiver_clocks.lock().unwrap().contains_key(peer) { continue; }
                             let (sync, follow) = sync_pair(clock_id, seq, clock.now_ns());
                             let _ = event.send_to(&sync, (*peer, 319));
                             let _ = general.send_to(&follow, (*peer, 320));
@@ -140,6 +195,9 @@ impl PtpMaster {
                                 continue;
                             }
                             rx.fetch_add(1, Ordering::Relaxed);
+                            if let Some(receiver) = receiver_clocks.lock().unwrap().get_mut(&addr.ip()) {
+                                receiver.observe(&buf[..length], clock.now_ns());
+                            }
                             let kind = buf[0] & 0xf;
                             let request_seq = u16::from_be_bytes([buf[30], buf[31]]);
                             if (kind == 1 || kind == 2) && n >= 44 {
@@ -173,9 +231,16 @@ impl PtpMaster {
         Ok(Self {
             clock_id,
             received,
+            followed,
             cancel,
             worker: Some(worker),
         })
+    }
+    pub fn timeline(&self, peer: IpAddr, now_ns: u64) -> Option<(u64, u64)> {
+        match self.followed.lock().unwrap().get(&peer) {
+            Some(receiver) => receiver.sample(now_ns),
+            None => Some((self.clock_id, now_ns)),
+        }
     }
 }
 impl Drop for PtpMaster {
@@ -198,5 +263,40 @@ mod tests {
         assert_eq!(f.len(), 96);
         assert_eq!(&f[34..44], &[0, 0, 0, 0, 0, 1, 13, 251, 56, 210]);
         assert_eq!(announce(id, 0, 0).len(), 76);
+    }
+    #[test]
+    fn receiver_clock_maps_paired_follow_up_with_correction() {
+        let id = 0x1234567812345678;
+        let local = 1_790_000_000_000_000_000;
+        let mut clock = ReceiverClock::default();
+        clock.observe(&announce(id, 1, 0), local);
+        let (sync, mut follow) = sync_pair(id, 42, 2_000_000_000);
+        follow[8..16].copy_from_slice(&(2000i64 * 65536).to_be_bytes());
+        clock.observe(&sync, local);
+        clock.observe(&follow, local + 10_000);
+        assert_eq!(clock.sample(local + 100_000), Some((id, 2_000_102_000)));
+        assert!(clock.sample(local + 3_000_000_001).is_none());
+    }
+    #[test]
+    fn receiver_clock_rejects_unpaired_wrong_source_and_invalid_timestamps() {
+        let id = 0x1234567812345678;
+        let mut clock = ReceiverClock::default();
+        let (sync, follow) = sync_pair(id, 42, 2_000_000_000);
+        clock.observe(&follow, 10_000_000_000);
+        assert!(clock.sample(10_000_000_000).is_none());
+        clock.observe(&announce(id, 1, 0), 10_000_000_000);
+        clock.observe(&sync, 10_000_000_000);
+        for changed in [20, 30] {
+            let mut invalid = follow.clone(); invalid[changed] ^= 1;
+            clock.observe(&invalid, 10_000_000_001);
+            assert!(clock.sample(10_000_000_001).is_none());
+        }
+        let mut invalid = follow.clone(); invalid[40..44].copy_from_slice(&1_000_000_000u32.to_be_bytes());
+        clock.observe(&invalid, 10_000_000_001);
+        assert!(clock.sample(10_000_000_001).is_none());
+        clock.observe(&follow, 10_000_000_001);
+        assert_eq!(clock.sample(10_000_000_001), Some((id, 2_000_000_001)));
+        clock.observe(&announce(id + 1, 1, 0), 10_000_000_002);
+        assert!(clock.sample(10_000_000_002).is_none());
     }
 }

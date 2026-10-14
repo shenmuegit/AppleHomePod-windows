@@ -163,9 +163,9 @@ pub fn sync_packet(
         0,
         if clock_id.is_some() { 6 } else { 7 },
     ];
-    // latencyMin is applied by the receiver. Shifting this mapping as well
-    // doubles the audible latency (confirmed by 500/200ms acoustic probes).
-    out.extend(rtp.to_be_bytes());
+    // Shairport's PTP receiver maps frame1-11025 to this time and takes frame2-frame1 as its buffer.
+    let frame1 = if clock_id.is_some() { rtp.wrapping_sub(latency_samples).wrapping_add(11025) } else { rtp };
+    out.extend(frame1.to_be_bytes());
     if clock_id.is_some() {
         out.extend(now_ns.to_be_bytes());
     } else {
@@ -173,7 +173,7 @@ pub fn sync_packet(
     }
     out.extend(
         if clock_id.is_some() {
-            rtp.wrapping_sub(latency_samples)
+            frame1.wrapping_add(77175)
         } else {
             rtp
         }
@@ -195,6 +195,14 @@ pub fn ntp(unix_ns: u64) -> [u8; 8] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ptp_anchor_has_forward_buffer_and_correct_render_position() {
+        let packet = sync_packet(20000, 8820, 123, Some(456), true);
+        let frame1 = u32::from_be_bytes(packet[4..8].try_into().unwrap());
+        let frame2 = u32::from_be_bytes(packet[16..20].try_into().unwrap());
+        assert_eq!(frame1.wrapping_sub(11025), 20000 - 8820);
+        assert_eq!(frame2.wrapping_sub(frame1), 77175);
+    }
     #[test]
     fn wrap_retransmits_exact_ciphertext() {
         let mut p = Packetizer::new([9; 32], 65535, u32::MAX - 100, 7);
@@ -228,7 +236,7 @@ mod tests {
     fn timing_uses_same_sample_clock() {
         let p = sync_packet(20000, 8820, 123, Some(456), true);
         assert_eq!(p.len(), 28);
-        assert_eq!(&p[4..8], &20000u32.to_be_bytes());
+        assert_eq!(&p[4..8], &(20000u32 - 8820 + 11025).to_be_bytes());
         assert_eq!(&p[20..], &456u64.to_be_bytes());
     }
 }

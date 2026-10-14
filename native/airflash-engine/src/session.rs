@@ -30,6 +30,8 @@ pub struct Peer {
     pub port: u16,
     #[serde(default)]
     pub codecs: Vec<u8>,
+    #[serde(default)]
+    pub follow_receiver_clock: bool,
 }
 fn default_port() -> u16 {
     7000
@@ -255,7 +257,7 @@ impl Member {
         let audio = UdpSocket::bind(SocketAddr::new(local, 0))?;
         let audio_key = derive(&secret, "Events-Salt", "Events-Write-Encryption-Key");
         let rate = options.sample_rate;
-        let mut packetizer = Packetizer::with_rate(audio_key, rand::random(), initial_rtp, ssrc, rate);
+        let mut packetizer = Packetizer::with_rate(audio_key, rand::random(), initial_rtp, if clock_id.is_some() { 0 } else { ssrc }, rate);
         let use_alac =
             !peer.codecs.is_empty() && !peer.codecs.contains(&0) && peer.codecs.contains(&1);
         ensure!(
@@ -524,7 +526,7 @@ pub fn probe_with_controls(
     let peers: Vec<_> = options.peers.iter().map(|p| p.host).collect();
     let ntp = NtpServer::start(peers.clone(), clock.clone())?;
     let ptp = if options.timing == "ptp" {
-        Some(PtpMaster::start(peers, clock.clone())?)
+        Some(PtpMaster::start(peers, options.peers.iter().filter(|p| p.follow_receiver_clock).map(|p| p.host).collect(), clock.clone())?)
     } else {
         None
     };
@@ -558,6 +560,17 @@ pub fn probe_with_controls(
             .record()
             .with_context(|| format!("RECORD {}", member.peer.host))
             .map_err(|error| Fault::from_error(member.peer.host, "control", &error))?;
+    }
+    if let Some(ptp) = &ptp {
+        let until = Instant::now() + Duration::from_secs(2);
+        for peer in options.peers.iter().filter(|p| p.follow_receiver_clock) {
+            while ptp.timeline(peer.host, clock.now_ns()).is_none() {
+                cancel.check()?;
+                ensure!(Instant::now() < until, "Receiver PTP clock did not become ready");
+                thread::sleep(Duration::from_millis(10));
+            }
+            emit(json!({"event":"ptp_following","host":peer.host,"clock_id":ptp.timeline(peer.host, clock.now_ns()).unwrap().0}));
+        }
     }
     let rate = options.sample_rate;
     let live = if options.source == "loopback" {
@@ -623,8 +636,12 @@ pub fn probe_with_controls(
             }
             if now >= next_sync {
                 for m in &mut members {
+                    let (id, ns) = if let Some(ptp) = &ptp {
+                        let (id, ns) = ptp.timeline(m.peer.host, clock.now_ns()).context("Receiver PTP clock became stale")?;
+                        (Some(id), ns)
+                    } else { (None, clock.now_ns()) };
                     m.media
-                        .sync(clock.now_ns(), clock_id, latency, packets == 0);
+                        .sync(ns, id, latency, packets == 0);
                 }
                 next_sync = now + Duration::from_millis(100);
             }
@@ -714,6 +731,7 @@ mod tests {
                 host: "127.0.0.1".parse().unwrap(),
                 port: 7000,
                 codecs: Vec::new(),
+                follow_receiver_clock: false,
             }],
             wav_path: PathBuf::new(),
             source: "wav".into(),
