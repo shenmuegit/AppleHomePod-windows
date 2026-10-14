@@ -39,6 +39,18 @@
 
 ## 尚未完成
 
+## 便携诊断包
+
+代码构建提交：`5bd11dc814a134605cf94ed122c5d939e7b55977`。文件为本机 `dist/AppleHome.exe`，176,542,209 字节；SHA256：
+
+`bae11f04699fa391d2571f0dbdf2fcfd2b421de53955e0d971c6a49f4a051b77`
+
+嵌入的原生引擎 SHA256 为 `60d9b109dd77ed7cf19efe184dc163c9f7bc6570e3464b0bfa80826ac3b909ac`。便携包的 `--compat-check` 退出 0，返回 JSONL v1、native 模式、`live_loopback=true`，同时如实保留 `qualification=partial`、`production_ready=false`。便携包自身的 UI smoke 576 项通过。
+
+单文件发布审核了 450 个映像，无阻断项，1555 个导入仍未由审核目录确认；这是静态审核，不等于全版本 Windows 认证。对应报告为 `artifacts/compatibility/bundle-audit.json`、`artifacts/validation/package-compat.json` 和 `package-ui-smoke.json`。交付目录包含 GPL 全文、来源说明、第三方声明和对应源码归档；未对外发布。
+
+## 后续实机验收
+
 iPhone 到同一 mini 的原生 AirPlay 对照正在等待用户结果。Windows 真实系统声音、持续音乐、静音片段、视频偏移、断网重连、输出端点移除以及最终便携包出声均待验证。Windows 11、其他 HomePod 型号和立体声对也待实机验证。
 
 三轮协议修正仍未解决无声后，用户已批准改用独立引擎进行实机对照。后续应先建立已知可听的源和设备基线，再决定继续修改哪个传输环节。
