@@ -32,3 +32,28 @@ Observed on Windows 10 Pro x64 build 19045:
 Build tools and caches are local/ignored or reused from an existing toolchain.
 The desktop deliverable is self-contained; those developer tools are not
 runtime requirements. No baseline test sent audio to a HomePod.
+
+## AppleHome adaptation and diagnostic status
+
+AppleHome now uses its own data/cache/credentials/tray/single-instance identity,
+requires an explicit user action before capture, bounds JSONL reads while reading,
+validates manual endpoints and persisted settings, protects logs/exports, and
+journals only application-owned local mute changes. Recovery is explicit on normal
+startup and never runs from the read-only audio diagnostic.
+
+The native peer schema has an additive optional `follow_receiver_clock` boolean,
+default false. Windows discovery sets it for a standalone OS 27+ AudioAccessory
+with leader metadata and no stereo/Apple TV group. PTP receiver-clock parsing and
+anchor wire formats have regression coverage. The packet SSRC is zero on PTP.
+These protocol changes have **not** passed acoustic qualification on the actual
+mini and must not be described as a completed audio fix.
+
+Current software checks: .NET 242 passed, Rust 53 passed / 2 explicitly ignored,
+Python 95 passed, Clippy and Ruff passed, UI smoke 576 checks passed. A separate
+real Windows endpoint harness passed 8 mute ownership/recovery checks without
+capturing audio or changing the volume scalar. See docs/VALIDATION.md for the
+known inaudible mini trials and the independent sender comparison.
+
+The independent Node sender is an ignored diagnostic checkout and is not a
+runtime or source dependency of the shipped native application. The portable
+diagnostic application remains the WPF/Rust GPLv3+ build described here.

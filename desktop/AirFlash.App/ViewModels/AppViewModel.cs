@@ -43,7 +43,7 @@ public sealed class AppViewModel : ObservableObject, IAsyncDisposable
     public int MasterVolume { get => _settings.MasterVolume; set { value = Math.Clamp(value, 0, 100); if (value == _settings.MasterVolume) return; _settings.MasterVolume = value; VolumeChanged(); Notify(); } }
     public bool Muted => Session.Muted;
     public string MuteLabel => Muted ? L.Get("Unmute") : L.Get("Mute");
-    public string StatusTitle => _snapshot.State switch { PlaybackState.Connecting => L.Get("Connecting"), PlaybackState.Streaming => L.Get("Playing"), PlaybackState.Standby => L.Get("Standby"), PlaybackState.Pairing => L.Get("Pairing"), PlaybackState.Error => L.Get("Connection error"), _ => L.Get("Ready") };
+    public string StatusTitle => _snapshot.State switch { PlaybackState.Connecting => L.Get("Connecting"), PlaybackState.Streaming => L.Get("Sending audio"), PlaybackState.Standby => L.Get("Standby"), PlaybackState.Pairing => L.Get("Pairing"), PlaybackState.Error => L.Get("Connection error"), _ => L.Get("Ready") };
     public string StatusDetail => _snapshot.Message.Length > 0 ? _snapshot.Message : _snapshot.IsActive ? L.Format("{0} · target {1} ms", _snapshot.Receiver?.Name, _snapshot.TargetLatency) : L.Get("Select a receiver to play system audio");
     public string MonitorLatency => _snapshot.Metrics?.CaptureToSendP95 is { } ms ? $"{ms:F1} ms" : "—";
     public string MonitorQueue => _snapshot.Metrics?.MaxQueueAge is { } ms ? $"{ms:F1} ms" : "—";

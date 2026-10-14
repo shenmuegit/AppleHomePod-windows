@@ -1,147 +1,94 @@
-# <img src="desktop/AirFlash.App/Assets/app.svg" width="36" height="36" alt="" style="vertical-align:middle" /> AirFlash
+# AppleHome
 
-<p align="center">
-  <a href="README.md">English</a> ·
-  <a href="docs/README.zh-CN.md">简体中文</a>
-</p>
+面向 Windows 10/11 x64 的原生 HomePod 音频发送项目，采用 WPF 界面、Rust 音频引擎和 GPLv3+ 开源许可，基于 Ding-Kyoma 的 [AirFlash](https://github.com/Ding-Kyoma/AirFlash)。
 
-<p align="center">
-  <img src="docs/images/airflash-en.png" alt="AirFlash English interface" width="550" />
-</p>
+**当前交付为诊断版：本机 Windows 10 的界面、发现、传输和声音状态恢复已验证，但 HomePod mini OS 27.0 的实际出声仍失败。请勿把它视为已经可用的音乐或视频音频方案。** Windows 11、其他 HomePod 型号和立体声对均待实机验证。
 
-AirFlash supports existing two-device stereo pairs and low-latency playback from Windows.
-Stream Windows desktop audio to HomePod through a native AirPlay 2 sender,
-with support for HomePod OS 27.
+详细结果见 [兼容矩阵](docs/COMPATIBILITY.md)、[验证记录](docs/VALIDATION.md)。调研、已审阅规格和实施计划保存在 `docs/research/` 与 `docs/superpowers/`。
 
-AirFlash is an AirPlay 2 alternative to TuneBlade (AirPlay 1), designed to bring
-Windows audio streaming to HomePods running newer versions of HomePod software.
+## 使用诊断版
 
-## Installation
+便携文件为 `dist/AppleHome.exe`。它包含 .NET 运行时和 Rust 引擎，使用 x64 Windows，无需另外安装开发工具。当前包未签名，也没有自动更新渠道。
 
-Download the latest release from [GitHub Releases](https://github.com/Ding-Kyoma/AirFlash/releases/latest), run
-`AirFlash-X.Y.Z.msi`, and launch AirFlash from the installed shortcut. Apps and Features provides repair and uninstall.
+1. 使用已经在 Apple 家庭 App 中初始化的 HomePod，让 Windows PC 与它位于可互通的同一局域网。先确认 iPhone AirPlay 到同一设备能正常出声。
+2. 启动 AppleHome。启动保持停止；已有的旧自动连接设置不会启动音频采集。
+3. 等待发现设备。发现失败时可选择网卡或添加 IPv4/端口，默认 AirPlay 2 端口为 7000。手动地址缺少固件与分组元数据，其 OS 27 时钟路径仍待验证。
+4. 在设置中选择音频源：默认播放端点，或指定播放端点。只有播放到该端点的共享模式声音才进入采集。
+5. 手动点击设备的开始按钮，再播放 Windows 音乐或浏览器声音。状态“正在发送音频”表示发送端已运行，实际出声需要听音确认。
+6. 点击停止结束会话。关闭面板会留在托盘；从设置或托盘选择退出才关闭应用。
 
-The minimum target is **Windows x64, Windows 10 1809 / build 17763** (LTSC 2019),
-including LTSC 2021, 22H2 and Windows 11. Windows 10 qualification is pending
-affected-user testing. See [Windows compatibility and startup diagnostics](docs/WINDOWS-COMPATIBILITY.md)
-for the candidate status and the PowerShell 5.1 diagnostic collector.
+接收端音量与本机增益独立。当前预览不把 HomePod 安装为 Windows 输出设备，也不默认安装虚拟音频驱动。独占音频、受保护内容、麦克风、跨网段和视频口型同步没有可用性保证。缓冲值为目标值，端到端声学延迟尚未测量。
 
-AirFlash is distributed as a Windows x64 executable and standalone MSI. Windows may show
-a SmartScreen warning because release binaries are not code-signed. Use
-**More info** and **Run anyway** only when the downloaded files are from a
-source you trust.
+家庭 App 的自定义密码、PIN 持久配对和仅家庭成员访问需要分别验收。认证失败时应核对访问设置与设备，不关闭服务端证明或身份验证。
 
-For audio capture, we recommend **Settings > Audio capture > Specific audio endpoint**.
-If you do not have an unused audio endpoint available, install a virtual endpoint
-with [Virtual Audio Cable (VAC Lite)](https://software.muzychenko.net/freeware/vac471lite.zip)
-or a similar tool, and route the audio you want to stream to that endpoint.
+## 本机声音与恢复
 
-## Key features
+应用在收到有声样本指标后才尝试静音本机输出；原状态先原子写入 `%APPDATA%\AppleHome\local-mute.json`。连续两次有声样本指标未推进时，会恢复本机播放并提示选择其他输出设备；自然静音也可能触发该保守回退。
 
-- Streams Windows system audio to HomePod over AirPlay 2.
-- Supports synchronized playback on existing two-device HomePod stereo pairs.
-- Offers automatic device discovery, PIN pairing, and manual device setup.
-- Lets you filter device discovery by selecting a network adapter in Settings.
-- Includes selectable latency modes, tray operation, mute restoration,
-  automatic reconnection, and connection diagnostics.
-- Provides a ten-band equalizer with presets and live preview in Settings.
-- Captures playback or recording endpoints, including virtual audio devices.
-- Available as a portable Windows x64 app with English, Simplified Chinese, and Traditional Chinese UI.
+停止、失败、退出和切换采集源时恢复仍由应用拥有的静音改动。用户在 Windows 中解除静音会撤销恢复所有权；应用不会改写音量标量。异常退出后的恢复只在正常启动中显式执行。若恢复文件损坏或无法写入，保留本机播放，并显示错误；不要为此重置整个系统声音设置。
 
-## Feature plan
+崩溃期间的同值外部静音写入无法辨认。需要完全独立的本机与 HomePod 路由时，应另行评估虚拟输出端点。
 
-- [ ] Select an application as the audio source ([#18](https://github.com/Ding-Kyoma/AirFlash/issues/18)).
-- [ ] Dolby Atmos support.
+## 数据与诊断
 
-## Usage
+- 设置和日志：`%APPDATA%\AppleHome\`。
+- 当前用户保护的配对资料：`%APPDATA%\AppleHome\native-credentials\`。
+- 按哈希提取的引擎：`%LOCALAPPDATA%\AppleHome\engine\`。
+- 应用不读取或覆盖 AirFlash 的设置与配对目录。
+- 日志脱敏标记的 PIN、密码、令牌、密钥与用户路径；导出另处理设备地址和标识。分享前仍请查看诊断文本。
+- `--compat-check`、`--audio-check`、`--discovery-check` 为显式诊断入口；音频枚举不会采集或恢复声音。输出使用 `--output <绝对路径>`。
 
-1. Connect the PC and both HomePods to the same reachable local network.
-2. Start AirFlash and wait for the receiver list to populate.
-3. Select the complete `HomePod stereo · 2/2` entry and press play.
-4. Complete PIN pairing in **Settings > Receivers** if the receiver requests it.
-5. Choose the capture endpoint and latency profile in Settings when the defaults
-   are not suitable.
+本地原始报告、SDK、缓存、音频、凭据和便携包位于忽略目录，不进入 Git。
 
-In **Settings > Audio capture**, **Specific audio endpoint** lists active playback
-and recording devices with their type. For Voicemeeter, select the recording
-endpoint corresponding to its B1/B2/B3 bus (for example, Voicemeeter Output)
-and enable that bus for the desired audio in Voicemeeter. Playback devices use
-loopback; recording devices capture their input directly. Automatic local mute
-applies only to playback devices and never mutes a recording input.
+## 从源码构建
 
-Receiver discovery runs while the control panel or **Settings > Receivers** is
-visible, and pauses when both are hidden. Previous results remain available;
-pausing discovery does not interrupt playback. If automatic connection is enabled
-globally or for a receiver, AirFlash also discovers devices for ten seconds at
-startup. Open a receiver list to resume discovery afterwards.
+已验证的开发环境：Windows 10 x64 build 19045；.NET SDK 10.0.402；Rust/Cargo 1.99.0 MSVC 与 Clippy；Visual Studio C++ Build Tools 与 Windows SDK；Python 3.12+、uv；PowerShell 7；Git。
 
-AirFlash intentionally uses fresh application storage under `%APPDATA%/AirFlash`
-and `%LOCALAPPDATA%/AirFlash`. It does not read configuration, credentials, or
-engine caches created by the previous product name; users must configure and pair
-again after installing AirFlash.
+将这些开发工具放入当前进程的 PATH，或使用机器已有安装。仓库的 `scripts/dotnet.ps1` 优先查找仓库本地 `artifacts/dotnet` SDK，再查找已有 SDK。不要把本机工作区中被忽略的 `.runtime` 当作分发依赖。
 
-Use **Settings > About > Check for updates** to check for a stable release and open its download page. Checks run only when requested.
-
-The real-time profile targets 120 ms; target and local transport timings are not measurements of end-to-end acoustic latency.
-
-See [Release workflow](docs/RELEASING.md) for version reservation and publishing.
-
-See [Icon maintenance](docs/ICONS.md) for the vector source, generated resources, and high-DPI verification.
-
-## Stack
-
-- **C# / .NET 10 / WPF** for the Windows UI, tray integration, settings, and discovery
-- **Rust** for WASAPI capture, AirPlay 2 sessions, HAP, PTP, RTP, and audio transport
-- **Windows DNS-SD** for receiver discovery
-- **WASAPI loopback** for system audio capture
-- **PCM and ALAC** with encrypted RTP for HomePod playback
-- **uv, pytest, and Ruff** for the finite validation tools and Python checks
-
-The published application is self-contained and statically links the native MSVC runtime. It does not require Python, a separately installed .NET runtime, or a separately installed VC++ Redistributable.
-
-## Development and build
-
-Development requires Windows 10/11 x64, the .NET 10 SDK, the Rust MSVC toolchain,
-and Visual Studio C++/Windows SDK components. Python 3.12+ and `uv` are used for
-validation scripts only.
+在仓库根目录执行：
 
 ```powershell
-uv sync --locked
-pwsh scripts/build-native.ps1 -Check
-pwsh scripts/dotnet.ps1 restore AirFlash.sln --locked-mode
-pwsh scripts/dotnet.ps1 run --project AirFlash.App/AirFlash.App.csproj
-pwsh scripts/build.ps1
-```
-
-The build produces:
-
-- `dist/AirFlash.exe`
-- `dist/AirFlash-X.Y.Z.msi`
-
-Run `AirFlash-X.Y.Z.msi` directly. It installs the self-contained executable and provides optional desktop and Start menu shortcuts.
-AirFlash uses the Windows DNS-SD API and does not require Bonjour or install a background service.
-The Rust engine is embedded in the WPF executable and extracted to a content-addressed cache under `%LOCALAPPDATA%/AirFlash/engine/<hash>` at runtime.
-
-## Tests
-
-```powershell
-pwsh scripts/dotnet.ps1 test AirFlash.sln
-uv run pytest
+uv sync --locked --group dev
+pwsh -NoProfile -File scripts/build-native.ps1 -Check
+pwsh -NoProfile -File scripts/dotnet.ps1 restore AirFlash.sln --locked-mode
+pwsh -NoProfile -File scripts/dotnet.ps1 test AirFlash.sln --no-restore
+uv run pytest -q
 uv run ruff check .
-pwsh scripts/build-native.ps1 -Check
 ```
 
-The ignored Rust soak test uses localhost UDP receivers only. Real HomePod tests
-are intentionally limited to the repository's low-volume, five-second procedure.
+界面回归使用模拟音频、发现与引擎服务，不发送到真实扬声器：
 
-See [Discovery stability](docs/DISCOVERY-STABILITY.md) for the isolated playback
-retention regression check and repair validation notes.
+```powershell
+pwsh -NoProfile -File scripts/dotnet.ps1 run --project AirFlash.App -- --ui-smoke --output ../artifacts/validation/ui-smoke.json
+```
 
-## Contributing
+发布便携诊断包：
 
-Keep protocol behavior, pairing boundaries, and measurement limits explicit in
-changes. Pull requests are welcome!
+```powershell
+$CheckoutRoot = (Get-Location).Path
+pwsh -NoProfile -File scripts/dotnet.ps1 publish AirFlash.App -c Release -r win-x64 --self-contained true -p:RestoreLockedMode=true -p:PublishTrimmed=false -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false "-p:PathMap=$CheckoutRoot=/_/" -p:Version=0.1.0 -p:InformationalVersion=0.1.0-rc.1 -o ../build/wpf-publish
+if ($LASTEXITCODE -ne 0) { throw 'Publish failed' }
+$Audit = Get-Content artifacts/compatibility/bundle-audit.json -Raw | ConvertFrom-Json
+if (!$Audit.ok) { throw 'Compatibility audit failed' }
+New-Item -ItemType Directory -Force dist | Out-Null
+Copy-Item build/wpf-publish/AirFlash.exe dist/AppleHome.exe
+Get-FileHash dist/AppleHome.exe -Algorithm SHA256
+```
 
-## License
+内部程序集名保留 `AirFlash`；最终可执行文件名为 `AppleHome.exe`。完整 MSI/版本预留/外部发布流水线不属于本轮构建。
 
-[GPLv3+](LICENSE-GPLv3) or [Commercial License](LICENSE-COMMERCIAL.md).
+实际扬声器测试使用有限 WAV 源，需要有人听音确认：
+
+```powershell
+$ReceiverAddress = '填写实际发现的设备 IPv4'
+uv run python scripts/e2e_stream.py --host $ReceiverAddress --source wav --duration 5 --gain 0.1 --timing ptp --report artifacts/validation/mini-probe.json
+```
+
+此旧探测入口未携带新发现的 OS 27 时钟能力，不能代替最终 WPF 包的实机验收。它的旧 Python `--source loopback` 分支也未纳入产品验证。系统声音应通过用户主动开始的 WPF 路径检查。
+
+## 来源与许可
+
+AppleHome 的修改采用 GPLv3 或更新版本。固定上游提交、源码归档哈希、依赖与基线检查见 [UPSTREAM.md](UPSTREAM.md)。保留 [上游许可说明](LICENSE)、[GPLv3 全文](LICENSE-GPLv3) 和 [第三方声明](desktop/THIRD-PARTY-NOTICES.md)。上游另有商业许可选项，不代表 AppleHome 修改获得或提供该许可。
+
+与本地包对应的完整可构建源码在当前 Git checkout；交付目录另提供源码归档。此项目没有对外发布仓库或二进制。

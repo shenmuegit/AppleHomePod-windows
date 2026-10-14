@@ -8,11 +8,12 @@
 |---|---|---|
 | 完整 .NET Core 测试 | 242 通过 | `artifacts/validation/clock-core-final.log` |
 | WPF UI smoke | 576 项通过；服务使用模拟实现，托盘与窗口在本机实际运行 | `artifacts/validation/mute-ui-final.json` |
-| Rust 单元与本地网络测试 | 见原始日志的各套件；两个需要硬件或长时间运行的用例明确忽略 | `artifacts/validation/ptp-ssrc-native-check.log` |
+| Rust 单元与本地网络测试 | 53 通过；两个需要硬件或长时间运行的用例明确忽略 | `artifacts/validation/final-native-check.log` |
 | Clippy，警告视为错误 | 通过 | 同上 |
 | 原生 release 构建与静态 CRT 检查 | 通过 | 同上 |
 | 原生导入审核 | 无阻断项；仍有 144 个未由目录确认的导入，不能外推所有 Windows 10 构建 | `artifacts/compatibility/engine-audit.json` |
 | 真实 Windows 静音归属与恢复 | 8 项通过，见下文 | `artifacts/validation/audio-ownership.json` |
+| Python 验证工具 | 95 通过；Ruff 通过 | `artifacts/validation/final-pytest.log`、`final-ruff.log` |
 
 静音检查使用实际 `AudioService` 程序集、NAudio 2.2.1 和本机默认播放端点，使用独立恢复文件。检查了：应用静音落盘原状态；外部解除静音后撤销恢复所有权；之后外部重新静音时停止不覆盖它；受控子进程静音后直接退出，构造新服务不改声音，显式启动恢复才恢复原状态；音量标量未被改写。执行后端点回到测试前的静音状态。此检查没有采集系统声音或麦克风。
 

@@ -6,6 +6,9 @@
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <AssemblyName>AirFlash</AssemblyName>
+    <Product>AppleHome</Product>
+    <Title>AppleHome</Title>
+    <Description>Windows system audio to HomePod — GPLv3+ diagnostic preview</Description>
     <RootNamespace>AirFlash.App</RootNamespace>
     <StartupObject>AirFlash.App.Program</StartupObject>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
