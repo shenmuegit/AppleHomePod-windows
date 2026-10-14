@@ -1,6 +1,6 @@
 # AppleHome 本地验证记录
 
-日期：2026-10-14。当前结论：**软件检查通过；独立 Rust 参考引擎已实际出声，AppleHome 本体尚无出声与系统音频闭环认证**。
+日期：2026-10-14。当前结论：**软件检查通过；实际 AppleHome 便携包在 Windows 10 19045 向单只 HomePod mini 27.0 播放系统音乐、停止与本机声音恢复均通过用户验收**。其余兼容与长期使用项分别标为待验收。
 
 ## 已完成的软件与 Windows 检查
 
@@ -66,7 +66,7 @@
 
 单文件发布审核了 450 个映像，无阻断项，1555 个导入仍未由审核目录确认；这是静态审核，不等于全版本 Windows 认证。对应报告为 `artifacts/compatibility/bundle-audit.json`、`artifacts/validation/package-compat.json` 和 `package-ui-smoke.json`。交付目录包含 GPL 全文、来源说明、第三方声明和对应源码归档；未对外发布。
 
-## 审查修复后的当前便携诊断包
+## 审查修复后的便携诊断包（历史记录）
 
 代码构建提交：`497f7fa864a494ce93cfb3680eac247db6c389eb`。当前 `dist/AppleHome.exe` 为 176,548,865 字节，SHA256：
 
@@ -76,8 +76,22 @@
 
 对应源码为 `dist/AppleHome-source-497f7fa.zip`，SHA256 `bc5c77186c399b70a762b11818fd766a47dbf9fb49436da909940de718b4b451`。精确来源和哈希另保存在 `dist/build-manifest.json`。该包替换了上面的历史包；本轮未通过它进行真实系统声音采集或宣称 HomePod 出声成功。
 
+## 当前可用测试包与系统声音验收
+
+代码构建提交：`16e38f91152bcf7ba97b714d1149ebfe6e3ab5fc`。`dist/AppleHome.exe` 为 176,549,377 字节，SHA256：
+
+`992c36249a4b91c014c71b78959ba82d561bb4f958c8eefed49998d995e44ca5`
+
+原生引擎 SHA256 仍为 `c76049e397e4d0056e91fc8442b4b0b5b800aa2737b683566903783c5e2173ea`。对应源码为 `dist/AppleHome-source-16e38f9.zip`，SHA256 `b00b63a99af294e0edded324db493d806ed4ab973b56f2627016bb912e2489ce`。后续提交只补充验收文档，程序代码对应上面的构建提交。
+
+包自身 `--compat-check` 退出 0，UI smoke 577 项通过；静态审核为 450 个映像、1555 个未确认导入、无阻断项，仍保留原生 `qualification=partial` 与 `production_ready=false`。这不是全硬件生产认证。
+
+正常启动后由用户手动点击开始，播放 Windows 音乐约 20 秒，随后点击停止。用户确认“HomePod 能播放音乐，停止后电脑声音正常”。应用日志确认使用 2000 ms 目标；停止后恢复文件 schema 1 的 entries 为空，应用拥有的原生引擎子进程数为 0。完整本机证据为 `package-user-acceptance.json`、`package-compat.json`、`package-ui-smoke.json`。这条路径使用实际 WASAPI 播放端点采集，未使用麦克风或参考库采集应用。
+
+自动重连默认关闭。用户选择暂缓真实断网测试，该项保持待验收，没有主动关闭网络或改变防火墙。Windows 回调与受控崩溃恢复另有前述真实端点测试；不能将其等同于真实网络故障下的播放验证。
+
 ## 后续实机验收
 
-iPhone 到同一 mini 的原生 AirPlay 已确认正常出声；两个早期 Windows 发送引擎无声，第三套独立 Rust 参考引擎已实际出声。Windows 真实系统声音、持续音乐、静音片段、视频偏移、断网重连、输出端点移除以及最终便携包出声均待验证。Windows 11、其他 HomePod 型号和立体声对也待实机验证。
+iPhone、独立参考引擎、现有原生引擎和实际 AppleHome 便携包均已有出声证据；便携包的 Windows 音乐与停止恢复通过。持续音乐、静音片段、视频偏移、真实断网重连、输出端点移除与发送中退出仍待实机验证。Windows 11、其他 HomePod 型号和立体声对也待实机验证。
 
-三轮协议修正仍未解决无声后，用户已批准改用独立引擎进行实机对照。后续应先建立已知可听的源和设备基线，再决定继续修改哪个传输环节。
+三轮 PTP 协议修正无声后，独立参考引擎建立了可听基线；现有原生引擎的 NTP/ALAC 与 2 秒目标随后同样成功，产品采用这个已有路径。此过程没有并入第二套引擎，也未关闭服务端证明验证。

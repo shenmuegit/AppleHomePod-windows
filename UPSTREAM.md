@@ -61,10 +61,15 @@ real Windows endpoint harness passed 8 mute ownership/recovery checks without
 capturing audio or changing the volume scalar; the locked-journal failure path
 also passed after reproducing the original fault. Unsaved journal clears remain
 ambiguous across a crash, are surfaced, and are retried before closing.
-See docs/VALIDATION.md for the inaudible Windows trials and the audible iPhone baseline.
+The actual portable package subsequently passed user-driven Windows music playback
+to the standalone mini 27.0, Stop and normal PC audio recovery. Logs confirm the
+2-second target and no remaining owned engine or journal entry after Stop.
+Actual network-outage acceptance was deferred at the user's request. See
+docs/VALIDATION.md for the complete sequence and remaining hardware boundaries.
 
 Independent Node and GPL-2.0 Rust senders are ignored diagnostic checkouts and
 are not runtime or source dependencies of the shipped application. The latter
 produced an audible finite WAV on the actual mini with NTP/ALAC; the former did
-not. This does not qualify AppleHome's WASAPI path. The portable application
-remains the WPF/Rust GPLv3+ build described here.
+not. The existing native NTP/ALAC path then produced sound too and is selected by
+the WPF package; no reference code was integrated. The portable application remains
+the WPF/Rust GPLv3+ build described here.

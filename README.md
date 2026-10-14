@@ -2,20 +2,21 @@
 
 面向 Windows 10/11 x64 的原生 HomePod 音频发送项目，采用 WPF 界面、Rust 音频引擎和 GPLv3+ 开源许可，基于 Ding-Kyoma 的 [AirFlash](https://github.com/Ding-Kyoma/AirFlash)。
 
-**当前为开发诊断版：现有 Rust 原生引擎已让 HomePod mini OS 27.0 播放有限测试音；应用包的 Windows 系统声音闭环仍待验收。** Windows 11、其他 HomePod 型号和立体声对均待实机验证。
+**当前为可用测试版：Windows 10 Pro 22H2（19045）到单只 HomePod mini 27.0 的系统音乐播放、手动停止和本机声音恢复已由用户实机确认。** 当前使用 2 秒目标缓冲；声学延迟与视频同步未测量。Windows 11、其他型号、其他固件和立体声对均待实机验证。
 
 详细结果见 [兼容矩阵](docs/COMPATIBILITY.md)、[验证记录](docs/VALIDATION.md)。调研、已审阅规格和实施计划保存在 `docs/research/` 与 `docs/superpowers/`。
 
-## 使用诊断版
+## 使用测试版
 
 便携文件为 `dist/AppleHome.exe`。它包含 .NET 运行时和 Rust 引擎，使用 x64 Windows，无需另外安装开发工具。当前包未签名，也没有自动更新渠道。
 
 1. 使用已经在 Apple 家庭 App 中初始化的 HomePod，让 Windows PC 与它位于可互通的同一局域网。先确认 iPhone AirPlay 到同一设备能正常出声。
 2. 启动 AppleHome。启动保持停止；已有的旧自动连接设置不会启动音频采集。
-3. 等待发现设备。发现失败时可选择网卡或添加 IPv4/端口，默认 AirPlay 2 端口为 7000。手动地址缺少固件与分组元数据，其 OS 27 时钟路径仍待验证。
+3. 等待发现设备。发现失败时可选择网卡或添加 IPv4/端口，默认 AirPlay 2 端口为 7000。已验证 mini 配置需要自动发现提供的型号、固件与分组信息；只有手动地址时仍待验证。
 4. 在设置中选择音频源：默认播放端点，或指定播放端点。只有播放到该端点的共享模式声音才进入采集。
 5. 手动点击设备的开始按钮，再播放 Windows 音乐或浏览器声音。状态“正在发送音频”表示发送端已运行，实际出声需要听音确认。
 6. 点击停止结束会话。关闭面板会留在托盘；从设置或托盘选择退出才关闭应用。
+7. 如需断线后重试，在设置中勾选“连接中断后自动重连”并应用。该选项默认关闭；真实断网验收本轮由用户选择暂缓。
 
 接收端音量与本机增益独立。当前预览不把 HomePod 安装为 Windows 输出设备，也不默认安装虚拟音频驱动。独占音频、受保护内容、麦克风、跨网段和视频口型同步没有可用性保证。缓冲值为目标值，端到端声学延迟尚未测量。
 
@@ -80,14 +81,7 @@ Get-FileHash dist/AppleHome.exe -Algorithm SHA256
 
 内部程序集名保留 `AirFlash`；最终可执行文件名为 `AppleHome.exe`。完整 MSI/版本预留/外部发布流水线不属于本轮构建。
 
-实际扬声器测试使用有限 WAV 源，需要有人听音确认：
-
-```powershell
-$ReceiverAddress = '填写实际发现的设备 IPv4'
-uv run python scripts/e2e_stream.py --host $ReceiverAddress --source wav --duration 5 --gain 0.1 --timing ptp --report artifacts/validation/mini-probe.json
-```
-
-此旧探测入口未携带新发现的 OS 27 时钟能力，不能代替最终 WPF 包的实机验收。它的旧 Python `--source loopback` 分支也未纳入产品验证。系统声音应通过用户主动开始的 WPF 路径检查。
+历史 `scripts/e2e_stream.py` 探测入口没有携带新发现的 mini 配置信息，不能代替最终 WPF 包的实机验收。它的旧 Python `--source loopback` 分支也未纳入产品验证。系统声音应通过用户主动开始的 WPF 路径检查。
 
 ## 来源与许可
 
