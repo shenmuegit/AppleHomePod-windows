@@ -12,6 +12,72 @@ public sealed class SessionTests
     private static readonly SessionTiming Fast = new(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1), TimeSpan.FromMilliseconds(10));
     private static EqualizerSettings Sound(double gain) { var eq = new EqualizerSettings { Enabled = true }; eq.SetBand(0, gain); return eq; }
     private static double EqGain(EngineCommand command) => command.Parameters.GetProperty("equalizer").GetProperty("band_gains_db")[0].GetDouble();
+    [Theory]
+    [InlineData("AudioAccessory5,1", "27.0", true, "", "", true)]
+    [InlineData("AudioAccessory5,1", "26.5", true, "", "", false)]
+    [InlineData("AudioAccessory5,1", "27.1", true, "", "", false)]
+    [InlineData("AudioAccessory6,1", "27.0", true, "", "", false)]
+    [InlineData("AudioAccessory5,1", "", true, "", "", false)]
+    [InlineData("AudioAccessory5,1", "27.0", false, "", "", false)]
+    [InlineData("AudioAccessory5,1", "27.0", true, "pair", "", false)]
+    [InlineData("AudioAccessory5,1", "27.0", true, "", "tv-group", false)]
+    public async Task VerifiedMiniSelectsNtpAlacWithoutChangingOtherProfiles(string model, string version, bool leader, string stereo, string group, bool ntpAlac)
+    {
+        var process = new FakeConnection();
+        await using var controller = new SessionController(new FakeFactory(process), new FakeAudio(), timing: Fast);
+        var receiver = Pod() with { Model = model, SoftwareVersion = version, IsLeader = leader, StereoId = stereo, GroupId = group, Codecs = [0, 1, 2] };
+        await controller.StartAsync(receiver, Settings()); await Until(() => controller.Snapshot.State == PlaybackState.Streaming);
+        var parameters = process.Commands.Single(c => c.Command == "start").Parameters;
+        Assert.Equal(ntpAlac ? "ntp" : "ptp", parameters.GetProperty("timing").GetString());
+        Assert.Equal(ntpAlac ? [1] : new[] { 0, 1, 2 }, parameters.GetProperty("peers")[0].GetProperty("codecs").EnumerateArray().Select(c => c.GetInt32()).ToArray());
+        Assert.Equal(ntpAlac ? 2000 : 200, parameters.Number("latency_ms"));
+        Assert.Equal(ntpAlac ? 2000 : 200, controller.Snapshot.TargetLatency);
+    }
+    [Fact]
+    public async Task StereoPairKeepsItsOriginalTimingAndCodecs()
+    {
+        var process = new FakeConnection();
+        await using var controller = new SessionController(new FakeFactory(process), new FakeAudio(), timing: Fast);
+        var mini = Pod() with { Model = "AudioAccessory5,1", SoftwareVersion = "27.0", IsLeader = true, Codecs = [0, 1] };
+        await controller.StartAsync(mini with { Id = "stereo:pair", Members = [mini, mini with { Id = "b", Address = "127.0.0.2", IsLeader = false }] }, Settings());
+        await Until(() => controller.Snapshot.State == PlaybackState.Streaming);
+        var parameters = process.Commands.Single(c => c.Command == "start").Parameters;
+        Assert.Equal("ptp", parameters.GetProperty("timing").GetString());
+        Assert.All(parameters.GetProperty("peers").EnumerateArray(), peer => Assert.Equal(new[] { 0, 1 }, peer.GetProperty("codecs").EnumerateArray().Select(c => c.GetInt32()).ToArray()));
+    }
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task MiniUsesAlacWhenMetadataIsMissingButHonorsAnExplicitCodecExclusion(bool missing)
+    {
+        var process = new FakeConnection();
+        await using var controller = new SessionController(new FakeFactory(process), new FakeAudio(), timing: Fast);
+        var mini = Pod() with { Model = "AudioAccessory5,1", SoftwareVersion = "27.0", IsLeader = true, Codecs = missing ? [] : [0] };
+        await controller.StartAsync(mini, Settings()); await Until(() => controller.Snapshot.State == PlaybackState.Streaming);
+        var parameters = process.Commands.Single(c => c.Command == "start").Parameters;
+        Assert.Equal(missing ? "ntp" : "ptp", parameters.GetProperty("timing").GetString());
+        Assert.Equal(missing ? new[] { 1 } : [0], parameters.GetProperty("peers")[0].GetProperty("codecs").EnumerateArray().Select(c => c.GetInt32()).ToArray());
+    }
+    [Fact]
+    public async Task DiscoveryProfileUpgradeRestartsExactlyOnce()
+    {
+        var first = new FakeConnection(); var second = new FakeConnection(); var factory = new FakeFactory(first, second);
+        var audio = new FakeAudio();
+        await using var controller = new SessionController(factory, audio, timing: Fast);
+        var incomplete = Pod() with { Model = "AudioAccessory5,1", IsLeader = true, Codecs = [0, 1] };
+        var settings = Settings();
+        await controller.StartAsync(incomplete, settings); await Until(() => controller.Snapshot.State == PlaybackState.Streaming);
+        first.Emit("capture_metrics", metrics: new { last_audio_qpc_ns = 10 }); await Until(() => audio.Muted);
+        audio.Muted = false;
+        var identified = incomplete with { SoftwareVersion = "27.0" };
+        await controller.UpdateReceiverAsync(identified, settings);
+        await second.Started.Task.WaitAsync(TimeSpan.FromSeconds(1)); await Until(() => controller.Snapshot.State == PlaybackState.Streaming);
+        Assert.Equal("ntp", second.Commands.Single(c => c.Command == "start").Parameters.GetProperty("timing").GetString());
+        second.Emit("capture_metrics", metrics: new { last_audio_qpc_ns = 20, underrun_packets = 99 }); await Until(() => controller.Snapshot.Metrics?.Underruns == 99);
+        Assert.False(audio.Muted); Assert.Single(audio.Actions, action => action.StartsWith("mute:", StringComparison.Ordinal));
+        await controller.UpdateReceiverAsync(identified with { Name = "Renamed" }, settings);
+        Assert.Equal(2, factory.OpenCount);
+    }
     [Fact]
     public async Task StreamingAndSettingsWithoutAudioEvidenceNeverMute()
     {

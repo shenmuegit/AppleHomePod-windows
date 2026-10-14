@@ -7,9 +7,10 @@ public sealed record Receiver(string Id, string Name, string Address, int Port =
     public string Model { get; init; } = "";
     public string SoftwareVersion { get; init; } = "";
     public string GroupId { get; init; } = "";
-    public bool FollowReceiverClock => Model.StartsWith("AudioAccessory", StringComparison.Ordinal) &&
-        int.TryParse(SoftwareVersion.Split('.')[0], out var major) && major >= 27 &&
-        IsLeader && !IsGroup && StereoId.Length == 0 && GroupId.Length == 0;
+    // shortcut: only this standalone model/firmware has an audible baseline; expand after hardware qualification.
+    public bool PrefersNtpAlac => Model == "AudioAccessory5,1" && SoftwareVersion == "27.0" &&
+        IsLeader && !IsGroup && StereoId.Length == 0 && GroupId.Length == 0 &&
+        (Codecs.Length == 0 || Codecs.Contains((byte)1));
     public string StereoId { get; init; } = "";
     public string GroupName { get; init; } = "";
     public bool IsLeader { get; init; }

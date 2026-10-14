@@ -2,7 +2,7 @@
 
 面向 Windows 10/11 x64 的原生 HomePod 音频发送项目，采用 WPF 界面、Rust 音频引擎和 GPLv3+ 开源许可，基于 Ding-Kyoma 的 [AirFlash](https://github.com/Ding-Kyoma/AirFlash)。
 
-**当前交付为诊断版：本机 Windows 10 的界面、发现、传输和声音状态恢复已验证，但 HomePod mini OS 27.0 的实际出声仍失败。请勿把它视为已经可用的音乐或视频音频方案。** Windows 11、其他 HomePod 型号和立体声对均待实机验证。
+**当前为开发诊断版：现有 Rust 原生引擎已让 HomePod mini OS 27.0 播放有限测试音；应用包的 Windows 系统声音闭环仍待验收。** Windows 11、其他 HomePod 型号和立体声对均待实机验证。
 
 详细结果见 [兼容矩阵](docs/COMPATIBILITY.md)、[验证记录](docs/VALIDATION.md)。调研、已审阅规格和实施计划保存在 `docs/research/` 与 `docs/superpowers/`。
 
@@ -18,6 +18,8 @@
 6. 点击停止结束会话。关闭面板会留在托盘；从设置或托盘选择退出才关闭应用。
 
 接收端音量与本机增益独立。当前预览不把 HomePod 安装为 Windows 输出设备，也不默认安装虚拟音频驱动。独占音频、受保护内容、麦克风、跨网段和视频口型同步没有可用性保证。缓冲值为目标值，端到端声学延迟尚未测量。
+
+自动发现的单只 HomePod mini（AudioAccessory5,1、27.0、无立体声或 Apple TV 分组）当前采用已出声的 NTP/ALAC 和 2 秒目标缓冲；200 毫秒目标在本机实测无声。界面显示实际使用的目标值，较低缓冲设置不能覆盖该已验证配置。手动地址缺少所需型号、固件和分组信息，不能据此自动启用该配置。其他型号和固件仍保留原路径，需逐项验证。
 
 家庭 App 的自定义密码、PIN 持久配对和仅家庭成员访问需要分别验收。认证失败时应核对访问设置与设备，不关闭服务端证明或身份验证。
 

@@ -272,5 +272,6 @@
   "Manual receiver IDs must be nonempty and unique.": "手动接收端的标识不能为空且不能重复。",
   "Could not save local mute recovery. Retry before closing the app: {0}": "无法保存本机静音恢复记录，请在退出应用前重试：{0}",
   "Choose a playback device endpoint.": "选择播放设备端点。",
+  "The verified standalone HomePod mini on 27.0 currently uses a 2-second target buffer. Video may need synchronization in the player.": "已验证的单只 HomePod mini 27.0 当前使用 2 秒目标缓冲。视频可能需要在播放器中调整同步。",
   "Restore the previous playback-device mute state when streaming stops or the connection fails. Some protected content cannot be captured through loopback.": "发送停止或连接失败时，恢复播放设备原来的静音状态。部分受保护内容无法通过回环采集。"
 }

@@ -1,13 +1,13 @@
 # AppleHome 本地验证记录
 
-日期：2026-10-14。当前结论：**软件检查通过，HomePod 实际出声失败，尚无可用性认证**。
+日期：2026-10-14。当前结论：**软件检查通过；独立 Rust 参考引擎已实际出声，AppleHome 本体尚无出声与系统音频闭环认证**。
 
 ## 已完成的软件与 Windows 检查
 
 | 检查 | 结果 | 证据位置（本机忽略目录） |
 |---|---|---|
-| 完整 .NET Core 测试 | 258 通过 | `artifacts/validation/review-full-dotnet.log` |
-| WPF UI smoke | 577 项通过；服务使用模拟实现，托盘与窗口在本机实际运行 | `artifacts/validation/review-ui-green.json` |
+| 完整 .NET Core 测试 | 270 通过，包含 NTP/ALAC 配置与有效缓冲回归 | `artifacts/validation/ntp-profile-full-green.log` |
+| WPF UI smoke | 577 项通过；服务使用模拟实现，托盘与窗口在本机实际运行 | `artifacts/validation/ntp-profile-ui-smoke.json` |
 | Rust 单元与本地网络测试 | 53 通过；两个需要硬件或长时间运行的用例明确忽略 | `artifacts/validation/review-full-native.log` |
 | Clippy，警告视为错误 | 通过 | 同上 |
 | 原生 release 构建与静态 CRT 检查 | 通过 | 同上 |
@@ -36,6 +36,9 @@
 | 独立 node-airplay 引擎对照 | PTP 协商明确；625 包；50 次 PTP 交换；原 31% 音量；5 秒源音频后额外留出 2 秒缓冲；正常关闭 | 用户仍未听到 |
 | iPhone 网易云音乐，经原生 AirPlay 选择同一只 mini | 用户操作并确认正在出声，随后暂停或切回 iPhone | **可以出声** |
 | 独立 node-airplay 提高测试信号后重播 | 实际源峰值 0.05，增益 1；5 秒源音频与 2 秒缓冲；626 包、51 次 PTP 交换；保留接收端当时的 38% 音量并正常关闭 | 用户仍未听到 |
+| 独立 windows-airplay-homepod Rust 参考引擎 | ALAC、请求 NTP；5 秒源峰值 0.05、增益 1；保留原 -18.75 dB / 37.5% 音量；627 包、1 次 underrun；正常停止和断开 | **用户确认听到声音** |
+| AppleHome 原生已有 NTP/ALAC 路径对照 | 仅切换现有时钟选项，2 秒目标，原生增益仍为 0.1；627 包、干净停止；信号比成功参考试验低 20 dB | **用户确认听到较轻的测试音** |
+| 相同原生 NTP/ALAC 路径，200 毫秒目标 | 编码、音量和信号不变；627 包、干净停止；第一遍无法判断，倒数后重播 | 用户确认重播仍无声 |
 
 早期 Windows 发送试验为预生成的 44.1 kHz、16-bit 双声道信号；源峰值 0.05，增益 0.1，实际峰值约 0.005（约 -46 dBFS），因此随后另外校准了听音检出能力。没有把发送成功、协商编码、反馈或 PTP 包数当作出声证明。未测得声学延迟。
 
@@ -44,6 +47,14 @@
 原始试验分别见 `mini-probe.json`、`mini-alac-probe.json`、`mini-ptp-diagnostic.json`、`mini-follow-alac-probe.json`、`mini-anchor-alac-probe.json`、`mini-buffer-alac-probe.json`、`mini-volume-alac-probe.json`、`mini-ssrc-alac-probe.json`、`mini-node-comparison.json`。它们位于 `artifacts/validation/`，不提交设备资料或音频。
 
 独立对照使用 [sonn-audio/node-airplay](https://github.com/sonn-audio/node-airplay/tree/a77dff7b9ec0a50dd126a2bd965e95360827ad86)，固定提交 `a77dff7b9ec0a50dd126a2bd965e95360827ad86`，Apache-2.0；源码归档 SHA256 `812f9e83360a0efacd4c059a8df68020329015c34d58575ec3d391afffd12c25`。它的 14 项自身测试通过，SRP 服务端证明校验保留。该引擎目前只用于诊断，没有作为产品依赖或替换原生引擎。
+
+成功的参考试验使用 [iakacer/windows-airplay-homepod](https://github.com/iakacer/windows-airplay-homepod/tree/cc9a2fe4b564f29f68fc4ad15cad4c1544e853aa)，v0.1.2 固定提交 `cc9a2fe4b564f29f68fc4ad15cad4c1544e853aa`，GPL-2.0；归档 SHA256 `f0745af172e61beeb9472ea21a6fac4bbc5987f25ef8c0d602de6a2f84d107cc`。用已有 MSVC Rust 工具编译，仅在忽略的参考目录增加有限 WAV 示例；未启动其系统采集应用、安装 MinGW/驱动、保存持久配对或修改防火墙。
+
+参考库完整配对套件为 153 通过、5 失败。失败来自未被实际连接调用的旧 `EncryptedChannel` 封装；未修改或隐瞒这些失败。实际连接直接调用 `ControlCipher`，相关加密检查 29 通过，排除整个旧封装后的配对检查 150 通过，严格 SRP M4 服务端证明校验保留。此参考源码没有并入 GPLv3+ 产品，不能以一次出声宣称其全部实现可靠。
+
+实机报告为 `mini-rust-ntp-comparison.json`；只有收到用户“听到声音了”之后，才把 `acoustic_verified` 设为 true。这是 Windows 有限音源到 mini 的成功基线；真实 WASAPI 系统声音、当前 AppleHome 包和其他型号均未由此完成验收。当前证据也不足以断言 NTP 是唯一根因，两个引擎还存在编码和封包等差异。
+
+随后，现有 AppleHome 原生引擎通过已有 NTP/ALAC 选项和 2 秒目标，同样得到用户出声确认，见 `mini-native-ntp-alac-probe.json`；原生 WAV 峰值与增益限制保持不变。200 毫秒目标重播无声，见 `mini-native-ntp-alac-default-probe.json`。本次产品修改只选择已有可听配置，没有并入第二引擎或再改原生协议算法；会话命令、实际目标缓冲、UI 状态和发现元数据更新后的重启均有回归。
 
 ## 首轮便携诊断包（审查修复前的历史记录）
 
@@ -67,6 +78,6 @@
 
 ## 后续实机验收
 
-iPhone 到同一 mini 的原生 AirPlay 已确认正常出声，Windows 两个发送引擎仍无声。Windows 真实系统声音、持续音乐、静音片段、视频偏移、断网重连、输出端点移除以及最终便携包出声均待验证。Windows 11、其他 HomePod 型号和立体声对也待实机验证。
+iPhone 到同一 mini 的原生 AirPlay 已确认正常出声；两个早期 Windows 发送引擎无声，第三套独立 Rust 参考引擎已实际出声。Windows 真实系统声音、持续音乐、静音片段、视频偏移、断网重连、输出端点移除以及最终便携包出声均待验证。Windows 11、其他 HomePod 型号和立体声对也待实机验证。
 
 三轮协议修正仍未解决无声后，用户已批准改用独立引擎进行实机对照。后续应先建立已知可听的源和设备基线，再决定继续修改哪个传输环节。

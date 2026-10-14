@@ -41,19 +41,21 @@ validates manual endpoints and persisted settings, protects logs/exports, and
 journals only application-owned local mute changes. Recovery is explicit on normal
 startup and never runs from the read-only audio diagnostic.
 
-The native peer schema has an additive optional `follow_receiver_clock` boolean,
-default false. Windows discovery sets it for a standalone OS 27+ AudioAccessory
-with leader metadata and no stereo/Apple TV group. PTP receiver-clock parsing and
-anchor wire formats have regression coverage. The packet SSRC is zero on PTP.
-These protocol changes have **not** passed acoustic qualification on the actual
-mini and must not be described as a completed audio fix.
+The native peer schema retains an additive optional `follow_receiver_clock`
+boolean, default false, for explicit diagnostics. The normal application no longer
+enables it based on OS 27 metadata. PTP receiver-clock parsing and anchor formats
+have regression coverage; packet SSRC is zero on PTP, but those changes remain
+acoustically unqualified. Actual mini playback succeeded using the existing native
+NTP/ALAC path with a 2-second target; a 200 ms target remained inaudible. Windows
+selects that profile only for the discovered standalone AudioAccessory5,1 on 27.0,
+retaining the original path for other combinations. No second engine is integrated.
 
 Final review fixes restrict capture to playback endpoints, preserve external mute
 choices across reconnect and persistence failures, reject invalid manual IDs,
 redact secret-label variants and free-form exported details, and reject stale
 discovery snapshots after interface changes. Each finding has RED-to-GREEN coverage.
 
-Current software checks: .NET 258 passed, Rust 53 passed / 2 explicitly ignored,
+Current software checks: .NET 270 passed, Rust 53 passed / 2 explicitly ignored,
 Python 95 passed, Clippy and Ruff passed, UI smoke 577 checks passed. A separate
 real Windows endpoint harness passed 8 mute ownership/recovery checks without
 capturing audio or changing the volume scalar; the locked-journal failure path
@@ -61,6 +63,8 @@ also passed after reproducing the original fault. Unsaved journal clears remain
 ambiguous across a crash, are surfaced, and are retried before closing.
 See docs/VALIDATION.md for the inaudible Windows trials and the audible iPhone baseline.
 
-The independent Node sender is an ignored diagnostic checkout and is not a
-runtime or source dependency of the shipped native application. The portable
-diagnostic application remains the WPF/Rust GPLv3+ build described here.
+Independent Node and GPL-2.0 Rust senders are ignored diagnostic checkouts and
+are not runtime or source dependencies of the shipped application. The latter
+produced an audible finite WAV on the actual mini with NTP/ALAC; the former did
+not. This does not qualify AppleHome's WASAPI path. The portable application
+remains the WPF/Rust GPLv3+ build described here.

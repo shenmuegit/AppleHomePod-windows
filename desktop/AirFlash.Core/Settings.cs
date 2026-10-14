@@ -88,6 +88,8 @@ public sealed class AppSettings : ObservableObject
         var options = ReadOptions(id);
         return (options.LatencyMode ?? LatencyMode) switch { "realtime" => 120, "buffered" => 500, "custom" => Math.Clamp(options.CustomBufferMs ?? CustomBufferMs, 0, 2000), _ => 200 };
     }
+    // The same mini was audible at 2 s and silent at 200 ms; retain the verified target.
+    public int Latency(Receiver receiver) => receiver.PrefersNtpAlac ? 2000 : Latency(receiver.Id);
     public double Gain(string id) => Math.Clamp(MasterVolume, 0, 100) / 100d;
     public string? EffectiveEndpoint => CaptureMode == "loopback" ? null : CaptureEndpoint;
     public string? Validate()

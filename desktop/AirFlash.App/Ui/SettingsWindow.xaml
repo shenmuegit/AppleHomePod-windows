@@ -51,6 +51,7 @@
               <TextBox Width="100" Text="{Binding Draft.CustomBufferMs, UpdateSourceTrigger=PropertyChanged, ValidatesOnExceptions=True, NotifyOnValidationError=True}" AutomationProperties.Name="{loc:Text 'Custom latency'}"/>
               <TextBlock Text="{loc:Text 'ms (0–2000)'}" VerticalAlignment="Center" Margin="10,0,0,0" Style="{StaticResource Hint}"/>
             </StackPanel>
+            <TextBlock Text="{loc:Text 'The verified standalone HomePod mini on 27.0 currently uses a 2-second target buffer. Video may need synchronization in the player.'}" Style="{StaticResource Hint}" TextWrapping="Wrap"/>
           </StackPanel>
         </Border>
         <Border Style="{StaticResource Card}">
