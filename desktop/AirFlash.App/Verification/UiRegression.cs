@@ -91,7 +91,7 @@ internal static class UiRegression
             vm.Draft.ForceReconnect = !vm.Draft.ForceReconnect; vm.Draft.UiLanguage = "en";
             Check(await vm.ApplyAsync() && engine.CreatedCount == starts, "non-audio settings do not restart playback", checks);
             audio.FailMute = true; vm.Draft.MuteWhileStreaming = true;
-            Check(!await vm.ApplyAsync() && !vm.HasChanges && store.Saved.MuteWhileStreaming && vm.Error.Contains("mock mute failed", StringComparison.Ordinal), "saved configuration and audio failure are distinguished", checks);
+            Check(await vm.ApplyAsync() && !vm.HasChanges && store.Saved.MuteWhileStreaming, "mute setting saves before waiting for audible capture evidence", checks);
             audio.FailMute = false; vm.Draft.MuteWhileStreaming = false; await vm.ApplyAsync();
 
             vm.Draft.CaptureEndpoint = "endpoint-c";

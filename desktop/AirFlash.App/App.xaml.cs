@@ -77,7 +77,7 @@ public partial class App : Application
             _theme.SetPreference(_uiTheme);
             L.Initialize(_uiLanguage == "system" ? null : [_uiLanguage]);
             Resources["LatencyChoices"] = Choices.Latencies;
-            var audio = new AudioService();
+            var audio = new AudioService(Path.Combine(AppPaths.DataDirectory, "local-mute.json"));
             var factory = new ExtractingEngineFactory();
             _engine = new(token => QueryEngineAsync(factory, token), AppPaths.Log);
             _viewModel = new(store, new WindowsDiscovery(log: AppPaths.Log), new Autostart(), audio, factory, Dispatcher, _engine);
@@ -86,6 +86,8 @@ public partial class App : Application
             _tray = new(_panel, _viewModel, ShowSettings, Quit); _panel.Tray = _tray;
             _instance.Listen(() => Dispatcher.BeginInvoke(() => { if (_settings is not null) _settings.Activate(); else _panel.ShowPanel(); }));
             _viewModel.SettingsChanged += OnSettingsChanged;
+            try { await audio.RecoverPendingMuteAsync(); }
+            catch (Exception error) { _viewModel.ShowError(error); }
             _viewModel.Start();
             if (!args.Args.Contains("--startup")) _panel.ShowPanel();
             AppPaths.Log("WPF host started, JSONL v1. Startup stage=shell ready");
@@ -192,7 +194,7 @@ public partial class App : Application
     }
     private static async Task<int> AudioCheckAsync(string[] args)
     {
-        await using var audio = new AudioService();
+        await using var audio = new AudioService(Path.Combine(Path.GetTempPath(), "applehome-audio-check", Guid.NewGuid().ToString("N"), "local-mute.json"));
         var endpoints = await audio.GetEndpointsAsync();
         var defaultId = await audio.GetDefaultEndpointIdAsync();
         WriteOutput(args, new { ok = true, endpoints = endpoints.Count, devices = endpoints.Select(e => new { e.Id, e.Name, kind = e.Kind.ToString() }), default_endpoint_found = endpoints.Any(e => e.Id == defaultId), note = "Read-only MTA audio enumeration; no playback or mute changes." });

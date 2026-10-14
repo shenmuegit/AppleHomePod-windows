@@ -264,5 +264,9 @@
   "Send Windows system audio to an AirPlay receiver or an existing HomePod stereo pair.": "将 Windows 系统音频发送到 AirPlay 接收端或已有 HomePod 立体声组合。",
   "GPLv3 or later · Based on AirFlash by Ding-Kyoma · .NET / WPF / NAudio / Rust": "GPLv3 或更新版本 · 基于 Ding-Kyoma 的 AirFlash · .NET / WPF / NAudio / Rust",
   "Support the AirFlash upstream author": "支持 AirFlash 上游作者",
-  "Updates are not configured for this preview.": "此测试版尚未配置更新渠道。"
+  "Updates are not configured for this preview.": "此测试版尚未配置更新渠道。",
+  "Capture has stopped receiving audible samples. Local playback was restored; try another output device.": "采集未继续收到有声样本，已恢复本机播放，可选择其他输出设备。",
+  "Could not manage local mute; keep local playback enabled: {0}": "无法管理本机静音，请保留本机播放：{0}",
+  "The local mute recovery file is too large. Local playback remains enabled.": "本机静音恢复文件过大，保留本机播放。",
+  "Could not read local mute recovery. Local playback remains enabled.": "无法读取本机静音恢复文件，保留本机播放。"
 }

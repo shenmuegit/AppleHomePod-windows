@@ -8,19 +8,24 @@ public sealed class AudioService : IAudioService, IAsyncDisposable, IMMNotificat
 {
     private readonly BlockingCollection<Action> _queue = new();
     private readonly TaskCompletionSource _stopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly Dictionary<string, bool> _originalMute = [];
+    private readonly Dictionary<string, (MMDevice Device, AudioEndpointVolumeNotificationDelegate Callback)> _owned = [];
+    private readonly Guid _muteContext = Guid.NewGuid();
+    private readonly string _recoveryPath;
+    private MuteRecoveryJournal? _journal;
+    private MuteRecoveryJournal Journal => _journal ??= new(_recoveryPath);
     private readonly Task _initialized;
     private MMDeviceEnumerator? _notifications;
     private bool _disposed;
     public event Action? EndpointsChanged;
 
-    public AudioService()
+    public AudioService(string recoveryPath)
     {
+        _recoveryPath = recoveryPath;
         var thread = new Thread(() =>
         {
             try { foreach (var operation in _queue.GetConsumingEnumerable()) operation(); }
             finally { _queue.Dispose(); _stopped.TrySetResult(); }
-        }) { IsBackground = true, Name = "AirFlash audio devices" };
+        }) { IsBackground = true, Name = "AppleHome audio devices" };
         thread.SetApartmentState(ApartmentState.MTA);
         thread.Start();
         _initialized = InvokeAsync(() =>
@@ -63,22 +68,66 @@ public sealed class AudioService : IAudioService, IAsyncDisposable, IMMNotificat
     public Task MuteAsync(string? endpointId) => RunAsync(() =>
     {
         using var enumerator = new MMDeviceEnumerator();
-        using var device = endpointId is null ? enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Console) : enumerator.GetDevice(endpointId);
-        // Recording endpoint mute affects the captured signal, not local speakers.
-        if (device.DataFlow != DataFlow.Render || _originalMute.ContainsKey(device.ID)) return true;
-        var previous = device.AudioEndpointVolume.Mute;
-        device.AudioEndpointVolume.Mute = true;
-        _originalMute[device.ID] = previous;
-        return true;
+        var device = endpointId is null ? enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Console) : enumerator.GetDevice(endpointId);
+        var id = device.ID;
+        try
+        {
+            // Recording endpoint mute affects the captured signal, not local speakers.
+            if (device.DataFlow != DataFlow.Render || _owned.ContainsKey(id) || device.AudioEndpointVolume.Mute) return true;
+            Journal.Remember(id, false);
+            device.AudioEndpointVolume.NotificationGuid = _muteContext;
+            AudioEndpointVolumeNotificationDelegate callback = data =>
+            {
+                if (data.EventContext != _muteContext && !data.Muted) _ = ReleaseExternalMuteAsync(id, device);
+            };
+            device.AudioEndpointVolume.OnVolumeNotification += callback;
+            _owned[id] = (device, callback);
+            device.AudioEndpointVolume.Mute = true;
+            return true;
+        }
+        finally { if (!_owned.TryGetValue(id, out var owned) || !ReferenceEquals(owned.Device, device)) device.Dispose(); }
     });
+    private async Task ReleaseExternalMuteAsync(string id, MMDevice device)
+    {
+        try
+        {
+            await InvokeAsync(() =>
+            {
+                if (_owned.TryGetValue(id, out var owned) && ReferenceEquals(owned.Device, device))
+                { Journal.Forget(id); Release(id); }
+                return true;
+            }).ConfigureAwait(false);
+        }
+        catch (Exception error) { AppPaths.Log("Could not release local mute ownership: " + error.Message); }
+    }
+    private void Release(string id)
+    {
+        if (!_owned.Remove(id, out var owned)) return;
+        try { owned.Device.AudioEndpointVolume.OnVolumeNotification -= owned.Callback; }
+        finally { owned.Device.Dispose(); }
+    }
+    public Task RecoverPendingMuteAsync() => RunAsync(() => { _ = Journal; Restore(); return true; });
     public Task RestoreAsync() => RunAsync(() => { Restore(); return true; });
     private void Restore()
     {
-        if (_originalMute.Count == 0) return;
+        if (_journal is null || _journal.Entries.Count == 0) return;
         using var enumerator = new MMDeviceEnumerator();
-        foreach (var (id, previous) in _originalMute.ToArray())
-            try { using var device = enumerator.GetDevice(id); device.AudioEndpointVolume.Mute = previous; _originalMute.Remove(id); }
-            catch (System.Runtime.InteropServices.COMException) { /* Retry when the endpoint returns. */ }
+        foreach (var id in _journal.Entries.Keys.ToArray())
+        {
+            MMDevice? device = null;
+            var held = _owned.TryGetValue(id, out var owned);
+            try
+            {
+                device = held ? owned.Device : enumerator.GetDevice(id);
+                var current = device.AudioEndpointVolume.Mute;
+                if (_journal.RestoreValue(id, current) is { } previous && current != previous)
+                { device.AudioEndpointVolume.NotificationGuid = _muteContext; device.AudioEndpointVolume.Mute = previous; }
+                _journal.Forget(id);
+                Release(id);
+            }
+            catch (System.Runtime.InteropServices.COMException) { Release(id); /* Journal retries when the endpoint returns. */ }
+            finally { if (!held) device?.Dispose(); }
+        }
     }
     public void OnDefaultDeviceChanged(DataFlow flow, Role role, string defaultDeviceId) { if (flow == DataFlow.Render && role == Role.Console) EndpointsChanged?.Invoke(); }
     public void OnDeviceStateChanged(string deviceId, DeviceState newState) => EndpointsChanged?.Invoke();
@@ -96,7 +145,11 @@ public sealed class AudioService : IAudioService, IAsyncDisposable, IMMNotificat
                 cleanup = InvokeAsync(() =>
                 {
                     try { Restore(); }
-                    finally { if (_notifications is not null) { _notifications.UnregisterEndpointNotificationCallback(this); _notifications.Dispose(); } }
+                    finally
+                    {
+                        foreach (var id in _owned.Keys.ToArray()) Release(id);
+                        if (_notifications is not null) { _notifications.UnregisterEndpointNotificationCallback(this); _notifications.Dispose(); }
+                    }
                     return true;
                 });
                 _disposed = true;

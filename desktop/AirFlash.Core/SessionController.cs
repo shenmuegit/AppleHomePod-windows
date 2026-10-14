@@ -27,6 +27,10 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
     private Receiver? _receiver;
     private long _generation;
     private bool _muted;
+    private readonly SemaphoreSlim _localMuteGate = new(1, 1);
+    private LocalMuteGuard _localMuteGuard = new();
+    private bool _localMuteAllowed, _localMuteApplied;
+    private string _localMuteWarning = "";
     private readonly SemaphoreSlim _equalizerWriter = new(1, 1);
     private EqualizerSettings? _equalizerPreview;
     private Guid? _equalizerOwner;
@@ -187,9 +191,10 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
         try { await StartLockedAsync(receiver, settings, requestPin).ConfigureAwait(false); }
         finally { _serial.Release(); }
     }
-    private async Task StartLockedAsync(Receiver receiver, AppSettings settings, Func<Receiver, CancellationToken, Task<string?>>? requestPin)
+    private async Task StartLockedAsync(Receiver receiver, AppSettings settings, Func<Receiver, CancellationToken, Task<string?>>? requestPin, bool resetMuteGuard = true)
     {
         await StopLockedAsync().ConfigureAwait(false);
+        if (resetMuteGuard) { _localMuteGuard = new(); _localMuteAllowed = false; _localMuteWarning = ""; }
         _settings = settings.Clone(); _receiver = receiver;
         var epoch = ++_generation;
         lock (_sync) { _diagnostics = new(); _warnings.Clear(); _snapshot = new(PlaybackState.Idle); }
@@ -232,11 +237,10 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
             _settings = settings.Clone();
             lock (_sync) ++_equalizerSequence;
             if (_receiver is { } receiver && Snapshot.IsActive && Snapshot.State != PlaybackState.Pairing && Signature(receiver, old) != Signature(receiver, settings))
-                await StartLockedAsync(receiver, settings, null).ConfigureAwait(false);
+                await StartLockedAsync(receiver, settings, null, old.EffectiveEndpoint != settings.EffectiveEndpoint).ConfigureAwait(false);
             else
             {
                 if (!settings.MuteWhileStreaming) await RestoreAudioAsync().ConfigureAwait(false);
-                else if (Snapshot.State is PlaybackState.Streaming or PlaybackState.Standby) await audio.MuteAsync(settings.EffectiveEndpoint).ConfigureAwait(false);
                 await SendGainAsync().ConfigureAwait(false);
                 await SendEqualizerAsync().ConfigureAwait(false);
             }
@@ -250,7 +254,7 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
         {
             if (_receiver is not { } previous) return;
             if (Snapshot.IsActive && Snapshot.State != PlaybackState.Pairing && Signature(previous, _settings) != Signature(receiver, settings))
-                await StartLockedAsync(receiver, settings, null).ConfigureAwait(false);
+                await StartLockedAsync(receiver, settings, null, resetMuteGuard: false).ConfigureAwait(false);
             else
             {
                 lock (_sync) { _receiver = receiver; _settings = settings.Clone(); }
@@ -325,9 +329,8 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
                         if (kind == "streaming")
                         {
                             startedAt = Stopwatch.GetTimestamp();
-                            if (_settings.MuteWhileStreaming) await audio.MuteAsync(_settings.EffectiveEndpoint).ConfigureAwait(false);
                             log?.Invoke($"Streaming started: {receiver.Id}; target latency {settings.Latency(receiver.Id)} ms; reconnect attempts {attempts}");
-                            Publish(epoch, PlaybackState.Streaming);
+                            Publish(epoch, PlaybackState.Streaming, _localMuteWarning);
                         }
                         else if (kind == "device_volume" && startedAt != 0 && item.Text("host") == volumeHost)
                         {
@@ -362,9 +365,11 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
                         {
                             var parsed = new StreamMetrics(metrics.Number("capture_to_send_p95_ms"), metrics.Number("max_queue_age_ms"), metrics.Integer("underrun_packets"), metrics.Integer("dropped_frames"), metrics.Integer("input_rate") is { } rate ? (int)rate : null);
                             var lastAudio = metrics.Number("last_audio_qpc_ns") ?? 0;
+                            if (metrics.Integer("last_audio_qpc_ns") is { } audioMarker)
+                                await ObserveLocalMuteAsync(audioMarker, epoch).ConfigureAwait(false);
                             var silence = lastAudio > 0 ? (Stopwatch.GetTimestamp() * (1e9 / Stopwatch.Frequency) - lastAudio) / 1e9 : Stopwatch.GetElapsedTime(startedAt).TotalSeconds;
                             var threshold = _settings.ReadOptions(Snapshot.Receiver?.Id ?? receiver.Id).StandbySeconds ?? _settings.StandbySilenceSeconds;
-                            Publish(epoch, _settings.StandbyEnabled && silence >= threshold ? PlaybackState.Standby : PlaybackState.Streaming, metrics: parsed);
+                            Publish(epoch, _settings.StandbyEnabled && silence >= threshold ? PlaybackState.Standby : PlaybackState.Streaming, _localMuteWarning, parsed);
                         }
                     }
                 }
@@ -461,7 +466,43 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
     }
     private async Task RestoreAudioAsync()
     {
-        try { await audio.RestoreAsync().ConfigureAwait(false); } catch (Exception error) { log?.Invoke(L.Format("Failed to restore local mute state: {0}", error.Message)); }
+        await _localMuteGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            try { await audio.RestoreAsync().ConfigureAwait(false); } catch (Exception error) { log?.Invoke(L.Format("Failed to restore local mute state: {0}", error.Message)); }
+            _localMuteApplied = false;
+        }
+        finally { _localMuteGate.Release(); }
+    }
+    private async Task ObserveLocalMuteAsync(long marker, long epoch)
+    {
+        await _localMuteGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (epoch != _generation || !_settings.MuteWhileStreaming) return;
+            var action = _localMuteGuard.Observe(marker);
+            if (action == LocalMuteAction.RestoreAndWarn)
+            {
+                _localMuteAllowed = false;
+                _localMuteWarning = L.Get("Capture has stopped receiving audible samples. Local playback was restored; try another output device.");
+                await audio.RestoreAsync().ConfigureAwait(false); _localMuteApplied = false;
+            }
+            else
+            {
+                if (action == LocalMuteAction.Mute) _localMuteAllowed = true;
+                if (_localMuteAllowed && !_localMuteApplied && marker > 0)
+                { await audio.MuteAsync(_settings.EffectiveEndpoint).ConfigureAwait(false); _localMuteApplied = true; }
+            }
+        }
+        catch (Exception error)
+        {
+            _localMuteAllowed = false;
+            _localMuteWarning = L.Format("Could not manage local mute; keep local playback enabled: {0}", error.Message);
+            log?.Invoke(_localMuteWarning);
+            try { await audio.RestoreAsync().ConfigureAwait(false); _localMuteApplied = false; }
+            catch (Exception restoreError) { log?.Invoke(L.Format("Failed to restore local mute state: {0}", restoreError.Message)); }
+        }
+        finally { _localMuteGate.Release(); }
     }
     private void Publish(long epoch, PlaybackState state, string message = "", StreamMetrics? metrics = null)
     {
@@ -479,5 +520,6 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
         lock (_sync) { _equalizerDisposed = true; _equalizerEdit?.Cancel(); _equalizerEdit = null; _equalizerEditTask = null; }
         await StopAsync().ConfigureAwait(false);
         _serial.Dispose();
+        _localMuteGate.Dispose();
     }
 }
