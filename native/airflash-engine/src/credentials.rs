@@ -20,7 +20,7 @@ pub fn directory() -> PathBuf {
     std::env::var_os("APPDATA")
         .map(PathBuf::from)
         .unwrap_or_default()
-        .join("AirFlash/native-credentials")
+        .join("AppleHome/native-credentials")
 }
 pub fn path(root: &Path, id: &str) -> PathBuf {
     let normalized = id.replace(':', "").to_ascii_lowercase();
@@ -45,7 +45,7 @@ fn protect(input: &[u8], encrypt: bool) -> Result<Zeroizing<Vec<u8>>> {
         if encrypt {
             CryptProtectData(
                 &blob,
-                w!("AirFlash"),
+                w!("AppleHome"),
                 Some(&entropy),
                 None,
                 None,
@@ -123,6 +123,10 @@ pub fn load(root: &Path, id: &str) -> Result<Option<Credentials>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn default_store_is_separate_from_upstream() {
+        assert!(directory().ends_with("AppleHome/native-credentials"));
+    }
     #[test]
     fn dpapi_roundtrip_and_tamper() {
         let original = b"synthetic-test-key";

@@ -171,7 +171,7 @@ internal static class UiRegression
         }
         finally { store.SaveGate?.TrySetResult(); audio.EnumerationGate?.TrySetResult(); await vm.ApplicationCompleted; window.Close(); }
         await RunIdentityRegressionAsync(checks, directory);
-        await RunAutoConnectIdentityRegressionAsync(checks);
+        await RunManualConnectionIdentityRegressionAsync(checks);
         await RunDiscoveryDemandRegressionAsync(checks);
         await RunStereoIdentityRegressionAsync(checks, directory);
     }
@@ -215,25 +215,29 @@ internal static class UiRegression
         }
         finally { await vm.ApplicationCompleted; window.Close(); }
     }
-    private static async Task RunAutoConnectIdentityRegressionAsync(List<string> checks)
+    private static async Task RunManualConnectionIdentityRegressionAsync(List<string> checks)
     {
         var store = new UiSmoke.MemoryStore();
         var settings = store.Load(); settings.AutoConnectOnDiscover = true; store.Save(settings);
         var discovery = new UiSmoke.MockDiscovery { Items = [new("127.0.0.1:7000", "Office", "127.0.0.1")] };
         var engine = new UiSmoke.MockFactory { FailOpen = true };
         await using var app = new AppViewModel(store, discovery, new UiSmoke.MockAutostart(), new UiSmoke.MockAudio(), engine, Application.Current.Dispatcher);
-        app.Start(); await app.Startup; await Until(() => app.Snapshot.State == PlaybackState.Error);
-        Check(engine.CreatedCount == 1, "automatic connection failure makes one attempt", checks);
+        app.SetPanelVisible(true); app.Start(); await app.Startup;
+        await Until(() => app.AllReceivers.Count == 1);
+        await app.ToggleAsync(app.AllReceivers.Single()); await Until(() => app.Snapshot.State == PlaybackState.Error);
+        Check(engine.CreatedCount == 1, "manual connection failure makes one attempt", checks);
         discovery.Items = ReceiverAggregator.Build([new ServiceRecord("Office._airplay._tcp.local", "_airplay._tcp.local", "127.0.0.1", 7000,
             new Dictionary<string, string> { ["deviceid"] = "AA:BB:CC:DD:EE:01" })]);
         discovery.Publish(); await Until(() => app.Snapshot.Receiver?.Id == "aabbccddee01");
         await Task.Delay(1200); await Pump();
-        Check(engine.CreatedCount == 1 && app.Snapshot.State == PlaybackState.Error && app.Settings.LastReceiverId == "aabbccddee01", "identity promotion preserves failed automatic attempts and updates the error session", checks);
+        Check(engine.CreatedCount == 1 && app.Snapshot.State == PlaybackState.Error && app.Settings.LastReceiverId == "aabbccddee01", "identity promotion preserves the failed session without restarting playback", checks);
         discovery.Items = []; discovery.Publish(); await Until(() => app.AllReceivers.All(r => !r.Online));
         discovery.Items = ReceiverAggregator.Build([new ServiceRecord("Office._airplay._tcp.local", "_airplay._tcp.local", "127.0.0.1", 7000,
             new Dictionary<string, string> { ["deviceid"] = "AA:BB:CC:DD:EE:01" })]);
-        discovery.Publish(); await Until(() => engine.CreatedCount == 2 && app.Snapshot.State == PlaybackState.Error);
-        Check(app.AllReceivers.Single().Id == "aabbccddee01", "a real offline-to-online transition permits another automatic attempt", checks);
+        discovery.Publish(); await Until(() => app.AllReceivers.Single().Online); await Task.Delay(1200); await Pump();
+        Check(engine.CreatedCount == 1, "rediscovery does not restart a failed manual session", checks);
+        await app.ToggleAsync(app.AllReceivers.Single()); await Until(() => engine.CreatedCount == 2 && app.Snapshot.State == PlaybackState.Error);
+        Check(app.AllReceivers.Single().Id == "aabbccddee01", "explicit retry uses the promoted physical identity", checks);
     }
     private static async Task RunStereoIdentityRegressionAsync(List<string> checks, string directory)
     {

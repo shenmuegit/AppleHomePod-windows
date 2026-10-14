@@ -12,7 +12,7 @@ public sealed class SingleInstance : IAsyncDisposable
     public SingleInstance(string? isolatedSuffix = null)
     {
         var suffix = WindowsIdentity.GetCurrent().User?.Value ?? Environment.UserName;
-        _pipeName = "AirFlash.Wpf." + suffix + (isolatedSuffix is null ? "" : "." + isolatedSuffix);
+        _pipeName = AppPaths.Name + ".Wpf." + suffix + (isolatedSuffix is null ? "" : "." + isolatedSuffix);
         _mutex = new(true, @"Local\" + _pipeName, out var created);
         IsOwner = created;
     }

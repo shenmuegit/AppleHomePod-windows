@@ -37,7 +37,7 @@ internal static class Program
             try { App.WriteOutput(args, new { ok = false, stage, error = error.ToString(), hresult = $"0x{error.HResult:X8}" }); }
             catch (Exception reportError) { AppPaths.Log($"Diagnostic output failed: {reportError.Message}"); }
             if (!IsDiagnostic(args))
-                MessageBox(IntPtr.Zero, $"{error.Message}\n\nLogs: {AppPaths.LogDirectory}", "AirFlash startup failed", 0x10);
+                MessageBox(IntPtr.Zero, $"{error.Message}\n\nLogs: {AppPaths.LogDirectory}", $"{AppPaths.Name} startup failed", 0x10);
             return 1;
         }
     }

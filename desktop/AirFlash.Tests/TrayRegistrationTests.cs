@@ -5,6 +5,15 @@ namespace AirFlash.Tests;
 
 public class TrayRegistrationTests
 {
+    [Theory]
+    [InlineData(0, true, true)]
+    [InlineData(1, true, true)]
+    [InlineData(0, false, false)]
+    [InlineData(1, false, false)]
+    [InlineData(-2147467259, true, false)]
+    public void RectangleRequiresSuccessfulStatusAndNonemptyBounds(int result, bool hasArea, bool expected)
+        => Assert.Equal(expected, TrayRegistration.HasUsableRectangle(result, hasArea));
+
     private sealed class Shell
     {
         public List<(TrayOperation Operation, TrayIdentity Identity)> Calls { get; } = [];

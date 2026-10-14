@@ -58,13 +58,7 @@ public partial class App : Application
                 AppPaths.DataDirectory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(args.Args[outputIndex + 1]))!, "isolated-data");
                 Shutdown(await DiscoveryPerf.RunAsync(args.Args)); return;
             }
-            if (args.Args.Contains("--update-check"))
-            {
-                using var client = new System.Net.Http.HttpClient { MaxResponseContentBufferSize = 1024 * 1024 };
-                var release = await new UpdateService(client).CheckAsync();
-                WriteOutput(args.Args, new { ok = true, version = AppPaths.Version, latest = release?.Version.ToString(3), download = release?.DownloadPage.AbsoluteUri });
-                Shutdown(0); return;
-            }
+            if (args.Args.Contains("--update-check")) throw new NotSupportedException(L.Get("Updates are not configured for this preview."));
             if (args.Args.Contains("--self-check")) { Shutdown(await SelfCheckAsync(args.Args)); return; }
             if (args.Args.Contains("--stability-check")) { Shutdown(await StabilityCheck.RunAsync(args.Args)); return; }
             if (args.Args.Contains("--compat-check")) { Shutdown(await CompatibilityCheckAsync(args.Args)); return; }

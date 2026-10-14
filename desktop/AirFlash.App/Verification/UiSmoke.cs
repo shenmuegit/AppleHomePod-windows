@@ -42,12 +42,21 @@ internal static class UiSmoke
         var guidIndex = Array.IndexOf(args, "--tray-guid");
         if (guidIndex >= 0 && guidIndex + 1 >= args.Length) throw new ArgumentException("--tray-guid requires an isolated GUID.");
         var trayGuid = guidIndex >= 0 ? Guid.Parse(args[guidIndex + 1]) : Guid.NewGuid();
-        if (trayGuid == new Guid("f3f63f27-a6df-4a27-a942-b448e17dcd12")) throw new ArgumentException("Use an isolated verification GUID.");
+        if (trayGuid == new Guid("b84f264f-7e4d-4a14-a216-7b22e4e78010")) throw new ArgumentException("Use an isolated verification GUID.");
         var menuOpened = false; var quitRequestedFromTray = false;
         var windowIdentityForVerification = args.Contains("--tray-window-id");
         using var tray = new TrayService(panel, app, () => menuOpened = true, () => quitRequestedFromTray = true, trayGuid, windowIdentityForVerification); panel.Tray = tray;
         try
         {
+            var legacyDirectory = Path.Combine(directory, "storage-isolation", "AirFlash");
+            Directory.CreateDirectory(legacyDirectory);
+            var legacyConfig = Path.Combine(legacyDirectory, "config.json");
+            const string sentinel = "{\"schema_version\":2,\"master_volume\":37}";
+            File.WriteAllText(legacyConfig, sentinel);
+            var isolatedStore = new SettingsStore(Path.Combine(directory, "storage-isolation", AppPaths.Name, "config.json"));
+            var isolatedSettings = isolatedStore.Load(); isolatedSettings.MasterVolume = 25; isolatedStore.Save(isolatedSettings);
+            Check(File.ReadAllText(legacyConfig) == sentinel, "AppleHome saving preserves the upstream settings store", checks);
+            await SavedAutoConnectNeverStartsCapture(checks);
             var instanceName = "verification-" + Guid.NewGuid().ToString("N");
             await using (var firstInstance = new SingleInstance(instanceName))
             await using (var secondInstance = new SingleInstance(instanceName))
@@ -226,6 +235,22 @@ internal static class UiSmoke
         catch (Exception error) { App.WriteOutput(args, new { ok = false, checks, error = error.ToString() }); return 1; }
         finally { settings?.Close(); panel.ShutdownPanel(); }
     }
+    private static async Task SavedAutoConnectNeverStartsCapture(List<string> checks)
+    {
+        var store = new MemoryStore();
+        var settings = store.Load(); settings.AutoConnectOnDiscover = true; settings.Options("a").AutoConnect = true; store.Save(settings);
+        for (var run = 0; run < 2; run++)
+        {
+            var factory = new MockFactory();
+            await using var app = new AppViewModel(store, new MockDiscovery(), new MockAutostart(), new MockAudio(), factory, Application.Current.Dispatcher);
+            app.SetPanelVisible(true); app.Start(); await app.Startup; await Task.Delay(1200); await Pump();
+            Check(app.Snapshot.State == PlaybackState.Idle && !factory.Commands.Any(c => c.Text("command") == "start"), "saved auto-connect never starts capture", checks);
+            await app.ToggleAsync(app.AllReceivers.First(r => r.Id == "a"));
+            await Until(() => app.Snapshot.State == PlaybackState.Streaming);
+            Check(factory.Commands.Count(c => c.Text("command") == "start") == 1, "explicit user action starts exactly one session", checks);
+            await app.StopAsync();
+        }
+    }
     private static async Task VerifyStartupFailureAsync(List<string> checks, string directory)
     {
         var attempts = 0;
@@ -319,7 +344,8 @@ internal static class UiSmoke
     private static bool TrayRectangleExists(Guid guid, TrayIdentity identity, IntPtr window)
     {
         var identifier = new TrayIdentifier { Size = (uint)Marshal.SizeOf<TrayIdentifier>(), Window = window, Id = 1, Guid = identity == TrayIdentity.Guid ? guid : Guid.Empty };
-        return Shell_NotifyIconGetRect(ref identifier, out _) == 0;
+        var result = Shell_NotifyIconGetRect(ref identifier, out var rectangle);
+        return TrayRegistration.HasUsableRectangle(result, rectangle.Right > rectangle.Left && rectangle.Bottom > rectangle.Top);
     }
     [DllImport("shell32.dll")] private static extern int Shell_NotifyIconGetRect(ref TrayIdentifier identifier, out NativeWindowPlacement.Rectangle rectangle);
     [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr handle, uint message, IntPtr wParam, IntPtr lParam);

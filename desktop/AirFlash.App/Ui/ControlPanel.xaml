@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:loc="clr-namespace:AirFlash.App.Ui" xmlns:vm="clr-namespace:AirFlash.App.ViewModels" x:Class="AirFlash.App.Ui.ControlPanel" Title="AirFlash" Width="440" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize" ShowInTaskbar="False" Topmost="True" UseLayoutRounding="True" SnapsToDevicePixels="True" PreviewKeyDown="OnKeyDown" Deactivated="OnDeactivated" Closing="OnClosing">
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:loc="clr-namespace:AirFlash.App.Ui" xmlns:vm="clr-namespace:AirFlash.App.ViewModels" xmlns:services="clr-namespace:AirFlash.App.Services" x:Class="AirFlash.App.Ui.ControlPanel" Title="{x:Static services:AppPaths.Name}" Width="440" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize" ShowInTaskbar="False" Topmost="True" UseLayoutRounding="True" SnapsToDevicePixels="True" PreviewKeyDown="OnKeyDown" Deactivated="OnDeactivated" Closing="OnClosing">
   <Window.Resources>
     <!-- Application-owned vectors keep these icons independent of installed fonts. -->
     <Geometry x:Key="SettingsIconGeometry">M 10.19,4.72 L 10.44,2.12 13.56,2.12 13.81,4.72 15.86,5.57 17.88,3.91 20.09,6.12 18.43,8.14 19.28,10.19 21.88,10.44 21.88,13.56 19.28,13.81 18.43,15.86 20.09,17.88 17.88,20.09 15.86,18.43 13.81,19.28 13.56,21.88 10.44,21.88 10.19,19.28 8.14,18.43 6.12,20.09 3.91,17.88 5.57,15.86 4.72,13.81 2.12,13.56 2.12,10.44 4.72,10.19 5.57,8.14 3.91,6.12 6.12,3.91 8.14,5.57 Z M 15.5,12 A 3.5,3.5 0 1 1 8.5,12 A 3.5,3.5 0 1 1 15.5,12 Z</Geometry>
@@ -31,7 +31,7 @@
         </Grid.ColumnDefinitions>
         <StackPanel Orientation="Horizontal">
           <Image Source="{StaticResource AppLogo}" Width="26" Height="26" VerticalAlignment="Center" Margin="0,2,10,0"/>
-          <TextBlock Text="AirFlash" FontSize="21" FontWeight="SemiBold" VerticalAlignment="Center"/>
+          <TextBlock Text="{x:Static services:AppPaths.Name}" FontSize="21" FontWeight="SemiBold" VerticalAlignment="Center"/>
         </StackPanel>
         <Button Grid.Column="1" Style="{StaticResource IconButton}" ToolTip="{loc:Text 'Settings'}" AutomationProperties.Name="{loc:Text 'Settings'}" Click="OnSettings" Margin="0,0,7,0">
           <Viewbox Width="18" Height="18" Stretch="Uniform">

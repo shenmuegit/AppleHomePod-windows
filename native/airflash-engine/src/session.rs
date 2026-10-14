@@ -283,7 +283,7 @@ impl Member {
         let mut setup = vec![
             ("deviceID", string(sender_id)),
             ("macAddress", string(sender_id)),
-            ("name", string("AirFlash")),
+            ("name", string("AppleHome")),
             ("sessionUUID", string(Uuid::new_v4().to_string())),
             ("timingProtocol", string(options.timing.to_uppercase())),
             ("isMultiSelectAirPlay", Value::Boolean(true)),

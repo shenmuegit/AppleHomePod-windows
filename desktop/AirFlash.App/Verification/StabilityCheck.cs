@@ -44,7 +44,7 @@ internal static class StabilityCheck
         var discovery = new UiSmoke.MockDiscovery { Items = [receiver] };
         var engine = new UiSmoke.MockFactory();
         await using var app = new AppViewModel(store, discovery, new UiSmoke.MockAutostart(), new UiSmoke.MockAudio(), engine, Application.Current.Dispatcher);
-        app.Start(); await app.Startup;
+        app.Start(); await app.Startup; await app.ToggleAsync(receiver);
         await Until(() => app.Snapshot.State == PlaybackState.Streaming);
         var starts = engine.CreatedCount;
 

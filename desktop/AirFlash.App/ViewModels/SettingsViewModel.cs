@@ -14,10 +14,6 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
     public EqualizerEditor Equalizer { get; }
     private string _equalizerError = "";
     public string EqualizerError { get => _equalizerError; private set => Set(ref _equalizerError, value); }
-    private static readonly System.Net.Http.HttpClient UpdateClient = new() { MaxResponseContentBufferSize = 1024 * 1024 };
-    public UpdateCheckState Updates { get; } = new(new UpdateService(UpdateClient), Version.Parse(AppPaths.Version));
-    public AsyncCommand CheckUpdatesCommand { get; }
-    public RelayCommand OpenDownloadCommand { get; }
     public AppViewModel App { get; }
     public AppSettings Draft { get; }
     private AppSettings _baseline;
@@ -45,7 +41,7 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
             if (value == NetworkPage) RefreshAdapters();
         }
     }
-    public string[] Pages { get; } = [L.Get("General"), L.Get("AirFlash streaming"), L.Get("Equalizer"), L.Get("Audio capture"), L.Get("Receivers"), L.Get("Monitor"), L.Get("Network"), L.Get("About")];
+    public string[] Pages { get; } = [L.Get("General"), L.Get("Audio streaming"), L.Get("Equalizer"), L.Get("Audio capture"), L.Get("Receivers"), L.Get("Monitor"), L.Get("Network"), L.Get("About")];
     public string PageTitle => Pages[Math.Clamp(SelectedPage, 0, Pages.Length - 1)];
     public string PageDescription => new[] { L.Get("Customize startup and appearance"), L.Get("Balance responsiveness and connection stability"), L.Get("Shape the sound sent to all receivers"), L.Get("Choose the audio source to send to HomePod"), L.Get("Manage receivers, connections and per-device settings"), L.Get("Live statistics for the current session"), L.Get("Choose where AirPlay receivers are discovered"), L.Get("Windows audio, wirelessly to HomePod") }[Math.Clamp(SelectedPage, 0, Pages.Length - 1)];
     public ObservableCollection<AudioEndpoint> Endpoints { get; } = [];
@@ -67,16 +63,6 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
     public RelayCommand LicensesCommand { get; }
     public SettingsViewModel(AppViewModel app)
     {
-        CheckUpdatesCommand = new(Updates.CheckAsync, _ => { });
-        OpenDownloadCommand = new(() =>
-        {
-            try
-            {
-                if (Updates.DownloadPage is { } url)
-                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url.AbsoluteUri) { UseShellExecute = true });
-            }
-            catch (Exception error) { ShowError(error); }
-        });
         App = app; Draft = app.Settings.Clone(); _baseline = Draft.Clone();
         Equalizer = new(Draft.Equalizer, EqualizerSampleRate, EqualizerChanged);
         App.Session.EqualizerFeedback += EqualizerFeedback;
@@ -314,7 +300,7 @@ public sealed class SettingsViewModel : ObservableObject, IDisposable
         if (_disposed) return;
         App.Session.EqualizerFeedback -= EqualizerFeedback; Equalizer.Dispose();
         _ = ClearPreviewAsync();
-        Updates.Dispose(); _disposed = true; App.CatalogChanged -= RefreshCatalog; App.Endpoints.Changed -= UpdateEndpoints;
+        _disposed = true; App.CatalogChanged -= RefreshCatalog; App.Endpoints.Changed -= UpdateEndpoints;
         NetworkChange.NetworkAddressChanged -= NetworkChanged; NetworkChange.NetworkAvailabilityChanged -= NetworkAvailabilityChanged;
         App.SetMonitorVisible(false);
         Draft.PropertyChanged -= DraftChanged; Draft.ManualReceivers.CollectionChanged -= ManualChanged;

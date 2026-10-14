@@ -21,7 +21,7 @@ public sealed class TrayService : IDisposable
     private readonly Action _settings, _quit;
     private readonly uint _taskbarCreated = RegisterWindowMessage("TaskbarCreated");
     private readonly Guid _guid;
-    private static readonly Guid ProductionGuid = new("f3f63f27-a6df-4a27-a942-b448e17dcd12");
+    private static readonly Guid ProductionGuid = new("b84f264f-7e4d-4a14-a216-7b22e4e78010");
     private const uint CallbackMessage = 0x8001;
     private string? _lastTitle;
     private bool _disposed;
@@ -31,7 +31,7 @@ public sealed class TrayService : IDisposable
     internal TrayService(ControlPanel panel, AppViewModel viewModel, Action settings, Action quit, Guid guid, bool windowIdentityForVerification = false)
     {
         _panel = panel; _viewModel = viewModel; _settings = settings; _quit = quit; _guid = guid;
-        _source = new(new HwndSourceParameters("AirFlash.Tray") { WindowStyle = unchecked((int)0x80000000), Width = 0, Height = 0 });
+        _source = new(new HwndSourceParameters(AppPaths.Name + ".Tray") { WindowStyle = unchecked((int)0x80000000), Width = 0, Height = 0 });
         _iconPixels = AppIconService.Pixels(AppIconService.TaskbarDpi(), true);
         try { _icon = LoadTrayIcon(_iconPixels); }
         catch { _source.Dispose(); throw; }
@@ -90,7 +90,7 @@ public sealed class TrayService : IDisposable
     {
         var data = new NotifyData { Size = (uint)Marshal.SizeOf<NotifyData>(), Window = _source.Handle, Id = 1,
             Flags = 1 | 2 | 4 | 0x80 | (identity == TrayIdentity.Guid ? 0x20u : 0), Callback = CallbackMessage,
-            Icon = icon, Tip = $"AirFlash · {_viewModel.StatusTitle}", Guid = identity == TrayIdentity.Guid ? _guid : Guid.Empty,
+            Icon = icon, Tip = $"{AppPaths.Name} · {_viewModel.StatusTitle}", Guid = identity == TrayIdentity.Guid ? _guid : Guid.Empty,
             Info = "", InfoTitle = "", Version = operation == TrayOperation.SetVersion ? 4u : 0 };
         return Shell_NotifyIcon((uint)operation, ref data);
     }
@@ -164,8 +164,9 @@ public sealed class TrayService : IDisposable
         if (_disposed || !IsRegistered) return false;
         var identifier = new IconIdentifier { Size = (uint)Marshal.SizeOf<IconIdentifier>(), Window = _source.Handle, Id = 1, Guid = IdentityGuid };
         var result = Shell_NotifyIconGetRect(ref identifier, out rectangle);
-        _registration.ReportResult("GetRect", result == 0, _registration.Identity, $"hresult=0x{result:x8}");
-        return result == 0;
+        var usable = TrayRegistration.HasUsableRectangle(result, rectangle.Right > rectangle.Left && rectangle.Bottom > rectangle.Top);
+        _registration.ReportResult("GetRect", usable, _registration.Identity, $"hresult=0x{result:x8} rect={rectangle.Left},{rectangle.Top},{rectangle.Right},{rectangle.Bottom}");
+        return usable;
     }
     public MonitorArea WorkArea()
     {

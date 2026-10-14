@@ -12,6 +12,8 @@ internal sealed class TrayRegistration(
     Func<DateTimeOffset>? clock = null,
     TrayIdentity? initialIdentity = null) : IDisposable
 {
+    // Windows 10 can return S_FALSE with valid bounds after a shell rebuild.
+    internal static bool HasUsableRectangle(int result, bool hasArea) => result >= 0 && hasArea;
     private TrayIdentity? _selectedIdentity = initialIdentity;
     private readonly Dictionary<(string, TrayIdentity), DateTimeOffset> _failures = [];
     public TrayIdentity Identity => _selectedIdentity ?? TrayIdentity.Guid;
