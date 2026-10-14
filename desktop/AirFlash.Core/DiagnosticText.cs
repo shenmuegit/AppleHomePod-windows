@@ -7,6 +7,8 @@ public static class DiagnosticText
     {
         const string labels = @"(?:host|address|ip_?address|(?:device|receiver)_?(?:id|name)|name|old_?id|new_?id)";
         text = Regex.Replace(Protect(text), "(?i)(\"" + labels + @"""\s*:\s*)(""(?:\\.|[^""\\])*""|[0-9]+)", "$1\"[device]\"");
+        // Free-form engine text can embed arbitrary room, endpoint and device names.
+        text = Regex.Replace(text, @"(?i)(""(?:message|detail)""\s*:\s*)""(?:\\.|[^""\\])*""", "$1\"[detail omitted]\"");
         text = Regex.Replace(text, @"\b(?:\d{1,3}\.){3}\d{1,3}\b", "[address]");
         return Regex.Replace(text, @"(?i)\b(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b", "[device]");
     }
@@ -19,7 +21,7 @@ public static class DiagnosticText
             text = text.Replace(path.Replace("\\", "\\\\"), "[user-path]", StringComparison.OrdinalIgnoreCase)
                 .Replace(path, "[user-path]", StringComparison.OrdinalIgnoreCase);
         }
-        const string labels = @"(?:pin|password|secret|token|credentials|(?:private_|public_|session_)?key|pairing_pin)";
+        const string labels = @"(?:pin|password|(?:client[_-]?)?secret|(?:(?:access|refresh|auth)[_-]?)?token|credentials|(?:(?:private|public|session|api)[_-]?)?key|pairing[_-]?pin)";
         text = Regex.Replace(text, "(?i)(\"" + labels + @"""\s*:\s*)(""(?:\\.|[^""\\])*""|[0-9]+)", "$1\"[redacted]\"");
         return Regex.Replace(text, @"(?i)\b(" + labels + @")\s*[:=]\s*(""[^""\r\n]*""|[^\s,;]+)", "$1=[redacted]");
     }

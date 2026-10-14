@@ -48,11 +48,18 @@ anchor wire formats have regression coverage. The packet SSRC is zero on PTP.
 These protocol changes have **not** passed acoustic qualification on the actual
 mini and must not be described as a completed audio fix.
 
-Current software checks: .NET 242 passed, Rust 53 passed / 2 explicitly ignored,
-Python 95 passed, Clippy and Ruff passed, UI smoke 576 checks passed. A separate
+Final review fixes restrict capture to playback endpoints, preserve external mute
+choices across reconnect and persistence failures, reject invalid manual IDs,
+redact secret-label variants and free-form exported details, and reject stale
+discovery snapshots after interface changes. Each finding has RED-to-GREEN coverage.
+
+Current software checks: .NET 258 passed, Rust 53 passed / 2 explicitly ignored,
+Python 95 passed, Clippy and Ruff passed, UI smoke 577 checks passed. A separate
 real Windows endpoint harness passed 8 mute ownership/recovery checks without
-capturing audio or changing the volume scalar. See docs/VALIDATION.md for the
-known inaudible mini trials and the independent sender comparison.
+capturing audio or changing the volume scalar; the locked-journal failure path
+also passed after reproducing the original fault. Unsaved journal clears remain
+ambiguous across a crash, are surfaced, and are retried before closing.
+See docs/VALIDATION.md for the inaudible Windows trials and the audible iPhone baseline.
 
 The independent Node sender is an ignored diagnostic checkout and is not a
 runtime or source dependency of the shipped native application. The portable

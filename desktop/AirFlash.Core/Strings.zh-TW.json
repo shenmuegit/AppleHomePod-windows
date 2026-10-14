@@ -261,5 +261,9 @@
   "Capture has stopped receiving audible samples. Local playback was restored; try another output device.": "擷取未繼續收到有聲樣本，已恢復本機播放，可選擇其他輸出裝置。",
   "Could not manage local mute; keep local playback enabled: {0}": "無法管理本機靜音，請保留本機播放：{0}",
   "The local mute recovery file is too large. Local playback remains enabled.": "本機靜音恢復檔案過大，保留本機播放。",
-  "Could not read local mute recovery. Local playback remains enabled.": "無法讀取本機靜音恢復檔案，保留本機播放。"
+  "Could not read local mute recovery. Local playback remains enabled.": "無法讀取本機靜音恢復檔案，保留本機播放。",
+  "Manual receiver IDs must be nonempty and unique.": "手動接收端的識別碼不能為空且不能重複。",
+  "Could not save local mute recovery. Retry before closing the app: {0}": "無法儲存本機靜音恢復記錄，請在退出應用程式前重試：{0}",
+  "Choose a playback device endpoint.": "選擇播放裝置端點。",
+  "Restore the previous playback-device mute state when streaming stops or the connection fails. Some protected content cannot be captured through loopback.": "傳送停止或連線失敗時，還原播放裝置原先的靜音狀態。部分受保護內容無法透過迴路擷取。"
 }

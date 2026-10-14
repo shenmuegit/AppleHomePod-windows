@@ -145,14 +145,14 @@
               <Button Grid.Column="1" Content="{loc:Text 'Refresh'}" Margin="8,0,0,0" Command="{Binding RefreshEndpointsCommand}"/>
             </Grid>
             <ProgressBar IsIndeterminate="True" Height="3" Margin="26,0,0,12" Visibility="{Binding IsEndpointLoading, Converter={StaticResource BoolVisibility}}"/>
-            <TextBlock Text="{loc:Text 'Choose a playback or recording device endpoint.'}" Style="{StaticResource Hint}" Margin="26,0,0,0"/>
+            <TextBlock Text="{loc:Text 'Choose a playback device endpoint.'}" Style="{StaticResource Hint}" Margin="26,0,0,0"/>
           </StackPanel>
         </Border>
         <Border Style="{StaticResource Card}">
           <StackPanel>
             <TextBlock Text="{loc:Text 'Local speakers'}" Style="{StaticResource SectionTitle}"/>
             <CheckBox Content="{loc:Text 'Mute local output while streaming (playback devices only)'}" IsChecked="{Binding Draft.MuteWhileStreaming}"/>
-            <TextBlock Text="{loc:Text 'Recording devices are never muted. Restore the previous playback-device mute state when playback stops or the connection fails. Some protected content cannot be captured through loopback.'}" Style="{StaticResource Hint}"/>
+            <TextBlock Text="{loc:Text 'Restore the previous playback-device mute state when streaming stops or the connection fails. Some protected content cannot be captured through loopback.'}" Style="{StaticResource Hint}"/>
           </StackPanel>
         </Border>
       </StackPanel>

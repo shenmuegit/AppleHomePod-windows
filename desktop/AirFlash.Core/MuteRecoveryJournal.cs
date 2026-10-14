@@ -6,6 +6,7 @@ public sealed class MuteRecoveryJournal
     private const int MaxBytes = 65536;
     private readonly string _path;
     private Dictionary<string, bool> _entries = [];
+    private bool _dirty;
     public IReadOnlyDictionary<string, bool> Entries => _entries;
     private sealed record Stored(int SchemaVersion, Dictionary<string, bool>? Entries);
     public MuteRecoveryJournal(string path)
@@ -32,15 +33,15 @@ public sealed class MuteRecoveryJournal
     }
     public void Forget(string endpointId)
     {
-        if (!_entries.ContainsKey(endpointId)) return;
-        var next = new Dictionary<string, bool>(_entries); next.Remove(endpointId);
-        Save(next);
+        if (_entries.Remove(endpointId)) _dirty = true;
+        Flush();
     }
     public bool? RestoreValue(string endpointId, bool currentMute)
     {
         // shortcut: after a crash, same-value external mute writes cannot be identified; use a virtual endpoint if independent routing is required.
         return currentMute && _entries.TryGetValue(endpointId, out var previous) ? previous : null;
     }
+    public void Flush() { if (_dirty) Save(_entries); }
     private void Save(Dictionary<string, bool> next)
     {
         var bytes = JsonSerializer.SerializeToUtf8Bytes(new Stored(1, next), AppSettings.JsonOptions);
@@ -53,6 +54,7 @@ public sealed class MuteRecoveryJournal
             { stream.Write(bytes); stream.Flush(flushToDisk: true); }
             if (File.Exists(_path)) File.Replace(temp, _path, null); else File.Move(temp, _path);
             _entries = next;
+            _dirty = false;
         }
         finally { if (File.Exists(temp)) File.Delete(temp); }
     }

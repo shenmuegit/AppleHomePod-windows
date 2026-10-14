@@ -138,6 +138,7 @@ public interface IDiscoveryService : IDisposable
     event Action<IReadOnlyList<Receiver>>? Changed;
     event Action<string>? Failed;
     event Action<bool>? RunningChanged;
+    bool IsCurrentSnapshot(IReadOnlyList<Receiver> snapshot) => true;
     void Start();
     void Stop();
     void SetInterface(string id);

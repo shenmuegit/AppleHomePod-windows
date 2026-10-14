@@ -1,4 +1,4 @@
-//! Native playback loopback or recording input -> one resampler -> bounded PCM queue.
+//! Native playback loopback -> one resampler -> bounded PCM queue.
 use crate::{
     rtp::FRAMES,
     wasapi::{Mmcss, qpc_ns},
@@ -221,20 +221,15 @@ fn endpoint_index(name: &str, endpoints: &[(String, Option<String>)]) -> Result<
 }
 
 fn capture_flags(flow: EDataFlow) -> Result<u32> {
-    let flags = AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_NOPERSIST;
-    if flow == eRender {
-        Ok(flags | AUDCLNT_STREAMFLAGS_LOOPBACK)
-    } else {
-        ensure!(flow == eCapture, "unsupported capture endpoint direction");
-        Ok(flags)
-    }
+    ensure!(flow == eRender, "Recording and microphone endpoints are not supported. Choose a playback output.");
+    Ok(AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_NOPERSIST | AUDCLNT_STREAMFLAGS_LOOPBACK)
 }
 
 fn find_device(enumerator: &IMMDeviceEnumerator, name: Option<&str>) -> Result<IMMDevice> {
     let Some(name) = name.filter(|s| !s.is_empty()) else {
         return Ok(unsafe { enumerator.GetDefaultAudioEndpoint(eRender, eConsole) }?);
     };
-    let devices = unsafe { enumerator.EnumAudioEndpoints(eAll, DEVICE_STATE_ACTIVE) }?;
+    let devices = unsafe { enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE) }?;
     let mut endpoints = Vec::new();
     for i in 0..unsafe { devices.GetCount() }? {
         let device = unsafe { devices.Item(i) }?;
@@ -447,7 +442,7 @@ mod tests {
     fn capture_direction_selects_loopback_only_for_playback() {
         let common = AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_NOPERSIST;
         assert_eq!(capture_flags(eRender).unwrap(), common | AUDCLNT_STREAMFLAGS_LOOPBACK);
-        assert_eq!(capture_flags(eCapture).unwrap(), common);
+        assert!(capture_flags(eCapture).is_err());
         assert!(capture_flags(eAll).is_err());
     }
 
@@ -466,16 +461,16 @@ mod tests {
 
     // Opt-in local WASAPI check: no receiver, playback, or audio file is involved.
     #[test]
-    #[ignore = "requires AIRFLASH_CAPTURE_ENDPOINT and a recording endpoint with an active signal"]
-    fn recording_endpoint_captures_nonzero_pcm() {
-        let endpoint = std::env::var("AIRFLASH_CAPTURE_ENDPOINT").expect("recording device ID");
+    #[ignore = "requires AIRFLASH_CAPTURE_ENDPOINT and a playback endpoint with active audio"]
+    fn playback_endpoint_captures_nonzero_pcm() {
+        let endpoint = std::env::var("AIRFLASH_CAPTURE_ENDPOINT").expect("playback device ID");
         unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok() }.unwrap();
         let _com = ComGuard;
         let enumerator: IMMDeviceEnumerator =
             unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }.unwrap();
         let device = find_device(&enumerator, Some(&endpoint)).unwrap();
         let flow = unsafe { device.cast::<IMMEndpoint>().unwrap().GetDataFlow() }.unwrap();
-        assert!(flow == eCapture, "local check requires a recording endpoint");
+        assert!(flow == eRender, "local check requires a playback endpoint");
         let equalizer = crate::equalizer::Control::new(
             crate::equalizer::Settings::default(), 44100).unwrap();
         let source = Loopback::start(Some(endpoint), 44100, equalizer).unwrap();
@@ -486,7 +481,7 @@ mod tests {
             nonzero |= source.packet(0.1).unwrap().0.iter().any(|b| *b != 0);
         }
         assert!(source.metrics().capture_frames > 0, "no WASAPI frames received");
-        assert!(nonzero, "recording endpoint supplied only silence");
+        assert!(nonzero, "playback endpoint supplied only silence");
         println!("captured {} frames at {} Hz; nonzero PCM verified",
             source.metrics().capture_frames, source.metrics().input_rate);
     }

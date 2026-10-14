@@ -29,7 +29,6 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
     private bool _muted;
     private readonly SemaphoreSlim _localMuteGate = new(1, 1);
     private LocalMuteGuard _localMuteGuard = new();
-    private bool _localMuteAllowed, _localMuteApplied;
     private string _localMuteWarning = "";
     private readonly SemaphoreSlim _equalizerWriter = new(1, 1);
     private EqualizerSettings? _equalizerPreview;
@@ -194,7 +193,7 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
     private async Task StartLockedAsync(Receiver receiver, AppSettings settings, Func<Receiver, CancellationToken, Task<string?>>? requestPin, bool resetMuteGuard = true)
     {
         await StopLockedAsync().ConfigureAwait(false);
-        if (resetMuteGuard) { _localMuteGuard = new(); _localMuteAllowed = false; _localMuteWarning = ""; }
+        if (resetMuteGuard) { _localMuteGuard = new(); _localMuteWarning = ""; }
         _settings = settings.Clone(); _receiver = receiver;
         var epoch = ++_generation;
         lock (_sync) { _diagnostics = new(); _warnings.Clear(); _snapshot = new(PlaybackState.Idle); }
@@ -235,6 +234,12 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
         {
             var old = _settings;
             _settings = settings.Clone();
+            if (!old.MuteWhileStreaming && settings.MuteWhileStreaming)
+            {
+                await _localMuteGate.WaitAsync().ConfigureAwait(false);
+                try { _localMuteGuard = new(); _localMuteWarning = ""; }
+                finally { _localMuteGate.Release(); }
+            }
             lock (_sync) ++_equalizerSequence;
             if (_receiver is { } receiver && Snapshot.IsActive && Snapshot.State != PlaybackState.Pairing && Signature(receiver, old) != Signature(receiver, settings))
                 await StartLockedAsync(receiver, settings, null, old.EffectiveEndpoint != settings.EffectiveEndpoint).ConfigureAwait(false);
@@ -470,7 +475,6 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
         try
         {
             try { await audio.RestoreAsync().ConfigureAwait(false); } catch (Exception error) { log?.Invoke(L.Format("Failed to restore local mute state: {0}", error.Message)); }
-            _localMuteApplied = false;
         }
         finally { _localMuteGate.Release(); }
     }
@@ -483,23 +487,16 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
             var action = _localMuteGuard.Observe(marker);
             if (action == LocalMuteAction.RestoreAndWarn)
             {
-                _localMuteAllowed = false;
                 _localMuteWarning = L.Get("Capture has stopped receiving audible samples. Local playback was restored; try another output device.");
-                await audio.RestoreAsync().ConfigureAwait(false); _localMuteApplied = false;
+                await audio.RestoreAsync().ConfigureAwait(false);
             }
-            else
-            {
-                if (action == LocalMuteAction.Mute) _localMuteAllowed = true;
-                if (_localMuteAllowed && !_localMuteApplied && marker > 0)
-                { await audio.MuteAsync(_settings.EffectiveEndpoint).ConfigureAwait(false); _localMuteApplied = true; }
-            }
+            else if (action == LocalMuteAction.Mute) await audio.MuteAsync(_settings.EffectiveEndpoint).ConfigureAwait(false);
         }
         catch (Exception error)
         {
-            _localMuteAllowed = false;
             _localMuteWarning = L.Format("Could not manage local mute; keep local playback enabled: {0}", error.Message);
             log?.Invoke(_localMuteWarning);
-            try { await audio.RestoreAsync().ConfigureAwait(false); _localMuteApplied = false; }
+            try { await audio.RestoreAsync().ConfigureAwait(false); }
             catch (Exception restoreError) { log?.Invoke(L.Format("Failed to restore local mute state: {0}", restoreError.Message)); }
         }
         finally { _localMuteGate.Release(); }

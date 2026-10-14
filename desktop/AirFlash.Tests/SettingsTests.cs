@@ -6,6 +6,35 @@ namespace AirFlash.Tests;
 public sealed class SettingsTests
 {
     [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    public void InvalidManualIdentityIsBackedUpInsteadOfReachingTheCatalog(string? id)
+    {
+        var directory = NewDirectory(); var path = Path.Combine(directory, "config.json");
+        var original = JsonSerializer.Serialize(new { schema_version = 2, manual_receivers = new[] { new { id, name = "Room", host = "192.0.2.1", port = 7000 } } });
+        try
+        {
+            File.WriteAllText(path, original); var store = new SettingsStore(path); var settings = store.Load();
+            Assert.Empty(settings.ManualReceivers); Assert.NotNull(store.LoadWarning);
+            store.Save(settings); Assert.Equal(original, File.ReadAllText(path + ".pre-wpf.bak"));
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+    [Fact]
+    public void DuplicateManualIdentitiesCannotOverwriteExistingSettings()
+    {
+        var directory = NewDirectory(); var path = Path.Combine(directory, "config.json");
+        try
+        {
+            var store = new SettingsStore(path); store.Save(new()); var before = File.ReadAllText(path);
+            var settings = new AppSettings(); settings.ManualReceivers.Add(new("same", "First", "192.0.2.1", 7000));
+            settings.ManualReceivers.Add(new("same", "Second", "192.0.2.2", 7000));
+            Assert.Throws<InvalidOperationException>(() => store.Save(settings)); Assert.Equal(before, File.ReadAllText(path));
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+    [Theory]
     [InlineData("bad host", 7000)]
     [InlineData("speaker;command", 7000)]
     [InlineData("::1", 7000)]

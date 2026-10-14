@@ -7,8 +7,49 @@ namespace AirFlash.Tests;
 
 public sealed class WindowsDiscoveryTests
 {
+    [Fact]
+    public async Task InFlightPublicationCannotFinishAfterTheNewInterfaceSnapshot()
+    {
+        var api = new FakeDns(); using var discovery = new WindowsDiscovery(api, () => [new("nic", "LAN", "LAN", "192.0.2.1", true, 17)]);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        IReadOnlyList<Receiver> last = [];
+        var blocked = 0;
+        discovery.Changed += items =>
+        {
+            if (items.Any(r => r.Address == "192.0.2.10") && Interlocked.Exchange(ref blocked, 1) == 0)
+            { entered.TrySetResult(); if (!release.Wait(TimeSpan.FromSeconds(3))) throw new TimeoutException(); }
+        };
+        discovery.Changed += items => last = items;
+        discovery.Start(); api.Browsers[0].Callback(0, [new(Name, 120)]);
+        var old = Task.Run(() => api.Resolvers[0].Callback(0, Record()));
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            var newer = Task.Run(() =>
+            {
+                discovery.SetInterface("nic"); api.Browsers[2].Callback(0, [new(Name, 120)]);
+                api.Resolvers[1].Callback(0, Record("192.0.2.20"));
+            });
+            await newer.WaitAsync(TimeSpan.FromSeconds(2));
+            release.Set(); await old;
+            Assert.Equal("192.0.2.20", Assert.Single(last).Address);
+        }
+        finally { release.Set(); await old; }
+    }
     private const string Type = "_airplay._tcp.local", Name = "Office._airplay._tcp.local";
     private static ServiceRecord Record(string address = "192.0.2.10") => new(Name, Type, address, 7000, new Dictionary<string, string> { ["deviceid"] = "aabbcc" });
+    [Fact]
+    public void QueuedSnapshotCanBeCheckedAfterInterfaceChanges()
+    {
+        var api = new FakeDns(); using var discovery = new WindowsDiscovery(api, () => [new("nic", "LAN", "LAN", "192.0.2.1", true, 17)]);
+        IReadOnlyList<Receiver> last = []; discovery.Changed += items => last = items;
+        discovery.Start(); api.Browsers[0].Callback(0, [new(Name, 120)]); api.Resolvers[0].Callback(0, Record());
+        var old = last; Assert.True(((IDiscoveryService)discovery).IsCurrentSnapshot(old));
+        discovery.SetInterface("nic");
+        Assert.False(((IDiscoveryService)discovery).IsCurrentSnapshot(old));
+        Assert.True(((IDiscoveryService)discovery).IsCurrentSnapshot(last));
+    }
     [Fact]
     public void MissingDnsEntryPointsReportsFailureWithoutOpeningQueries()
     {

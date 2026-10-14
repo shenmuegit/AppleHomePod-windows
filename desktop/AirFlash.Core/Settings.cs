@@ -112,6 +112,8 @@ public sealed class AppSettings : ObservableObject
             if (options.StandbySeconds is { } seconds && (!double.IsFinite(seconds) || seconds is < 5 or > 300)) return L.Get("Device standby threshold must be between 5 and 300 seconds.");
         }
         if (ManualReceivers is null || ManualReceivers.Any(r => r is null || !r.IsValid)) return L.Get("Manual receivers require a valid address and port (1–65535).");
+        if (ManualReceivers.Any(r => string.IsNullOrWhiteSpace(r.Id)) || ManualReceivers.Select(r => r.Id).Distinct(StringComparer.Ordinal).Count() != ManualReceivers.Count)
+            return L.Get("Manual receiver IDs must be nonempty and unique.");
         return null;
     }
     public void CopyFrom(AppSettings source)

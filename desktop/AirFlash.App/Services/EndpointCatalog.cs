@@ -67,7 +67,7 @@ public sealed class EndpointCatalog : IDisposable
             do
             {
                 generation = _generation;
-                items = (await _audio.GetEndpointsAsync()).OrderBy(e => e.Id, StringComparer.Ordinal).ToArray();
+                items = (await _audio.GetEndpointsAsync()).Where(e => e.Kind == AudioEndpointKind.Playback).OrderBy(e => e.Id, StringComparer.Ordinal).ToArray();
             } while (!_disposed && generation != _generation);
             if (!_disposed)
             {

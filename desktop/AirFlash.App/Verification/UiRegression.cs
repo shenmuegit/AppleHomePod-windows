@@ -96,15 +96,14 @@ internal static class UiRegression
 
             vm.Draft.CaptureEndpoint = "endpoint-c";
             vm.Draft.MuteWhileStreaming = true;
-            Check(await vm.ApplyAsync() && store.Saved.CaptureEndpoint == "endpoint-c", "recording selection saves with automatic mute enabled", checks);
-            await Until(() => app.Snapshot.State == PlaybackState.Streaming);
+            Check(!await vm.ApplyAsync() && store.Saved.CaptureEndpoint != "endpoint-c", "recording endpoint cannot become the system audio source", checks);
             audio.Items = [new("endpoint-a", "Speaker"), new("endpoint-b", "Virtual output")];
             await vm.LoadEndpointsAsync(true);
             Check(vm.Draft.CaptureEndpoint == "endpoint-c" && vm.Endpoints.Any(e => e.Id == "endpoint-c" && e.Name.StartsWith(L.Get("Unavailable · "), StringComparison.Ordinal)), "missing recording selection remains visible", checks);
             var recording = new AudioEndpoint("endpoint-c", "Voicemeeter Output", AudioEndpointKind.Recording);
             audio.Items = [new("endpoint-a", "Speaker"), new("endpoint-b", "Virtual output"), recording];
             await vm.LoadEndpointsAsync(true);
-            Check(vm.Draft.CaptureEndpoint == "endpoint-c" && vm.Endpoints.Contains(recording), "restored recording endpoint retains ID and type", checks);
+            Check(vm.Draft.CaptureEndpoint == "endpoint-c" && vm.Endpoints.All(e => e.Id != "endpoint-c" || e.Name.StartsWith(L.Get("Unavailable · "), StringComparison.Ordinal)), "recording endpoint remains unavailable to the product", checks);
             vm.Draft.CaptureEndpoint = "endpoint-b";
             vm.Draft.MuteWhileStreaming = false;
             Check(await vm.ApplyAsync(), "switching back to playback succeeds", checks);

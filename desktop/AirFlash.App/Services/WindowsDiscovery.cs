@@ -21,10 +21,14 @@ public sealed class WindowsDiscovery : IDiscoveryService
     private uint? _interfaceIndex;
     private bool _started, _disposed;
     private long _epoch;
+    private IReadOnlyList<Receiver>? _latestSnapshot, _deliveredSnapshot;
+    private int _publishing;
     private HashSet<string> _diagnostics = new(StringComparer.Ordinal);
     public event Action<IReadOnlyList<Receiver>>? Changed;
     public event Action<string>? Failed;
     public event Action<bool>? RunningChanged;
+    public bool IsCurrentSnapshot(IReadOnlyList<Receiver> snapshot)
+    { lock (_sync) return !_disposed && ReferenceEquals(_latestSnapshot, snapshot); }
     public WindowsDiscovery(Func<IReadOnlyList<DiscoveryAdapter>>? adapters = null, Action<string>? log = null, Func<bool>? dnsAvailable = null)
         : this(new WindowsDnsSdApi(), adapters, log, dnsAvailable: dnsAvailable ?? (() => WindowsCapabilities.Current.DnsSdAvailable)) { }
     internal WindowsDiscovery(IDnsSdApi api, Func<IReadOnlyList<DiscoveryAdapter>>? adapters = null, Action<string>? log = null, TimeProvider? time = null, Func<bool>? dnsAvailable = null)
@@ -222,8 +226,28 @@ public sealed class WindowsDiscovery : IDiscoveryService
             receivers = ReceiverAggregator.Build(_records.Values, message => diagnostics.Add(message));
             foreach (var message in diagnostics.Except(_diagnostics)) _log(message);
             _diagnostics = diagnostics;
+            _latestSnapshot = receivers;
         }
-        Changed?.Invoke(receivers);
+        bool pending;
+        do
+        {
+            if (Interlocked.CompareExchange(ref _publishing, 1, 0) != 0) return;
+            try
+            {
+                while (true)
+                {
+                    lock (_sync)
+                    {
+                        if (_disposed || ReferenceEquals(_deliveredSnapshot, _latestSnapshot)) break;
+                        receivers = _latestSnapshot!; _deliveredSnapshot = receivers;
+                    }
+                    // Reentrant or concurrent producers update the pending snapshot without blocking cancellation.
+                    Changed?.Invoke(receivers);
+                }
+            }
+            finally { Volatile.Write(ref _publishing, 0); }
+            lock (_sync) pending = !_disposed && !ReferenceEquals(_deliveredSnapshot, _latestSnapshot);
+        } while (pending);
     }
     private static bool Equal(ServiceRecord left, ServiceRecord right) => left.Instance == right.Instance && left.ServiceType == right.ServiceType && left.Address == right.Address && left.Port == right.Port &&
         left.Txt.Count == right.Txt.Count && left.Txt.All(p => right.Txt.TryGetValue(p.Key, out var value) && value == p.Value);

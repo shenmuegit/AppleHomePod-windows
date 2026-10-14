@@ -81,6 +81,7 @@ public partial class App : Application
             var factory = new ExtractingEngineFactory();
             _engine = new(token => QueryEngineAsync(factory, token), AppPaths.Log);
             _viewModel = new(store, new WindowsDiscovery(log: AppPaths.Log), new Autostart(), audio, factory, Dispatcher, _engine);
+            audio.Failed += error => { if (!Dispatcher.HasShutdownStarted) Dispatcher.BeginInvoke(() => _viewModel?.ShowError(error)); };
             _panel = new(_viewModel); MainWindow = _panel;
             _panel.SettingsRequested += ShowSettings; _panel.QuitRequested += Quit;
             _tray = new(_panel, _viewModel, ShowSettings, Quit); _panel.Tray = _tray;

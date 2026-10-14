@@ -25,6 +25,31 @@ public sealed class SessionTests
         Assert.False(audio.Muted);
     }
     [Fact]
+    public async Task ExternalUnmuteIsNotOverriddenByAutomaticReconnect()
+    {
+        var first = new FakeConnection(); var second = new FakeConnection(); var audio = new FakeAudio();
+        await using var controller = new SessionController(new FakeFactory(first, second), audio, timing: Fast);
+        var settings = Settings(); settings.ForceReconnect = true;
+        await controller.StartAsync(Pod(), settings); await Until(() => controller.Snapshot.State == PlaybackState.Streaming);
+        first.Emit("capture_metrics", metrics: new { last_audio_qpc_ns = 10 }); await Until(() => audio.Muted);
+        audio.Muted = false;
+        first.Emit("error", message: "network lost"); await Until(() => second.Session.Length > 0 && controller.Snapshot.State == PlaybackState.Streaming);
+        second.Emit("capture_metrics", metrics: new { last_audio_qpc_ns = 20, underrun_packets = 99 });
+        await Until(() => controller.Snapshot.Metrics?.Underruns == 99);
+        Assert.False(audio.Muted); Assert.Single(audio.Actions, a => a.StartsWith("mute:", StringComparison.Ordinal));
+    }
+    [Fact]
+    public async Task ExplicitMuteReenableWaitsForAudioEvidence()
+    {
+        var process = new FakeConnection(); var audio = new FakeAudio();
+        await using var controller = new SessionController(new FakeFactory(process), audio, timing: Fast);
+        var settings = Settings(); await controller.StartAsync(Pod(), settings); await Until(() => controller.Snapshot.State == PlaybackState.Streaming);
+        process.Emit("capture_metrics", metrics: new { last_audio_qpc_ns = 10 }); await Until(() => audio.Muted);
+        settings.MuteWhileStreaming = false; await controller.UpdateSettingsAsync(settings); Assert.False(audio.Muted);
+        settings.MuteWhileStreaming = true; await controller.UpdateSettingsAsync(settings); Assert.False(audio.Muted);
+        process.Emit("capture_metrics", metrics: new { last_audio_qpc_ns = 20 }); await Until(() => audio.Muted);
+    }
+    [Fact]
     public async Task MuteWriteFailureRestoresWithoutRestartingTheStream()
     {
         var process = new FakeConnection(); var audio = new FakeAudio { FailMute = true };

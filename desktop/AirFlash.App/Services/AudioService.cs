@@ -17,6 +17,7 @@ public sealed class AudioService : IAudioService, IAsyncDisposable, IMMNotificat
     private MMDeviceEnumerator? _notifications;
     private bool _disposed;
     public event Action? EndpointsChanged;
+    public event Action<Exception>? Failed;
 
     public AudioService(string recoveryPath)
     {
@@ -55,8 +56,8 @@ public sealed class AudioService : IAudioService, IAsyncDisposable, IMMNotificat
         UiPerformance.Count("audio.enumerate");
         using var enumerator = new MMDeviceEnumerator();
         var endpoints = new List<AudioEndpoint>();
-        foreach (var device in enumerator.EnumerateAudioEndPoints(DataFlow.All, DeviceState.Active))
-            using (device) endpoints.Add(new(device.ID, device.FriendlyName, device.DataFlow == DataFlow.Capture ? AudioEndpointKind.Recording : AudioEndpointKind.Playback));
+        foreach (var device in enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
+            using (device) endpoints.Add(new(device.ID, device.FriendlyName));
         return endpoints;
     });
     public Task<string?> GetDefaultEndpointIdAsync() => RunAsync(() =>
@@ -94,11 +95,17 @@ public sealed class AudioService : IAudioService, IAsyncDisposable, IMMNotificat
             await InvokeAsync(() =>
             {
                 if (_owned.TryGetValue(id, out var owned) && ReferenceEquals(owned.Device, device))
-                { Journal.Forget(id); Release(id); }
+                { try { Journal.Forget(id); } finally { Release(id); } }
                 return true;
             }).ConfigureAwait(false);
         }
-        catch (Exception error) { AppPaths.Log("Could not release local mute ownership: " + error.Message); }
+        catch (ObjectDisposedException) { }
+        catch (Exception error) { ReportFailure(error); }
+    }
+    private void ReportFailure(Exception error)
+    {
+        var failure = new IOException(L.Format("Could not save local mute recovery. Retry before closing the app: {0}", error.Message), error);
+        AppPaths.Log(failure.ToString()); Failed?.Invoke(failure);
     }
     private void Release(string id)
     {
@@ -107,10 +114,16 @@ public sealed class AudioService : IAudioService, IAsyncDisposable, IMMNotificat
         finally { owned.Device.Dispose(); }
     }
     public Task RecoverPendingMuteAsync() => RunAsync(() => { _ = Journal; Restore(); return true; });
-    public Task RestoreAsync() => RunAsync(() => { Restore(); return true; });
+    public async Task RestoreAsync()
+    {
+        try { await RunAsync(() => { Restore(); return true; }).ConfigureAwait(false); }
+        catch (Exception error) { ReportFailure(error); throw; }
+    }
     private void Restore()
     {
-        if (_journal is null || _journal.Entries.Count == 0) return;
+        if (_journal is null) return;
+        if (_journal.Entries.Count == 0) { _journal.Flush(); return; }
+        Exception? failure = null;
         using var enumerator = new MMDeviceEnumerator();
         foreach (var id in _journal.Entries.Keys.ToArray())
         {
@@ -122,12 +135,15 @@ public sealed class AudioService : IAudioService, IAsyncDisposable, IMMNotificat
                 var current = device.AudioEndpointVolume.Mute;
                 if (_journal.RestoreValue(id, current) is { } previous && current != previous)
                 { device.AudioEndpointVolume.NotificationGuid = _muteContext; device.AudioEndpointVolume.Mute = previous; }
-                _journal.Forget(id);
-                Release(id);
+                try { _journal.Forget(id); } finally { Release(id); }
             }
             catch (System.Runtime.InteropServices.COMException) { Release(id); /* Journal retries when the endpoint returns. */ }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException) { failure ??= error; }
             finally { if (!held) device?.Dispose(); }
         }
+        try { _journal.Flush(); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException) { failure ??= error; }
+        if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
     public void OnDefaultDeviceChanged(DataFlow flow, Role role, string defaultDeviceId) { if (flow == DataFlow.Render && role == Role.Console) EndpointsChanged?.Invoke(); }
     public void OnDeviceStateChanged(string deviceId, DeviceState newState) => EndpointsChanged?.Invoke();

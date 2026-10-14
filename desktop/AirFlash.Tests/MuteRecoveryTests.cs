@@ -42,5 +42,17 @@ public sealed class MuteRecoveryTests : IDisposable
         Assert.ThrowsAny<IOException>(() => journal.Remember("speaker", false));
         Assert.Empty(journal.Entries);
     }
+    [Fact]
+    public void FailedForgetRevokesLiveOwnershipAndCanRetryPersistence()
+    {
+        var journal = new MuteRecoveryJournal(JournalPath); journal.Remember("speaker", false);
+        using (var locked = new FileStream(JournalPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            Assert.ThrowsAny<IOException>(() => journal.Forget("speaker"));
+            Assert.Empty(journal.Entries); Assert.Null(journal.RestoreValue("speaker", true));
+        }
+        journal.Flush();
+        Assert.Empty(new MuteRecoveryJournal(JournalPath).Entries);
+    }
     public void Dispose() { if (Directory.Exists(_directory)) Directory.Delete(_directory, true); }
 }

@@ -57,6 +57,7 @@ internal static class UiSmoke
             var isolatedSettings = isolatedStore.Load(); isolatedSettings.MasterVolume = 25; isolatedStore.Save(isolatedSettings);
             Check(File.ReadAllText(legacyConfig) == sentinel, "AppleHome saving preserves the upstream settings store", checks);
             await SavedAutoConnectNeverStartsCapture(checks);
+            await StaleQueuedDiscoveryIsIgnored(checks);
             AppPaths.Log("synthetic boundary pin=123456 password=hidden-value secret=private-value");
             var log = File.ReadLines(Path.Combine(AppPaths.LogDirectory, $"wpf-{DateTime.Today:yyyy-MM-dd}.log")).Last();
             Check(!log.Contains("123456") && !log.Contains("hidden-value") && !log.Contains("private-value"), "central logging redacts secrets", checks);
@@ -171,15 +172,15 @@ internal static class UiSmoke
             await Pump();
             var endpoints = Descendants(settings).OfType<ComboBox>().Single(c => c.Name == "EndpointCombo");
             Check(endpoints.IsEnabled, "capture mode enables endpoint", checks);
-            var inputEndpoint = ((IEnumerable<AudioEndpoint>)endpoints.ItemsSource).Single(e => e.Kind == AudioEndpointKind.Recording);
-            Check(inputEndpoint.DisplayName.Contains(L.Get("Recording"), StringComparison.Ordinal), "recording endpoint is labeled", checks);
+            var inputEndpoint = ((IEnumerable<AudioEndpoint>)endpoints.ItemsSource).Single(e => e.Id == "endpoint-b");
+            Check(((IEnumerable<AudioEndpoint>)endpoints.ItemsSource).All(e => e.Kind == AudioEndpointKind.Playback), "normal source selector exposes playback endpoints only", checks);
             endpoints.SelectedValue = inputEndpoint.Id; await Pump();
             var startsBefore = engine.Commands.Count(c => c.Text("command") == "start");
             Invoke(settings.ApplyButton); await Until(() => app.Settings.CaptureMode == "endpoint" && !settings.ViewModel.HasChanges);
             await Until(() => engine.Commands.Count(c => c.Text("command") == "start") > startsBefore);
             Check(engine.Commands.Count(c => c.Text("command") == "start") == startsBefore + 1, "settings restart once", checks);
-            Check(app.Settings.CaptureEndpoint == inputEndpoint.Id && store.Saved.CaptureEndpoint == inputEndpoint.Id, "recording endpoint persists by ID", checks);
-            Check(engine.Commands.Last(c => c.Text("command") == "start").GetProperty("params").GetProperty("capture_endpoint").GetString() == inputEndpoint.Id, "recording endpoint reaches native command", checks);
+            Check(app.Settings.CaptureEndpoint == inputEndpoint.Id && store.Saved.CaptureEndpoint == inputEndpoint.Id, "playback endpoint persists by ID", checks);
+            Check(engine.Commands.Last(c => c.Text("command") == "start").GetProperty("params").GetProperty("capture_endpoint").GetString() == inputEndpoint.Id, "playback endpoint reaches native command", checks);
             settings.ViewModel.Draft.StartAtLogin = true; store.Fail = true;
             Invoke(settings.ApplyButton); await Until(() => settings.ViewModel.Error.Contains("模拟保存失败", StringComparison.Ordinal));
             Check(settings.IsVisible && settings.ViewModel.HasChanges && !app.Settings.StartAtLogin, "failed save preserves draft", checks);
@@ -265,6 +266,17 @@ internal static class UiSmoke
             Check(factory.Commands.Count(c => c.Text("command") == "start") == 1, "explicit user action starts exactly one session", checks);
             await app.StopAsync();
         }
+    }
+    private static async Task StaleQueuedDiscoveryIsIgnored(List<string> checks)
+    {
+        var discovery = new MockDiscovery();
+        await using var app = new AppViewModel(new MemoryStore(), discovery, new MockAutostart(), new MockAudio(), new MockFactory(), Application.Current.Dispatcher);
+        app.SetPanelVisible(true); app.Start(); await app.Startup; await Pump();
+        var old = discovery.Items;
+        discovery.Items = old.Select(r => r.Id == "a" ? r with { Address = "127.0.0.9" } : r).ToArray();
+        discovery.Publish(); discovery.DeliverStale(old); await Pump();
+        await app.ApplyAsync(app.Settings.Clone(), app.Settings.Clone());
+        Check(app.AllReceivers.Single(r => r.Id == "a").Address == "127.0.0.9", "dispatcher rejects a stale discovery snapshot", checks);
     }
     private static async Task VerifyStartupFailureAsync(List<string> checks, string directory)
     {
@@ -506,6 +518,8 @@ internal static class UiSmoke
     }
     internal sealed class MockDiscovery : IDiscoveryService
     {
+        private IReadOnlyList<Receiver> _snapshot = [];
+        public bool IsCurrentSnapshot(IReadOnlyList<Receiver> snapshot) => ReferenceEquals(_snapshot, snapshot);
         public event Action<bool>? RunningChanged;
         public bool Running { get; private set; }
         public int Starts { get; private set; }
@@ -515,13 +529,14 @@ internal static class UiSmoke
         public void Start() { if (Running) return; Running = true; Starts++; RunningChanged?.Invoke(true); Publish(); }
         public void Stop() { if (!Running) return; Running = false; Stops++; RunningChanged?.Invoke(false); }
         public string SelectedInterface { get; private set; } = "";
-        public void SetInterface(string id) { SelectedInterface = id; Changed?.Invoke(id.Length == 0 ? Items : []); }
+        public void SetInterface(string id) { SelectedInterface = id; _snapshot = id.Length == 0 ? Items : []; Changed?.Invoke(_snapshot); }
         public IReadOnlyList<Receiver> Items { get; set; } = [
             new("a", "家庭影院", "127.0.0.1") { Model = "HomePod" },
             new("b", "客厅立体声", "127.0.0.2") { StereoId = "pair", Members = [new("left", "左侧", "127.0.0.2"), new("right", "右侧", "127.0.0.3")] },
             new("c", "卧室 HomePod mini", "127.0.0.4") { Online = false, Model = "HomePod mini" }
         ];
-        public void Publish() => Changed?.Invoke(Items);
+        public void Publish() { _snapshot = Items; Changed?.Invoke(_snapshot); }
+        public void DeliverStale(IReadOnlyList<Receiver> snapshot) => Changed?.Invoke(snapshot);
         public void Dispose() => Stop();
     }
     internal sealed class MockFactory : IEngineFactory

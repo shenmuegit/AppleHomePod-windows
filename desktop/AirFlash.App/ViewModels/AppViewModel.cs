@@ -212,7 +212,7 @@ public sealed class AppViewModel : ObservableObject, IAsyncDisposable
             await _settingsGate.WaitAsync();
             try
             {
-                if (_closing) return;
+                if (_closing || !_discovery.IsCurrentSnapshot(list)) return;
                 await ReconcileDiscoveryAsync(list);
             }
             finally { _settingsGate.Release(); if (_volumeDirty && !_closing) { _volumeTimer.Stop(); _volumeTimer.Start(); } }

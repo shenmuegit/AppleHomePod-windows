@@ -5,6 +5,31 @@ namespace AirFlash.Tests;
 
 public sealed class DiagnosticTextTests
 {
+    [Theory]
+    [InlineData("sessionKey")]
+    [InlineData("privateKey")]
+    [InlineData("private-key")]
+    [InlineData("access_token")]
+    [InlineData("accessToken")]
+    [InlineData("pairing-pin")]
+    public void ProtectsSecretLabelVariantsInJsonAndStderr(string label)
+    {
+        var json = JsonSerializer.Serialize(new Dictionary<string, string> { [label] = "synthetic-private-value" });
+        using var document = JsonDocument.Parse(DiagnosticText.Protect(json));
+        Assert.Equal("[redacted]", document.RootElement.GetProperty(label).GetString());
+        Assert.DoesNotContain("synthetic-private-value", DiagnosticText.Protect(label + "=synthetic-private-value"));
+    }
+    [Fact]
+    public void ExportOmitsFreeFormIdentityButKeepsStructuredFaultAndMetrics()
+    {
+        var diagnostics = new PlaybackDiagnostics(7,
+            new EngineNotice("capture_unavailable", "192.0.2.1", "capture", "Synthetic Room ABCDEF123456 endpoint=synthetic.local"));
+        var safe = DiagnosticText.ForExport(JsonSerializer.Serialize(diagnostics, AppSettings.JsonOptions));
+        foreach (var identity in new[] { "Synthetic Room", "ABCDEF123456", "synthetic.local", "192.0.2.1" }) Assert.DoesNotContain(identity, safe);
+        using var document = JsonDocument.Parse(safe);
+        Assert.Equal(7, document.RootElement.GetProperty("reconnect_count").GetInt32());
+        Assert.Equal("capture_unavailable", document.RootElement.GetProperty("last_fault").GetProperty("code").GetString());
+    }
     [Fact]
     public void ExportRemovesDeviceIdentityWithoutCorruptingMetrics()
     {
