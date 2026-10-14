@@ -6,6 +6,8 @@
 
 详细结果见 [兼容矩阵](docs/COMPATIBILITY.md)、[验证记录](docs/VALIDATION.md)。调研、已审阅规格和实施计划保存在 `docs/research/` 与 `docs/superpowers/`。
 
+用户已选择下一版的 Windows 原生输出设备方向：一次安装独立虚拟音频驱动，日常通过 Windows 选择 HomePod、调节音量与静音，后台自动发送。新的[设计规格](docs/superpowers/specs/2026-10-14-windows-native-homepod-output-design.md)正在等待书面审阅；下面的便携包使用方式仍对应已交付的旧版面板，新的驱动和后台模式尚未安装或实现。
+
 ## 使用测试版
 
 便携文件为 `dist/AppleHome.exe`。它包含 .NET 运行时和 Rust 引擎，使用 x64 Windows，无需另外安装开发工具。当前包未签名，也没有自动更新渠道。
