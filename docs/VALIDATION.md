@@ -55,6 +55,16 @@
 
 单文件发布审核了 450 个映像，无阻断项，1555 个导入仍未由审核目录确认；这是静态审核，不等于全版本 Windows 认证。对应报告为 `artifacts/compatibility/bundle-audit.json`、`artifacts/validation/package-compat.json` 和 `package-ui-smoke.json`。交付目录包含 GPL 全文、来源说明、第三方声明和对应源码归档；未对外发布。
 
+## 审查修复后的当前便携诊断包
+
+代码构建提交：`497f7fa864a494ce93cfb3680eac247db6c389eb`。当前 `dist/AppleHome.exe` 为 176,548,865 字节，SHA256：
+
+`b95aeb9c96493439b59f5e309833d7d30a935b6796e530447bc8a92cf30b665d`
+
+嵌入的原生引擎 SHA256 为 `c76049e397e4d0056e91fc8442b4b0b5b800aa2737b683566903783c5e2173ea`。当前包自身的 `--compat-check` 退出 0、UI smoke 577 项通过；仍报告 `qualification=partial` 和 `production_ready=false`。发布静态审核仍为 450 个映像、1555 个未确认导入、无阻断项。
+
+对应源码为 `dist/AppleHome-source-497f7fa.zip`，SHA256 `bc5c77186c399b70a762b11818fd766a47dbf9fb49436da909940de718b4b451`。精确来源和哈希另保存在 `dist/build-manifest.json`。该包替换了上面的历史包；本轮未通过它进行真实系统声音采集或宣称 HomePod 出声成功。
+
 ## 后续实机验收
 
 iPhone 到同一 mini 的原生 AirPlay 已确认正常出声，Windows 两个发送引擎仍无声。Windows 真实系统声音、持续音乐、静音片段、视频偏移、断网重连、输出端点移除以及最终便携包出声均待验证。Windows 11、其他 HomePod 型号和立体声对也待实机验证。
