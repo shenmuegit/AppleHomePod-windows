@@ -6,6 +6,16 @@ namespace AirFlash.Tests;
 public sealed class DiagnosticTextTests
 {
     [Fact]
+    public void NativeSnapshotExportHidesOpaqueSessionAndRenderRoleIds()
+    {
+        var text = "{\"capture_id\":\"private-capture\",\"instance_id\":\"private-session\",\"default_render_ids\":[null,\"private-render\",null],\"process_id\":42}";
+        var safe = DiagnosticText.ForExport(text);
+        Assert.DoesNotContain("private-", safe);
+        using var value = JsonDocument.Parse(safe);
+        Assert.Equal(42, value.RootElement.GetProperty("process_id").GetInt32());
+        Assert.Equal(JsonValueKind.Null, value.RootElement.GetProperty("default_render_ids")[0].ValueKind);
+    }
+    [Fact]
     public void NativeEndpointIdentityIsRemovedFromExports()
     {
         var json = JsonSerializer.Serialize(new { endpoint_id = "private-endpoint", adapter_instance_id = "private-adapter",

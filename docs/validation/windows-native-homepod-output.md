@@ -49,7 +49,8 @@ pwsh -NoProfile -File scripts/test-native-output.ps1 -Executable desktop/AirFlas
 | 真实 HomePod 非零参考音量与听音确认 | 待执行 |
 | 常驻采集、首段暂存 | Rust 实现已通过隔离回归；真实音频路径未启用 |
 | .NET 常驻宿主 | 软件回归通过；真实进程与虚拟端点的组合待校准后验收 |
-| 系统路由监听和无面板后台 | 待实现 |
+| 系统路由/音量协调 | 软件回归通过；本机只读 MTA 监听通过，真实转发/通知操作待验收 |
+| 无面板后台与当前用户启动任务 | 待实现 |
 | 新路径 15 秒暂停/静音恢复与完整 30 分钟 | 待验收；旧版被手动停止的长播不算成功 |
 | 断网测试 | 用户明确暂缓 |
 | Windows 11、其他型号/固件与立体声对 | 待对应环境实际验证 |
@@ -59,3 +60,7 @@ pwsh -NoProfile -File scripts/test-native-output.ps1 -Executable desktop/AirFlas
 用户暂时不能重启，因此先继续不依赖硬件的实现和自动化回归。Rust 新路径先准备显式播放端点，冻结最近 100 ms 首段并有界保留最多 2000 ms；初始化关门不消耗首段，溢出明确失败，正常静音以零增益持续消费。停止后重置 epoch，旧帧不能进入下一路由。媒体调度在首次放行时重建，实际成功发送后才报告 first_send；声学分析同时兼容旧报告。此处均为队列/本地 IPC/localhost 故障测试，未在新增驱动上启动真实采集或连接 HomePod。启动暂存的附加延迟及长播时钟漂移需要实测。
 
 .NET 常驻宿主使用唯一 stdout 读泵和每会话最多 64 条事件的通道；取消租约读取不取消基础 reader。停止确认后重置采集 epoch，hello 租约退出保留宿主；坏 JSON、半行 EOF、超长行、通道溢出或停止无确认会使整个宿主失败并结束其自有进程。新增原生增益覆盖复用现有发送串行边界，连接期间的更新在开门前写入，默认仍保留旧 UI 的增益行为。该任务定向 65 项通过，完整 .NET 322 项通过；没有启动真实引擎或修改系统路由。
+
+路由协调已覆盖 Console/Multimedia/Communications、单独应用需求、三种 owned 身份排除、重复/旧代际通知、绑定失效、接收端名称/IP 改变和未验证固件拒绝。单应用实际活动持续保持，暂停后才开始 30 秒保持；可控单调时钟覆盖 15 秒暂停/静音、30 秒边界及模拟 30 分钟活动，后者不是实际长播。远端初值 0 无新意图时仅同步虚拟静音并零增益消费；后续 Windows 正向操作才恢复运行时/校准参考，匹配回读前不放行，连接中更新保留最新增益，post-master 的旧音量暂存被清除。新路径不调用物理 mute/恢复 journal，也不发送旧 UI EQ 更新。相关定向回归 99 项通过，完整 .NET 343 项通过，构建 0 警告/错误。
+
+本机六项诊断通过，报告 `check-899598d5117c4c69b214318a82febb5b/monitor.json` 记录真实 listener_apartment=MTA、2 个会话、1 次快照通知、三个默认角色；engine_started/capture_started/wpf_initialized 均为 false，binding_valid=false。绑定文件未变，未启动 PCM 或 HomePod 会话；该检查不要求校准合格，也不会把只读监听成功当作可启用资格。监听先订阅再 GetCount 的顺序依据 [NAudio 2.2.1 源码](https://github.com/naudio/NAudio/blob/v2.2.1/NAudio.Wasapi/CoreAudioApi/AudioSessionManager.cs)和[微软会话通知要求](https://learn.microsoft.com/en-us/windows/win32/api/audiopolicy/nf-audiopolicy-iaudiosessionmanager2-registersessionnotification)。真实用户通知、恢复听音和持续播放仍待硬件门槛后验证。

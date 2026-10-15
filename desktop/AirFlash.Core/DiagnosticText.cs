@@ -5,8 +5,10 @@ public static class DiagnosticText
 {
     public static string ForExport(string text)
     {
-        const string labels = @"(?:host|address|ip_?address|(?:device|receiver|endpoint|adapter|session)_?(?:instance_?)?(?:id|name)|endpoint_?label|(?:friendly|original|assigned)_?name|name|old_?id|new_?id|sid|task_?path)";
+        const string labels = @"(?:host|address|ip_?address|(?:device|receiver|endpoint|adapter|session)_?(?:instance_?)?(?:id|name)|instance_?id|capture_?id|endpoint_?label|(?:friendly|original|assigned)_?name|name|old_?id|new_?id|sid|task_?path)";
         text = Regex.Replace(Protect(text), "(?i)(\"" + labels + @"""\s*:\s*)(""(?:\\.|[^""\\])*""|[0-9]+)", "$1\"[device]\"");
+        text = Regex.Replace(text, @"(?i)(""default_render_ids""\s*:\s*\[)([^\]]*)(\])",
+            match => match.Groups[1].Value + Regex.Replace(match.Groups[2].Value, @"""(?:\\.|[^""\\])*""", "\"[device]\"") + match.Groups[3].Value);
         // Free-form engine text can embed arbitrary room, endpoint and device names.
         text = Regex.Replace(text, @"(?i)(""(?:message|detail)""\s*:\s*)""(?:\\.|[^""\\])*""", "$1\"[detail omitted]\"");
         // Four-part driver versions resemble IPv4 addresses but are needed for qualification.

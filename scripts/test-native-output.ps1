@@ -50,6 +50,14 @@ if ($protectedExit -ne 1 -or $beforeBinding -ne $protectedBinding) { throw 'A di
 $checks = 4
 if (Test-Path -LiteralPath $bindingPath) {
     $storedBinding = Get-Content -LiteralPath $bindingPath -Raw | ConvertFrom-Json
+    $monitorPath = Join-Path $reportDirectory 'monitor.json'
+    $monitorExit = Invoke-NativeCheck @('--native-monitor-check','--output',('"' + $monitorPath + '"'))
+    $monitor = Get-Content -LiteralPath $monitorPath -Raw | ConvertFrom-Json
+    if ($monitorExit -ne 0 -or -not $monitor.ok -or -not $monitor.listening_only -or $monitor.listener_apartment -ne 'MTA' -or
+        $monitor.wpf_initialized -or $monitor.engine_started -or $monitor.capture_started -or @($monitor.snapshot.default_render_ids).Count -ne 3 -or
+        $beforeBinding -ne (Get-FileHash -LiteralPath $bindingPath).Hash) { throw 'Read-only native monitoring must retain binding bytes and avoid audio/UI activation.' }
+    if (-not $storedBinding.calibration -and $monitor.binding_valid) { throw 'Uncalibrated bindings must remain unusable.' }
+    $checks++
     $unnamed = @($preflight.endpoints | Where-Object { $_.endpoint_id -eq $storedBinding.endpoint.endpoint_id -and
         $_.pin_name -eq 'CABLE Input' -and $_.endpoint_label -eq 'CABLE Input' -and -not $storedBinding.calibration })
     if ($unnamed.Count -eq 1) {

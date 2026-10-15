@@ -326,7 +326,7 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
                     try
                     {
                         await connection.SendAsync(session, "start", new { peers, source = "loopback", duration_ms = 0, latency_ms = settings.Latency(receiver), gain = Gain(receiver), timing = receiver.PrefersNtpAlac ? "ntp" : "ptp", capture_endpoint = settings.EffectiveEndpoint, sample_rate = int.Parse(settings.StreamSampleRate), equalizer = EffectiveEqualizer().WireParameters() }, cancellation).ConfigureAwait(false);
-                        lock (_sync) { if (epoch == _generation && ReferenceEquals(_connection, connection)) _equalizerReady = true; }
+                        lock (_sync) { if (epoch == _generation && ReferenceEquals(_connection, connection)) _equalizerReady = factory is not NativeEngineHost; }
                     }
                     finally { _equalizerWriter.Release(); }
                     await SendEqualizerAsync(cancellation: cancellation).ConfigureAwait(false);

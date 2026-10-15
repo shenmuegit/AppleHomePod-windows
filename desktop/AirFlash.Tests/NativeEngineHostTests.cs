@@ -75,6 +75,17 @@ public sealed class NativeEngineHostTests
         Assert.False(wire.Disposed);
         Assert.DoesNotContain(wire.Commands, c => c.Command is "stop" or "reset_capture");
     }
+    [Fact]
+    public async Task PreparedCaptureCanResetWhenDemandEndsBeforeTransportStarts()
+    {
+        var wire = new WireConnection();
+        await using var host = new NativeEngineHost(wire, 42);
+        await host.ArmAsync(Binding, default); await host.BeginCaptureAsync(default);
+        await host.ResetCaptureAsync(default); await host.ResetCaptureAsync(default);
+        Assert.Single(wire.Commands, c => c.Command == "reset_capture");
+        await using var lease = host.Open(); await lease.SendAsync("next", "start", Start(), default);
+        Assert.Equal(2, wire.Commands.Last(c => c.Command == "start").Params.Integer("capture_epoch"));
+    }
     [Theory]
     [InlineData("{invalid}\n")]
     [InlineData("{\"event\":")]
@@ -157,13 +168,14 @@ public sealed class NativeEngineHostTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         while (!condition()) await Task.Delay(5, timeout.Token);
     }
-    private sealed record Sent(string Session, string Command, JsonElement Params);
-    private sealed class WireConnection : IEngineConnection
+    internal sealed record Sent(string Session, string Command, JsonElement Params);
+    internal sealed class WireConnection : IEngineConnection
     {
         private readonly FragmentReader _reader = new();
         public ConcurrentQueue<Sent> Commands { get; } = new();
         public bool HelloReplies = true, StopReplies = true;
         public bool StreamReplies;
+        public int? InitialVolume;
         public TaskCompletionSource? StartHold;
         public bool Disposed;
         public int CharactersRead => _reader.CharactersRead;
@@ -190,6 +202,7 @@ public sealed class NativeEngineHostTests
                 case "start":
                     if (StartHold is not null) await StartHold.Task.WaitAsync(cancellation);
                     if (StreamReplies) Event(session, new { @event = "streaming" });
+                    if (InitialVolume is { } value) Volume(session, value, 0);
                     break;
             }
         }
@@ -200,6 +213,7 @@ public sealed class NativeEngineHostTests
             return JsonSerializer.Deserialize<JsonElement>(line);
         }
         public ValueTask DisposeAsync() { Disposed = true; End(); return ValueTask.CompletedTask; }
+        public void Volume(string session, int value, long sequence) => Event(session, new { @event = "device_volume", host = "127.0.0.1", volume = value, sequence, status = "confirmed", available = true });
     }
     private sealed class NativeAudio : IAudioService
     {

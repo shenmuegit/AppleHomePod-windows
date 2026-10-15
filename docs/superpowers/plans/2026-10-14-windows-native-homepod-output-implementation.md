@@ -8,7 +8,7 @@
 
 **Tech Stack:** Windows x64、.NET 10、NAudio 2.2.1、Windows Core Audio / Task Scheduler、现有 Rust MSVC / WASAPI / NTP / ALAC；不增加运行时依赖。
 
-**Spec:** [Windows 原生 HomePod 输出设备设计规格](../specs/2026-10-14-windows-native-homepod-output-design.md)。状态：2026-10-15 用户继续，按既定 Native 方式进入实施；驱动尚未安装。保留此前 Native 执行方式：主代理逐项实现，最后由独立审阅者检查整体。
+**Spec:** [Windows 原生 HomePod 输出设备设计规格](../specs/2026-10-14-windows-native-homepod-output-design.md)。状态：2026-10-15 按既定 Native 方式实施；驱动已由用户独立安装，用户暂时不能重启，命名持久性/PCM 校准仍待通过。Tasks 3–6 继续独立的软件实现与隔离测试，真实采集、后台启用与资格结论仍受 Task 2 门槛约束。保留此前 Native 执行方式：主代理逐项实现，最后由独立审阅者检查整体。
 
 ## Global Constraints
 
@@ -62,7 +62,8 @@ record NativeBinding(int SchemaVersion, string ReceiverId, EndpointIdentity Endp
     string OriginalName, string AssignedName, PcmVolumeCalibration? Calibration);
 record VolumeSample(double EndpointDb, double Scalar, bool Muted, double Rms, double Peak);
 record NativeVolume(long Revision, double Db, double Scalar, bool Muted, Guid Context);
-record NativeAudioSession(string EndpointId, string InstanceId, int ProcessId, bool Active);
+record NativeAudioSession(string EndpointId, string InstanceId, int ProcessId, bool Active,
+    bool ObservedActive = false);
 record NativeOutputSnapshot(long Generation, IReadOnlyList<string?> DefaultRenderIds,
     IReadOnlyList<NativeAudioSession> Sessions, NativeVolume Volume, bool BindingValid);
 ```
@@ -70,6 +71,8 @@ record NativeOutputSnapshot(long Generation, IReadOnlyList<string?> DefaultRende
 类型所属任务固定：Task 1 在 NativeBinding.cs 定义 EndpointIdentity / NativeBinding，并创建 PcmVolumeCalibration.cs 中的校准记录供持久化使用；Task 2 在后者添加 VolumeSample / NativeVolume / PcmVolumeMath；Task 5 在 NativeOutputController.cs 定义其余快照/会话记录。不能让前一任务依赖后续才定义的类型。
 
 记录值需在构造边界验证；绑定 schema=1，未校准绑定不能激活。`DefaultRenderIds` 顺序固定 Console / Multimedia / Communications，允许单个 null。`Generation` 标识设备/采集代际；`Revision` 仅用户音量操作推进。使用单调计时，不以系统日历变化判断超时。
+
+执行裁定：ObservedActive 保存 50 ms 合并窗口内已经结束的活动边缘，新外部会话创建也获得同样的 30 秒保持；own PID/采集实例仍排除。Host 另提供幂等 `ResetCaptureAsync(CancellationToken)`，用于 begin 后尚未建网络租约时需求撤销。原生路径不发送旧 UI 的均衡器更新，保持 neutral EQ；旧 UI 路径回归不变。实际通知/声音/音量场景仍由 Tasks 2/7 验收，软件模拟不替代它们。
 
 ## Task 1: 建立可回滚的端点绑定
 
@@ -124,7 +127,7 @@ Assert.Throws<ArgumentException>(() => PcmVolumeMath.Classify(samples, "44100/2/
 
 **Interfaces:** 增量 JSONL v1：`arm_capture {capture_id,endpoint_id,sample_rate:44100}` → `capture_ready {capture_id,epoch,session_instance_id}`；`begin_capture {capture_id,epoch}` → `capture_begun`，在发现/DNS/RTSP 前冻结首段；`reset_capture {capture_id,epoch}` → `capture_reset {capture_id,epoch:新值}`（请求 epoch 必须等于当前值，成功后 checked +1）；`disarm_capture {capture_id}` → `capture_disarmed`；`set_capture_gate {capture_id,epoch,open,clear_pending}` → `capture_gate`。`start` 可选 `capture_id` / `capture_epoch` / `await_volume_gate`，全部缺省时沿用旧路径；字段组合不完整、身份不匹配均拒绝。`epoch` 为 u64，arm 初值 1。所有事件保留 version/id/session_id；gate 关闭仍允许 streaming/volume 事件和时钟控制。
 
-- [ ] **Step 1 — RED:** 新测试先写再跑；保留旧 queue 60 ms / target 20 ms 行为。
+- [x] **Step 1 — RED:** 新测试先写再跑；保留旧 queue 60 ms / target 20 ms 行为。
 
 ```rust
 // ArmedPrerollPreservesFirstFrames: 模拟 100 ms 短音及 800 ms 握手，gate 开启前不得 pop
@@ -140,10 +143,10 @@ assert_eq!(scheduler_drops_on_first_send, 0);
 assert_eq!(resolved_mute_overflows, 0);
 ```
 
-- [ ] **Step 2 — Run RED:** `R --test armed_capture`，预期命令/新状态未实现，测试失败；测试命名、时钟和模拟帧使用真实新增队列状态，不用写死预期的假引擎代替它。
-- [ ] **Step 3 — 实现采集生命周期：** 扩展现有 `live::Loopback`，新增 `arm(endpoint: String, rate: u32, equalizer: Control, capture_id: String) -> Result<Self>`、`begin(epoch: u64) -> Result<()>`、`reset(epoch: u64) -> Result<()>`、`set_gate(epoch: u64, open: bool, clear_pending: bool) -> Result<()>`，保留旧 `start`。主进程持有唯一 Arc 采集器；初始化取得真实 AudioSessionControl2 的不透明 session instance id，使用独立会话 GUID。只允许已指明的 render，保留录音端点拒绝。EOF/退出释放采集线程和 COM。
-- [ ] **Step 4 — 实现暂存和接入：** ArmedIdle 只留最近 100 ms 的滚动帧；新需求 begin 后冻结起点并允许最多 2000 ms / 88,200 帧，重复 begin/角色通知不得重置。idle 旧路由在停止/重连边界 reset；从 route 停止到下一次 begin 的帧属于新 epoch。Buffering/gate 关闭不能消费为零后丢掉首段，不能使用旧 discard_stale 丢首段；超限返回上述错误并结束该网络会话。状态已解析为正常静音时清旧暂存、开 gate 以 gain=0 正常消费，不能把 15 秒静音当成初始化溢出。新增使用已准备 Arc 的 session 入口，旧 probe API 不改。gate 初次打开时以当前时钟重建媒体调度与 RTP 时间锚点，避免初始化等待触发 late-recovery；实际 first_send 指标只能在真发送后填值。暂存不在开始发送后立刻缩回 60 ms；正常速率下的额外启动延迟不会自动消失，需记录并实测。网络开始后旧 late-recovery 如需丢帧必须记录，首段验收失败不得冒称完成。
-- [ ] **Step 5 — GREEN / Commit:** `R --test armed_capture`、`R`、`cargo clippy --manifest-path native/airflash-engine/Cargo.toml --all-targets -- -D warnings`。预期全部通过/仅原有有理由 ignored 测试；补充错误 key、并发 arm、EOF 释放及旧 5 秒 probe / 0.05 峰值 / 0.1 gain 上限回归。提交 `feat: arm virtual capture before HomePod handshakes`。
+- [x] **Step 2 — Run RED:** `R --test armed_capture`，预期命令/新状态未实现，测试失败；测试命名、时钟和模拟帧使用真实新增队列状态，不用写死预期的假引擎代替它。
+- [x] **Step 3 — 实现采集生命周期：** 扩展现有 `live::Loopback`，新增 `arm(endpoint: String, rate: u32, equalizer: Control, capture_id: String) -> Result<Self>`、`begin(epoch: u64) -> Result<()>`、`reset(epoch: u64) -> Result<()>`、`set_gate(epoch: u64, open: bool, clear_pending: bool) -> Result<()>`，保留旧 `start`。主进程持有唯一 Arc 采集器；初始化取得真实 AudioSessionControl2 的不透明 session instance id，使用独立会话 GUID。只允许已指明的 render，保留录音端点拒绝。EOF/退出释放采集线程和 COM。
+- [x] **Step 4 — 实现暂存和接入：** ArmedIdle 只留最近 100 ms 的滚动帧；新需求 begin 后冻结起点并允许最多 2000 ms / 88,200 帧，重复 begin/角色通知不得重置。idle 旧路由在停止/重连边界 reset；从 route 停止到下一次 begin 的帧属于新 epoch。Buffering/gate 关闭不能消费为零后丢掉首段，不能使用旧 discard_stale 丢首段；超限返回上述错误并结束该网络会话。状态已解析为正常静音时清旧暂存、开 gate 以 gain=0 正常消费，不能把 15 秒静音当成初始化溢出。新增使用已准备 Arc 的 session 入口，旧 probe API 不改。gate 初次打开时以当前时钟重建媒体调度与 RTP 时间锚点，避免初始化等待触发 late-recovery；实际 first_send 指标只能在真发送后填值。暂存不在开始发送后立刻缩回 60 ms；正常速率下的额外启动延迟不会自动消失，需记录并实测。网络开始后旧 late-recovery 如需丢帧必须记录，首段验收失败不得冒称完成。
+- [x] **Step 5 — GREEN / Commit:** `R --test armed_capture`、`R`、`cargo clippy --manifest-path native/airflash-engine/Cargo.toml --all-targets -- -D warnings`。预期全部通过/仅原有有理由 ignored 测试；补充错误 key、并发 arm、EOF 释放及旧 5 秒 probe / 0.05 峰值 / 0.1 gain 上限回归。提交 `feat: arm virtual capture before HomePod handshakes`。
 
 ## Task 4: 单一 stdout 读泵与可复用网络会话
 
@@ -151,7 +154,7 @@ assert_eq!(resolved_mute_overflows, 0);
 
 **Interfaces:** `ProcessEngineConnection.ProcessId: int` 只读。`NativeEngineHost(IEngineConnection connection, int processId): IEngineFactory, IAsyncDisposable`；`ArmAsync(NativeBinding, CancellationToken): Task`、`BeginCaptureAsync(CancellationToken): Task`、`SetCaptureGateAsync(bool open, bool clearPending, CancellationToken): Task`、`Open(): IEngineConnection`、`CaptureSessionInstanceId: string?` / `ProcessId: int` / `Completion: Task`。`SessionController.SetNativeGainAsync(double gain): Task`，默认 null 覆盖则保持旧行为，非法/非有限值拒绝。Host.Open 返回租约，租约 Dispose 关闭网络会话，Host.Dispose 才结束进程/采集；致命 Host 故障通过 Completion 传播给 Agent。
 
-- [ ] **Step 1 — RED:** 使用可控制分段的 TextReader 与现有 fake connection 模式增加以下测试；不用真实设备。
+- [x] **Step 1 — RED:** 使用可控制分段的 TextReader 与现有 fake connection 模式增加以下测试；不用真实设备。
 
 ```csharp
 // LeaseCancellationDoesNotCancelHalfLinePump
@@ -168,10 +171,10 @@ await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => controller.SetNative
 Assert.Equal(expectedNativeGain, nextStartParameters.Number("gain"));
 ```
 
-- [ ] **Step 2 — Run RED:** `D test AirFlash.Tests --filter "NativeEngineHostTests|EngineJsonLineTests|SessionTests"`。预期新行为缺失而失败。
-- [ ] **Step 3 — 实现 Host：** 一生只开一个 stdout pump，调用原 65,536 字符有界读取；租约取消只取消自己的 Channel 等待，绝不取消基础 reader。按 session_id 分发，发送首条命令前登记通道；每租约通道容量 64，溢出/坏 JSON/EOF 明确 fault 所有租约及 Completion 并关闭本 Host，不能无界增长或在死 Host 上重建租约。控制请求用独立 session_id，沿用捕获初始化 3 秒及命令 ack 2 秒上限；hello 临时租约不结束 Host。首次需求先显式 BeginCaptureAsync；健康 Host 的网络重试若已 reset，租约 SendAsync(start) 先 await begin，幂等且不二次清首段，再补充 Task 3 capture key/gate，拒绝其他端点/采样率。stop ack 最多等 2 秒，已有 stop 不重复发送；确认停止后 reset 到新 epoch，失败关闭自有进程，不能让旧流和新流共享源。
-- [ ] **Step 4 — 实现原生增益：** SetNativeGainAsync 校验、保留最新值且按已有发送串行边界送出；Gain 选择原生覆盖或原有设置，禁止双乘。连接期间也保留更新，在开 capture gate 前 await 最新 gain 写入同一 stdin。旧 EQ、旧静音和现有 UI 的默认行为回归不变；新路径由 Task 5 使用 neutral EQ / MuteWhileStreaming=false，不改旧控制面板。
-- [ ] **Step 5 — GREEN / Commit:** 重跑本任务测试，增加迟到旧 session_id、64 条溢出、半行 EOF、超长行、disposal 与 reconnect 回归；预期通过且正常释放后下一次 lease 可正确开始，fatal 后拒绝 lease 并传播退出信号。提交 `feat: reuse armed engine with isolated stream leases`。
+- [x] **Step 2 — Run RED:** `D test AirFlash.Tests --filter "NativeEngineHostTests|EngineJsonLineTests|SessionTests"`。预期新行为缺失而失败。
+- [x] **Step 3 — 实现 Host：** 一生只开一个 stdout pump，调用原 65,536 字符有界读取；租约取消只取消自己的 Channel 等待，绝不取消基础 reader。按 session_id 分发，发送首条命令前登记通道；每租约通道容量 64，溢出/坏 JSON/EOF 明确 fault 所有租约及 Completion 并关闭本 Host，不能无界增长或在死 Host 上重建租约。控制请求用独立 session_id，沿用捕获初始化 3 秒及命令 ack 2 秒上限；hello 临时租约不结束 Host。首次需求先显式 BeginCaptureAsync；健康 Host 的网络重试若已 reset，租约 SendAsync(start) 先 await begin，幂等且不二次清首段，再补充 Task 3 capture key/gate，拒绝其他端点/采样率。stop ack 最多等 2 秒，已有 stop 不重复发送；确认停止后 reset 到新 epoch，失败关闭自有进程，不能让旧流和新流共享源。
+- [x] **Step 4 — 实现原生增益：** SetNativeGainAsync 校验、保留最新值且按已有发送串行边界送出；Gain 选择原生覆盖或原有设置，禁止双乘。连接期间也保留更新，在开 capture gate 前 await 最新 gain 写入同一 stdin。旧 EQ、旧静音和现有 UI 的默认行为回归不变；新路径由 Task 5 使用 neutral EQ / MuteWhileStreaming=false，不改旧控制面板。
+- [x] **Step 5 — GREEN / Commit:** 重跑本任务测试，增加迟到旧 session_id、64 条溢出、半行 EOF、超长行、disposal 与 reconnect 回归；预期通过且正常释放后下一次 lease 可正确开始，fatal 后拒绝 lease 并传播退出信号。提交 `feat: reuse armed engine with isolated stream leases`。
 
 ## Task 5: Windows 路由需求、原生音量和静音恢复
 
@@ -179,7 +182,7 @@ Assert.Equal(expectedNativeGain, nextStartParameters.Number("gain"));
 
 **Interfaces:** Core 定义 `INativeOutputMonitor : IAudioService, IAsyncDisposable`，包含 `Snapshot: NativeOutputSnapshot`、`event Action<NativeOutputSnapshot>? Changed`、`SetMutedAsync(bool muted, Guid context, CancellationToken): Task`。`NativeOutputController(NativeBinding, INativeOutputMonitor, NativeEngineHost, SessionController, TimeProvider? timeProvider = null, Action<string>? log = null)`、`RunAsync(Func<string, Receiver?> resolveReceiver, CancellationToken): Task`。平台 `WindowsNativeOutput(NativeBinding): INativeOutputMonitor`。跨任务类型使用上表；有新增事件/接口须同步 fake 与调用者。
 
-- [ ] **Step 1 — RED:** `AnyRenderRoleOrExternalSessionStartsRoute` 覆盖三角色/null/单独应用；`OwnCaptureNeverKeepsRouteAlive` 按当前代理 PID、实际 owned engine PID、采集实例 ID 排除；`OldGenerationCannotReopenRoute` 覆盖 stop 后迟到事件；音量测试包含下述断言。
+- [x] **Step 1 — RED:** `AnyRenderRoleOrExternalSessionStartsRoute` 覆盖三角色/null/单独应用；`OwnCaptureNeverKeepsRouteAlive` 按当前代理 PID、实际 owned engine PID、采集实例 ID 排除；`OldGenerationCannotReopenRoute` 覆盖 stop 后迟到事件；音量测试包含下述断言。
 
 ```csharp
 // LatestUserRevisionWinsInitialRemoteZero
@@ -195,11 +198,11 @@ Assert.DoesNotContain(preMuteMarker, framesAfterUnmute);
 Assert.True(homePodRouteActiveAfterResume);
 ```
 
-- [ ] **Step 2 — Run RED:** `D test AirFlash.Tests --filter "NativeOutputControllerTests|DeviceVolumeTests"`，预期新协调器/行为缺失而失败。测试使用可控 TimeProvider，不 sleep 15 秒模拟逻辑。
-- [ ] **Step 3 — MTA 监听：** 沿 AudioService 的专用 MTA 队列模式，保有 endpoint/session manager；先订阅 OnSessionCreated、准备实例持有列表，再访问 Sessions.Count 启用通知并枚举已有会话、注册状态/断开，最后发布初始快照。创建回调与初始枚举按 instance ID 去重，补 `SessionCreatedDuringInitialEnumerationIsRetained` 回归。COM 回调只排队，释放/网络操作均出回调。读取全部三角色、绑定端点上的活动外部会话及 Db/Scalar/Mute；50 ms 合并通知，但记录外部 active 短暂转换并启动 30 秒需求保持，不能合并掉短音。保留 session 实例对象到注销/Dispose。暂停留下端点的应用仍计实际需求，不谎称能区分手动单应用路由与应用暂未迁移。自己的三个身份不能算需求。依据：[NAudio 2.2.1 初始化源码](https://github.com/naudio/NAudio/blob/v2.2.1/NAudio.Wasapi/CoreAudioApi/AudioSessionManager.cs)、[微软 GetCount 通知要求](https://learn.microsoft.com/en-us/windows/win32/api/audiopolicy/nf-audiopolicy-iaudiosessionmanager2-registersessionnotification)。
-- [ ] **Step 4 — 路由协调：** 用单一容量 64 的事件队列/代际串行处理，满时明确失败而不静默丢用户意图；有效 binding 且任一默认角色选中或绑定端点有外部活动会话才运行。首次需求立即 BeginCaptureAsync，再查接收端/解析地址/StartAsync。默认选中保持就绪；仅单应用需求消失后 30 秒再停，覆盖至少 15 秒暂停。重复角色通知不重开；失效/删除立即取消，不改送物理端点。启动/端点或格式变化实时核验 Task 1/2，失配停止并要求维护。CoreAudio 的 IAudioService.MuteAsync 在此适配器中抛 invariant 错误、RestoreAsync 无 owned 状态直接完成，避免旧 journal 被日常路径调用。
-- [ ] **Step 5 — 音量协调：** 固定设置 endpoint、44100、2000、neutral EQ、MasterVolume=100、MuteWhileStreaming=false、StandbyEnabled=false、ForceReconnect=true、MaxReconnectAttempts=5；仅 Receiver.PrefersNtpAlac 为 true 的已验证 mini profile 可开始，固件/分组变化失配则停止待核验，不自动落入未验证 PTP；补 `UnsupportedReceiverProfileNeverStarts`。按 Task 2 Gain 唯一施加 Windows 主音量，应用混音器由 Windows 保留。volume own-context 不推进用户 Revision；connecting 更新排队。初始远端 R>0 保留 R；R=0 无更新用户意图则同步虚拟 mute、清旧暂存，设置 gain=0 后开 gate 正常消费，不在 15 秒静音期间持续 hold。用户后来正向 unmute 才暂关 gate、仅恢复运行时 LastNonZero 或校准 B，等待序列匹配/readback 后以最新 gain 开 gate；错误/无 B 不放行。post-master PCM 在 gate 关闭期间有音量变化必须清除旧档位帧，明确 mute 清除暂存，不能恢复后放出旧较大声音。Gate 初始关闭时仍处理设备音量/时钟事件。健康 Host 内仅网络失败由 SessionController 有界重连；Host fatal 传播给 Task 6 Agent，不在死实例上循环。
-- [ ] **Step 6 — GREEN / Commit:** 重跑本任务及 SessionTests / LocalMuteGuardTests，补绑定失效、设备名/IP变化但 ReceiverId 不变、时钟变化、自己的音量回调、晚到远端 sequence、暂停 15 秒和 30 秒闲置边界；预期通过。实际 Windows 诊断记录通知与场景；不把模拟通过当作可听静音。提交 `feat: follow Windows output and native volume without physical muting`。
+- [x] **Step 2 — Run RED:** `D test AirFlash.Tests --filter "NativeOutputControllerTests|DeviceVolumeTests"`，预期新协调器/行为缺失而失败。测试使用可控 TimeProvider，不 sleep 15 秒模拟逻辑。
+- [x] **Step 3 — MTA 监听：** 沿 AudioService 的专用 MTA 队列模式，保有 endpoint/session manager；先订阅 OnSessionCreated、准备实例持有列表，再访问 Sessions.Count 启用通知并枚举已有会话、注册状态/断开，最后发布初始快照。创建回调与初始枚举按 instance ID 去重，补 `SessionCreatedDuringInitialEnumerationIsRetained` 回归。COM 回调只排队，释放/网络操作均出回调。读取全部三角色、绑定端点上的活动外部会话及 Db/Scalar/Mute；50 ms 合并通知，但记录外部 active 短暂转换并启动 30 秒需求保持，不能合并掉短音。保留 session 实例对象到注销/Dispose。暂停留下端点的应用仍计实际需求，不谎称能区分手动单应用路由与应用暂未迁移。自己的三个身份不能算需求。依据：[NAudio 2.2.1 初始化源码](https://github.com/naudio/NAudio/blob/v2.2.1/NAudio.Wasapi/CoreAudioApi/AudioSessionManager.cs)、[微软 GetCount 通知要求](https://learn.microsoft.com/en-us/windows/win32/api/audiopolicy/nf-audiopolicy-iaudiosessionmanager2-registersessionnotification)。
+- [x] **Step 4 — 路由协调：** 用单一容量 64 的事件队列/代际串行处理，满时明确失败而不静默丢用户意图；有效 binding 且任一默认角色选中或绑定端点有外部活动会话才运行。首次需求立即 BeginCaptureAsync，再查接收端/解析地址/StartAsync。默认选中保持就绪；仅单应用需求消失后 30 秒再停，覆盖至少 15 秒暂停。重复角色通知不重开；失效/删除立即取消，不改送物理端点。启动/端点或格式变化实时核验 Task 1/2，失配停止并要求维护。CoreAudio 的 IAudioService.MuteAsync 在此适配器中抛 invariant 错误、RestoreAsync 无 owned 状态直接完成，避免旧 journal 被日常路径调用。
+- [x] **Step 5 — 音量协调：** 固定设置 endpoint、44100、2000、neutral EQ、MasterVolume=100、MuteWhileStreaming=false、StandbyEnabled=false、ForceReconnect=true、MaxReconnectAttempts=5；仅 Receiver.PrefersNtpAlac 为 true 的已验证 mini profile 可开始，固件/分组变化失配则停止待核验，不自动落入未验证 PTP；补 `UnsupportedReceiverProfileNeverStarts`。按 Task 2 Gain 唯一施加 Windows 主音量，应用混音器由 Windows 保留。volume own-context 不推进用户 Revision；connecting 更新排队。初始远端 R>0 保留 R；R=0 无更新用户意图则同步虚拟 mute、清旧暂存，设置 gain=0 后开 gate 正常消费，不在 15 秒静音期间持续 hold。用户后来正向 unmute 才暂关 gate、仅恢复运行时 LastNonZero 或校准 B，等待序列匹配/readback 后以最新 gain 开 gate；错误/无 B 不放行。post-master PCM 在 gate 关闭期间有音量变化必须清除旧档位帧，明确 mute 清除暂存，不能恢复后放出旧较大声音。Gate 初始关闭时仍处理设备音量/时钟事件。健康 Host 内仅网络失败由 SessionController 有界重连；Host fatal 传播给 Task 6 Agent，不在死实例上循环。
+- [x] **Step 6 — GREEN / Commit:** 重跑本任务及 SessionTests / LocalMuteGuardTests，补绑定失效、设备名/IP变化但 ReceiverId 不变、时钟变化、自己的音量回调、晚到远端 sequence、暂停 15 秒和 30 秒闲置边界；预期通过。实际 Windows 诊断记录通知与场景；不把模拟通过当作可听静音。提交 `feat: follow Windows output and native volume without physical muting`。
 
 ## Task 6: 无窗口后台、当前用户登录启动与撤销
 

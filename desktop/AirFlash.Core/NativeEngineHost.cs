@@ -116,6 +116,23 @@ public sealed class NativeEngineHost : IEngineFactory, IAsyncDisposable
         try { await BeginLockedAsync(cancellation).ConfigureAwait(false); }
         finally { _captureSerial.Release(); }
     }
+    public async Task ResetCaptureAsync(CancellationToken cancellation)
+    {
+        await _captureSerial.WaitAsync(cancellation).ConfigureAwait(false);
+        try
+        {
+            EnsureHealthy();
+            if (_transport is not null) throw new InvalidOperationException("Stop transport before resetting capture.");
+            if (_begun) await ResetLockedAsync(cancellation).ConfigureAwait(false);
+        }
+        finally { _captureSerial.Release(); }
+    }
+    private async Task ResetLockedAsync(CancellationToken cancellation)
+    {
+        var next = checked(_epoch + 1);
+        var ack = await ControlAsync("reset_capture", new { capture_id = _captureId, epoch = _epoch }, "capture_reset", TimeSpan.FromSeconds(2), cancellation).ConfigureAwait(false);
+        ValidateCaptureAck(ack, next); _epoch = next; _begun = false;
+    }
     private async Task BeginLockedAsync(CancellationToken cancellation)
     {
         EnsureHealthy();
@@ -218,9 +235,7 @@ public sealed class NativeEngineHost : IEngineFactory, IAsyncDisposable
                 await _captureSerial.WaitAsync().ConfigureAwait(false);
                 try
                 {
-                    var next = checked(_epoch + 1);
-                    var ack = await ControlAsync("reset_capture", new { capture_id = _captureId, epoch = _epoch }, "capture_reset", TimeSpan.FromSeconds(2), default).ConfigureAwait(false);
-                    ValidateCaptureAck(ack, next); _epoch = next; _begun = false; _transport = null;
+                    await ResetLockedAsync(default).ConfigureAwait(false); _transport = null;
                 }
                 finally { _captureSerial.Release(); }
             }

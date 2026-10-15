@@ -6,7 +6,7 @@ namespace AirFlash.App.Verification;
 
 internal static class NativeOutputCheck
 {
-    private static readonly string[] Commands = ["--native-preflight-check", "--native-bind", "--native-unbind", "--native-calibrate"];
+    private static readonly string[] Commands = ["--native-preflight-check", "--native-monitor-check", "--native-bind", "--native-unbind", "--native-calibrate"];
     internal static bool IsCommand(string[] args) => args.Any(Commands.Contains);
 
     internal static async Task<int> RunAsync(string[] args)
@@ -18,6 +18,22 @@ internal static class NativeOutputCheck
             output = OutputPath(args);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(args.Contains("--native-calibrate")?60:30));
             var windows = new WindowsNativeBinding();
+            if (args.Contains("--native-monitor-check"))
+            {
+                var binding = new NativeBindingStore(WindowsNativeBinding.BindingPath).Load()
+                    ?? throw new InvalidDataException("Bind a verified virtual output before monitoring.");
+                await using var monitor = new WindowsNativeOutput(binding);
+                var count = 0;
+                monitor.Changed += _ => Interlocked.Increment(ref count);
+                await monitor.GetDefaultEndpointIdAsync().WaitAsync(timeout.Token).ConfigureAwait(false);
+                var apartment = await monitor.ReadApartmentAsync().ConfigureAwait(false);
+                await Task.Delay(750, timeout.Token).ConfigureAwait(false);
+                Write(output, new { ok = true, stage = "native-monitor", listening_only = true, binding_valid = monitor.Snapshot.BindingValid,
+                    wpf_initialized = Application.Current is not null, engine_started = false, capture_started = false,
+                    listener_apartment = apartment.ToString(), notifications = count, snapshot = monitor.Snapshot,
+                    note = "Read-only endpoint/session notifications; no stream, PCM, mute, volume, default-output or startup-task writes. Binding validity remains a separate gate." });
+                return 0;
+            }
             if (args.Contains("--native-calibrate"))
             {
                 using var maintenance=NativeVolumeCalibration.AcquireMaintenance();
