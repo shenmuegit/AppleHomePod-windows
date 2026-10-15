@@ -9,6 +9,10 @@
 - 显式命名维护保存原名，失败尝试只恢复仍属本应用的写入；用户改名保留。实际命名和重启持久性尚未实测。
 - 原生维护命令在构造 App 前分派，成功/错误返回 JSON 与退出码；诊断导出隐藏端点与会话身份，保留驱动版本。
 - `scripts/test-native-output.ps1` 在本机实际执行三项：全状态检查、缺少绑定身份拒绝、输出是目录时无阻塞对话框地失败。真实报告 `ok=true`、`wpf_initialized=false`、`driver_installed=false`；枚举 63 个所有状态的端点，其中 11 个活动播放端点。安装前快照已保存；前后默认输出角色相同。
+- Task 2 的软件部分已实现：dB 单次增益计算、重复 PCM 分类、16/24/32 位 PCM 与 float 统计、应用混音器单次衰减判定，以及受绑定约束的本机校准入口。16 项新校准测试通过；全部 .NET 回归为 308 项通过，应用构建无警告/错误；既有 UI smoke 的 577 项检查通过。
+- 本机诊断脚本已扩展到六项并通过：另验证私有配置不能被报告输出覆盖、无绑定时拒绝校准、无绑定时拒绝短时测试源。此处只验证了拒绝路径，没有启动 PCM 采集或 HomePod 参考音。
+- 校准测试源使用单独的当前程序进程，峰值 0.04、最多 5 秒，退出只处理该自有进程。采集与测试播放不共用进程的默认音频会话；原生后台实例存在时拒绝维护。mute/0 的无数据情况独立记录，不当作非静音采集成功。
+- 驱动包、SYS 哈希及安装器/目录签名本轮重新核对通过，SignTool 内核目录验证退出 0，报告 `artifacts/validation/native-output/driver-prepared.json` 明确 `setup_executed=false`。
 
 源码工作树：`C:\Users\Administrator\.codex\worktrees\applehome-native\applehome`。原便携包 `dist/AppleHome.exe` 未替换；目前诊断使用本次 Debug 构建，不把它当成新模式交付包。
 
@@ -24,6 +28,8 @@ pwsh -NoProfile -File scripts/test-native-output.ps1 -Executable desktop/AirFlas
 
 报告保存在 `artifacts/validation/native-output/check-*/`。安装前记录为 `%APPDATA%\AppleHome\native-output-preflight.json`，绑定为同目录 `native-output.json`。这些私有数据与本地报告不进入 Git。
 
+安装、绑定与名称持久性通过后才运行 `--native-calibrate --output <独立JSON路径>`。该命令只对已核验的虚拟播放端点校准，随后通过已有有界 NTP/ALAC probe 读取当前 mini 的实际非零参考音量；首次仅产生候选报告，不保存可用校准。用户听音确认后，以 `--confirm-reference-volume <报告中的实际值>` 再核验并保存；值不符、没有参考、绑定变化或用户中途改音量均停止，不自动设置 HomePod 为 100%。这些内部维护命令不是日常控件。
+
 ## 驱动门槛与未完成项
 
 当前尚未安装独立 VB-CABLE。安装必须使用独立原厂包，管理员运行 `VBCABLE_Setup_x64.exe`，遵循厂商重启要求；AppleHome 不自动运行或嵌入该安装器。包 SHA256 固定为 `b950e39f01af1d04ea623c8f6d8eb9b6ea5c477c637295fabf20631c85116bfb`，x64 Win10 SYS 为 `f01344602472f1b527de5ee98f18987c03db48fea444e457d061e937f1d531d5`。此前验签证据在 `artifacts/validation/vbcable-pack45-inspection.json` 与 `vbcable-kernel-signature.log`，不能替代本次实际安装/绑定证据。
@@ -32,7 +38,7 @@ pwsh -NoProfile -File scripts/test-native-output.ps1 -Executable desktop/AirFlas
 | --- | --- |
 | 端点绑定规则/存储/诊断出口 | 已有软件回归与本机只读检查 |
 | 实际驱动安装、名称写入和重启持久性 | 待执行 |
-| PCM 取样位置与 Windows 主/应用音量校准 | 待执行 |
+| PCM 取样位置与 Windows 主/应用音量校准 | 软件工具就绪，实际正向路径待驱动安装后执行 |
 | 真实 HomePod 非零参考音量与听音确认 | 待执行 |
 | 常驻采集、首段暂存、无面板后台 | 待实现 |
 | 新路径 15 秒暂停/静音恢复与完整 30 分钟 | 待验收；旧版被手动停止的长播不算成功 |

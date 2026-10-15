@@ -44,4 +44,18 @@ $directoryOutput = Join-Path $reportDirectory 'directory.json'
 New-Item -ItemType Directory -Path $directoryOutput | Out-Null
 $directoryExit = Invoke-NativeCheck @('--native-preflight-check','--output',('"' + $directoryOutput + '"'))
 if ($directoryExit -ne 1) { throw 'Invalid diagnostic output must fail without a blocking dialog.' }
-[pscustomobject]@{ ok=$true; checks=3; endpoints=@($preflight.endpoints).Count; driver_installed=$preflight.driver_installed; report_directory=$reportDirectory } | ConvertTo-Json
+$protectedExit = Invoke-NativeCheck @('--native-preflight-check','--output',('"' + $bindingPath + '"'))
+$protectedBinding = if (Test-Path -LiteralPath $bindingPath) { (Get-FileHash -LiteralPath $bindingPath).Hash } else { $null }
+if ($protectedExit -ne 1 -or $beforeBinding -ne $protectedBinding) { throw 'A diagnostic output path must not overwrite private configuration.' }
+$checks = 4
+if (-not (Test-Path -LiteralPath $bindingPath)) {
+    $unboundCalibrationPath = Join-Path $reportDirectory 'unbound-calibration.json'
+    $unboundExit = Invoke-NativeCheck @('--native-calibrate','--output',('"' + $unboundCalibrationPath + '"'))
+    $unbound = Get-Content -LiteralPath $unboundCalibrationPath -Raw | ConvertFrom-Json
+    if ($unboundExit -ne 1 -or $unbound.ok -ne $false -or $unbound.error -notmatch 'Bind a verified virtual output') {
+        throw 'Calibration must reject a missing binding before starting any capture or reference probe.'
+    }
+    if ((Invoke-NativeCheck @('--native-calibration-source')) -ne 1) { throw 'The isolated source must require a verified virtual binding.' }
+    $checks += 2
+}
+[pscustomobject]@{ ok=$true; checks=$checks; endpoints=@($preflight.endpoints).Count; driver_installed=$preflight.driver_installed; report_directory=$reportDirectory } | ConvertTo-Json

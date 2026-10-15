@@ -98,11 +98,11 @@ Assert.NotNull(NativeBindingPolicy.ValidateLive(binding, candidate with { Driver
 
 ## Task 2: 独立驱动安装、命名持久性与音量校准门槛
 
-**Files:** Modify `PcmVolumeCalibration.cs` / `WindowsNativeBinding.cs` / `NativeOutputCheck.cs`；Test 新 `PcmVolumeCalibrationTests.cs`；Create `docs/validation/windows-native-homepod-output.md`，记录本任务真实安装/重启/校准结果。
+**Files:** Modify `PcmVolumeCalibration.cs` / `NativeOutputCheck.cs` / `Program.cs` / `scripts/test-native-output.ps1`；Create `desktop/AirFlash.App/Verification/NativeVolumeCalibration.cs`；Test 新 `PcmVolumeCalibrationTests.cs`；更新 `docs/validation/windows-native-homepod-output.md`，记录本任务真实安装/重启/校准结果。WindowsNativeBinding 接口复用，不为本任务改写驱动逻辑。
 
-**Interfaces:** Consumes Task 1 binding/store；Produces `PcmVolumeMath.Classify(IReadOnlyList<VolumeSample>, string mixFormat, string driverHash, int resumeDeviceVolume): PcmVolumeCalibration`、`Gain(PcmVolumeCalibration, NativeVolume): double`；诊断 `--native-calibrate --output <json>`，完成后原子更新 binding.Calibration。校准结果只能来自实际绑定端点，不接受用户输入 `MasterInPcm`。
+**Interfaces:** Consumes Task 1 binding/store；Produces `PcmVolumeMath.Classify(IReadOnlyList<VolumeSample>, string mixFormat, string driverHash, int resumeDeviceVolume): PcmVolumeCalibration`、`Gain(PcmVolumeCalibration, NativeVolume): double`；诊断 `--native-calibrate --output <json>`，首次仅产出候选。用户确认实际参考音可听后，用 `--confirm-reference-volume <实际回读值>` 重新核验，值一致才原子更新 binding.Calibration。校准结果只能来自实际绑定端点，不接受用户输入 `MasterInPcm`。
 
-- [ ] **Step 1 — RED:** `GainIsAppliedOnce` 覆盖已含主增益、未含主增益、静音、0 和非有限值；`UnstableCapturePointRejectsCalibration` 覆盖两种模型都不吻合的 RMS 比例与无非零参考音量。
+- [x] **Step 1 — RED:** `GainIsAppliedOnce` 覆盖已含主增益、未含主增益、静音、0 和非有限值；`UnstableCapturePointRejectsCalibration` 覆盖两种模型都不吻合的 RMS 比例与无非零参考音量。
 
 ```csharp
 Assert.Equal(1d, PcmVolumeMath.Gain(calibration with { MasterInPcm = true, MaxDb = 0 }, new(1,-12,.25,false,Guid.Empty)));
@@ -112,9 +112,9 @@ Assert.Equal(0d, PcmVolumeMath.Gain(calibration, new(3,-96,0,false,Guid.Empty)))
 Assert.Throws<ArgumentException>(() => PcmVolumeMath.Classify(samples, "44100/2/float", driverHash, 0));
 ```
 
-- [ ] **Step 2 — Run RED:** `D test AirFlash.Tests --filter PcmVolumeCalibrationTests`，预期缺少实现或计算结果不符而失败。
+- [x] **Step 2 — Run RED:** `D test AirFlash.Tests --filter PcmVolumeCalibrationTests`，预期缺少实现或计算结果不符而失败。
 - [ ] **Step 3 — 实现校准：** 用已有 NAudio 在绑定 render 端点发送峰值 ≤0.05 的短已知信号，只计算内存 RMS/peak。固定测试会话音量，采集最大 dB 与最大值−12 dB 的至少两组重复数据；已包含模型要求变化 −12±1 dB，未包含模型要求变化 0±0.5 dB，否则拒绝。若端点不支持两档则停止复核。再改变本测试会话音量至 0.5，要求其 PCM 振幅比 0.5±0.05；分别记录 mute/0、Scalar、Db、MixFormat、驱动哈希。沿用既有有界 NTP/ALAC probe 和实际远端音量回读确认参考 B（1–100），仍遵守 probe ≤5 秒 / WAV 峰值≤0.05 / gain≤0.1；需要用户听音确认，不能复制过往日志当本次 B。初值为 0 时先取得用户明确操作形成的可听参考，不能猜测。恢复且仅恢复本测试仍拥有的端点/测试会话设置，不自动设远端为 100，不录音落盘。
-- [ ] **Step 4 — GREEN:** 重跑 Task 2 测试，预期通过；诊断无有效 binding 时须退出非零且不选择物理端点。此时未通过下述实机门槛不得启用后台或声称原生音量可用。
+- [x] **Step 4 — GREEN:** 重跑 Task 2 测试，预期通过；诊断无有效 binding 时须退出非零且不选择物理端点。此时未通过下述实机门槛不得启用后台或声称原生音量可用。
 - [ ] **Step 5 — 独立安装门槛：** 先出示具体包与改动范围，保存 Task 1 安装前快照。用户单独运行官方 `VBCABLE_Setup_x64.exe` 并按原厂要求重启；AppleHome 不自动启动/嵌入该安装器。包 SHA256=`b950e39f01af1d04ea623c8f6d8eb9b6ea5c477c637295fabf20631c85116bfb`；x64 Win10 SYS SHA256=`f01344602472f1b527de5ee98f18987c03db48fea444e457d061e937f1d531d5`。复核原厂 setup Authenticode、Microsoft 目录签名及 `/kp /c` SYS 校验；不以已下载或已验签冒称安装成功。
 - [ ] **Step 6 — 实机门槛 / Commit:** 在全状态快照中唯一识别新普通 CABLE Input、绑定为 `HomePod – da`，用 Windows 输出选择界面与 fresh property read 确认名称；按原厂重启后再确认持久性。执行校准并取得有效结果/B；核对其他端点与默认选择。命名不持久、主/应用音量链路不稳定或参考音量不明时停在此处，提交证据并复核路线，不绕过门槛。通过后提交 `feat: calibrate native endpoint gain on verified VB-CABLE`。
 

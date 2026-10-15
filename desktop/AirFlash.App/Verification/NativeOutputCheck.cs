@@ -6,7 +6,7 @@ namespace AirFlash.App.Verification;
 
 internal static class NativeOutputCheck
 {
-    private static readonly string[] Commands = ["--native-preflight-check", "--native-bind", "--native-unbind"];
+    private static readonly string[] Commands = ["--native-preflight-check", "--native-bind", "--native-unbind", "--native-calibrate"];
     internal static bool IsCommand(string[] args) => args.Any(Commands.Contains);
 
     internal static async Task<int> RunAsync(string[] args)
@@ -16,8 +16,32 @@ internal static class NativeOutputCheck
         {
             if (args.Count(Commands.Contains) != 1) throw new ArgumentException("Specify one native output command.");
             output = OutputPath(args);
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(args.Contains("--native-calibrate")?60:30));
             var windows = new WindowsNativeBinding();
+            if (args.Contains("--native-calibrate"))
+            {
+                using var maintenance=NativeVolumeCalibration.AcquireMaintenance();
+                int? confirmed=null;
+                if (args.Contains("--confirm-reference-volume"))
+                {
+                    if (!int.TryParse(Argument(args,"--confirm-reference-volume"),out var value) || value is <1 or >100)
+                        throw new ArgumentException("Confirm only the measured nonzero receiver reference volume (1–100).");
+                    confirmed=value;
+                }
+                var binding=await NativeVolumeCalibration.ReadBoundAsync(timeout.Token).ConfigureAwait(false);
+                var proposed=await NativeVolumeCalibration.MeasureAsync(binding,timeout.Token).ConfigureAwait(false);
+                if (confirmed is not null)
+                {
+                    if (confirmed!=proposed.Calibration.ResumeDeviceVolume)
+                        throw new InvalidOperationException("The receiver's actual volume changed since listening confirmation. No calibration was saved.");
+                    var current=await NativeVolumeCalibration.ReadBoundAsync(timeout.Token).ConfigureAwait(false);
+                    if (current!=binding) throw new IOException("The binding changed during calibration; its contents were preserved.");
+                    await new NativeBindingStore(WindowsNativeBinding.BindingPath).SaveAsync(binding with { Calibration=proposed.Calibration },timeout.Token).ConfigureAwait(false);
+                }
+                Write(output,new { ok=true,stage="native-calibration",calibrated=confirmed is not null,
+                    requires_listening_confirmation=confirmed is null,reference_device_volume=proposed.Calibration.ResumeDeviceVolume,proposal=proposed });
+                return 0;
+            }
             if (args.Contains("--native-preflight-check"))
             {
                 var before = await windows.PreflightAsync(timeout.Token).ConfigureAwait(false);
@@ -37,12 +61,14 @@ internal static class NativeOutputCheck
             }
             if (args.Contains("--native-bind"))
             {
+                using var maintenance=NativeVolumeCalibration.AcquireMaintenance();
                 var binding = await windows.BindAsync(Argument(args, "--receiver-id"), Argument(args, "--endpoint-id"), "HomePod – da", timeout.Token).ConfigureAwait(false);
                 Write(output, new { ok = true, stage = "native-bound", binding, calibrated = binding.Calibration is not null,
                     note = "Naming must survive a reboot and calibration must pass before enabling the agent." });
                 return 0;
             }
             var store = new NativeBindingStore(WindowsNativeBinding.BindingPath);
+            using var removal=NativeVolumeCalibration.AcquireMaintenance();
             var existing = store.Load();
             if (existing is not null)
             {
@@ -74,11 +100,11 @@ internal static class NativeOutputCheck
     private static string OutputPath(string[] args)
     {
         var output = Path.GetFullPath(Argument(args, "--output"));
-        if (!Path.GetExtension(output).Equals(".json", StringComparison.OrdinalIgnoreCase)
-            || output.Equals(Path.GetFullPath(WindowsNativeBinding.BindingPath), StringComparison.OrdinalIgnoreCase)
-            || output.Equals(Path.GetFullPath(WindowsNativeBinding.PreflightPath), StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("Use a separate .json diagnostic output file, not a binding or pre-install snapshot.");
+        if (!Path.GetExtension(output).Equals(".json", StringComparison.OrdinalIgnoreCase) || Directory.Exists(output)
+            || output.StartsWith(Path.GetFullPath(AppPaths.DataDirectory)+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Use a separate .json diagnostic file outside the application's private configuration directory.");
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+        using var writable=new FileStream(output,FileMode.OpenOrCreate,FileAccess.Write,FileShare.Read);
         return output;
     }
 

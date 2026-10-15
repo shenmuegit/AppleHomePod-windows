@@ -7,7 +7,8 @@ namespace AirFlash.App;
 internal static class Program
 {
     internal static bool IsDiagnostic(string[] args) => args.Any(a => a.EndsWith("-check", StringComparison.Ordinal)
-        || a is "--ui-smoke" or "--tray-smoke" or "--ui-perf" or "--discovery-perf") || NativeOutputCheck.IsCommand(args);
+        || a is "--ui-smoke" or "--tray-smoke" or "--ui-perf" or "--discovery-perf")
+        || NativeOutputCheck.IsCommand(args) || NativeVolumeCalibration.IsSourceCommand(args);
     [STAThread]
     public static int Main(string[] args)
     {
@@ -26,6 +27,8 @@ internal static class Program
             }
             AppPaths.Log($"Startup stage={stage} version={AppPaths.Version} os={Environment.OSVersion.Version} architecture={RuntimeInformation.ProcessArchitecture}");
             if (!WindowsCapabilities.Current.Supported) throw new PlatformNotSupportedException(WindowsCompatibility.Requirement);
+            if (NativeVolumeCalibration.IsSourceCommand(args))
+                return NativeVolumeCalibration.RunSourceAsync(args).GetAwaiter().GetResult();
             if (NativeOutputCheck.IsCommand(args))
             {
                 stage = "native-setup";
