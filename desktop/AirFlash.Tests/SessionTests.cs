@@ -7,6 +7,21 @@ namespace AirFlash.Tests;
 
 public sealed class SessionTests
 {
+    [Fact]
+    public async Task NativeGainIsValidatedRetainedAndReplacesLegacyMasterGain()
+    {
+        var first = new FakeConnection(); var second = new FakeConnection();
+        await using var controller = new SessionController(new FakeFactory(first, second), new FakeAudio(), timing: Fast);
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => controller.SetNativeGainAsync(double.NaN));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => controller.SetNativeGainAsync(1.01));
+        await controller.SetNativeGainAsync(0.4);
+        await controller.StartAsync(Pod(), Settings()); await Until(() => controller.Snapshot.State == PlaybackState.Streaming);
+        Assert.Equal(0.4, first.Commands.Single(c => c.Command == "start").Parameters.Number("gain"));
+        await controller.SetNativeGainAsync(0.25);
+        Assert.Equal(0.25, first.Commands.Last(c => c.Command == "set_gain").Parameters.Number("gain"));
+        await controller.StartAsync(Pod(), Settings()); await Until(() => controller.Snapshot.State == PlaybackState.Streaming);
+        Assert.Equal(0.25, second.Commands.Single(c => c.Command == "start").Parameters.Number("gain"));
+    }
     private static Receiver Pod(string id = "a") => new(id, id, "127.0.0.1");
     private static AppSettings Settings() => new() { AutoConnectOnDiscover = false, ForceReconnect = false, MasterVolume = 10 };
     private static readonly SessionTiming Fast = new(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1), TimeSpan.FromMilliseconds(10));

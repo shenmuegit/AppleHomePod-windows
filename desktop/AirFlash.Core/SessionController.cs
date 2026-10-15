@@ -27,6 +27,7 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
     private Receiver? _receiver;
     private long _generation;
     private bool _muted;
+    private double? _nativeGain;
     private readonly SemaphoreSlim _localMuteGate = new(1, 1);
     private LocalMuteGuard _localMuteGuard = new();
     private string _localMuteWarning = "";
@@ -274,14 +275,26 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
         try { _muted = muted; await SendGainAsync().ConfigureAwait(false); }
         finally { _serial.Release(); }
     }
-    private double Gain(Receiver receiver) => _muted ? 0 : _settings.Gain(_receiver?.Id ?? receiver.Id);
+    public async Task SetNativeGainAsync(double gain)
+    {
+        if (!double.IsFinite(gain) || gain is < 0 or > 1) throw new ArgumentOutOfRangeException(nameof(gain));
+        await _serial.WaitAsync().ConfigureAwait(false);
+        try { lock (_sync) _nativeGain = gain; await SendGainAsync().ConfigureAwait(false); }
+        finally { _serial.Release(); }
+    }
+    private double Gain(Receiver receiver) { lock (_sync) return _nativeGain ?? (_muted ? 0 : _settings.Gain(_receiver?.Id ?? receiver.Id)); }
     private async Task SendGainAsync()
     {
-        IEngineConnection? connection; string? session;
-        lock (_sync) { connection = _connection; session = _sessionId; }
-        if (connection is null || session is null || _receiver is null || Snapshot.State == PlaybackState.Pairing) return;
-        try { await connection.SendAsync(session, "set_gain", new { gain = Gain(_receiver) }, CancellationToken.None).ConfigureAwait(false); }
-        catch (Exception error) when (error is IOException or ObjectDisposedException or InvalidOperationException) { log?.Invoke(L.Format("Volume command deferred to the next session: {0}", error.Message)); }
+        await _equalizerWriter.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            IEngineConnection? connection; string? session;
+            lock (_sync) { connection = _connection; session = _sessionId; }
+            if (connection is null || session is null || _receiver is null || Snapshot.State == PlaybackState.Pairing) return;
+            try { await connection.SendAsync(session, "set_gain", new { gain = Gain(_receiver) }, CancellationToken.None).ConfigureAwait(false); }
+            catch (Exception error) when (error is IOException or ObjectDisposedException or InvalidOperationException) { log?.Invoke(L.Format("Volume command deferred to the next session: {0}", error.Message)); }
+        }
+        finally { _equalizerWriter.Release(); }
     }
     private async Task RunStreamAsync(Receiver receiver, long epoch, CancellationToken cancellation)
     {

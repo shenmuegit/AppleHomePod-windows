@@ -23,6 +23,7 @@ public sealed class ProcessEngineConnection : IEngineConnection
     private readonly Task _stderr;
     private readonly StringBuilder _errorText = new();
     private readonly Task _exit;
+    public int ProcessId => _process.Id;
     public ProcessEngineConnection(string executable, Action<string>? log = null)
     {
         _log = log;
