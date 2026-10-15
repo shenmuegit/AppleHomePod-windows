@@ -1,5 +1,18 @@
 AirFlash — third-party notices
 
+AppleHome modifications
+
+AppleHome modifications are licensed under GNU GPL version 3 or later.
+The upstream commercial option does not grant a commercial license for
+these modifications.
+
+VB-CABLE (independent installation)
+
+VB-CABLE is a separate driver from VB-Audio Software. Its package and
+installer are not included, embedded, redistributed, or automatically
+run by AppleHome. Obtain the original from https://vb-audio.com/Cable/
+and follow the vendor's separate installation and licensing terms.
+
 AirFlash
 
 Copyright (c) 2026 AirFlash contributors

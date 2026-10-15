@@ -38,13 +38,14 @@ public sealed class NativeOutputController
     private readonly TimeProvider _time;
     private readonly Action<string>? _log;
     private readonly Channel<Update> _events = Channel.CreateBounded<Update>(new BoundedChannelOptions(64) { FullMode = BoundedChannelFullMode.Wait, SingleReader = true });
-    private sealed record Update(NativeOutputSnapshot? Windows = null, SessionSnapshot? Session = null, long RouteEpoch = 0);
+    private sealed record Update(NativeOutputSnapshot? Windows = null, SessionSnapshot? Session = null, long RouteEpoch = 0, ulong CaptureEpoch = 0, long UserRevision = 0);
     private NativeOutputSnapshot? _windows;
     private NativeVolume? _volume;
     private SessionSnapshot? _stream;
     private Receiver? _receiver;
     private long? _externalAt, _receiverWaitAt, _errorAt;
-    private long _routeEpoch, _connectRevision, _zeroRevision;
+    private long _routeEpoch, _connectRevision, _zeroRevision, _remoteObservedRevision;
+    private ulong _streamCaptureEpoch;
     private int? _lastNonZero, _remoteActual, _restoreTarget;
     private long? _restoreSequence;
     private double? _lastGain;
@@ -66,7 +67,7 @@ public sealed class NativeOutputController
     {
         if (Interlocked.Exchange(ref _run, 1) != 0) throw new InvalidOperationException("Native output controller runs once.");
         void WindowsChanged(NativeOutputSnapshot value) => Enqueue(new(Windows: value));
-        void SessionChanged(SessionSnapshot value) => Enqueue(new(Session: value, RouteEpoch: Interlocked.Read(ref _routeEpoch)));
+        void SessionChanged(SessionSnapshot value) => Enqueue(new(Session: value, RouteEpoch: Interlocked.Read(ref _routeEpoch), CaptureEpoch: _host.CaptureEpoch, UserRevision: _monitor.Snapshot.Volume.Revision));
         _monitor.Changed += WindowsChanged; _session.Changed += SessionChanged;
         using var timer = _time.CreateTimer(_ => Enqueue(new()), null, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250));
         _ = _host.Completion.ContinueWith(task => _events.Writer.TryComplete(task.IsFaulted ? task.Exception!.GetBaseException() : null), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
@@ -87,10 +88,12 @@ public sealed class NativeOutputController
                 {
                     if (stream.State == PlaybackState.Connecting && _stream?.State is not PlaybackState.Connecting)
                     {
-                        if (_stream is not null) _connectRevision = _volume!.Revision;
+                        if (_stream is not null) _connectRevision = update.UserRevision;
                         _remoteActual = null; _restoreSequence = null; _restoreTarget = null; _gateOpen = false; _lastGain = null;
                     }
                     _stream = stream;
+                    _streamCaptureEpoch = update.CaptureEpoch;
+                    _remoteObservedRevision = update.UserRevision;
                     if (stream.State == PlaybackState.Error) _errorAt ??= _time.GetTimestamp();
                     else _errorAt = null;
                 }
@@ -145,6 +148,18 @@ public sealed class NativeOutputController
             await _host.BeginCaptureAsync(cancellation).ConfigureAwait(false); _begun = true; _receiverWaitAt = _time.GetTimestamp();
         }
         var receiver = resolve(_binding.ReceiverId);
+        var metadataPending = receiver is not null && ReceiverIdentity.Normalize(receiver.Id) == _binding.ReceiverId && receiver.Online && receiver.Complete
+            && !receiver.IsGroup && receiver.StereoId.Length == 0 && receiver.GroupId.Length == 0
+            && receiver.Model is "" or "AudioAccessory5,1" && receiver.SoftwareVersion is "" or "27.0"
+            && (receiver.Codecs.Length == 0 || receiver.Codecs.Contains((byte)1))
+            && (receiver.Model.Length == 0 || receiver.SoftwareVersion.Length == 0 || !receiver.IsLeader);
+        if (metadataPending)
+        {
+            _receiverWaitAt ??= _time.GetTimestamp();
+            if (_time.GetElapsedTime(_receiverWaitAt.Value) >= TimeSpan.FromSeconds(2)) throw new IOException("The bound HomePod's discovery metadata did not become complete within the startup bound.");
+            if (_active) { await GainAsync(0).ConfigureAwait(false); await GateAsync(false, false, cancellation).ConfigureAwait(false); }
+            return;
+        }
         if (receiver is not null && (ReceiverIdentity.Normalize(receiver.Id) != _binding.ReceiverId || !receiver.Online || !receiver.Complete || !receiver.PrefersNtpAlac))
             throw new InvalidOperationException("This receiver identity, firmware or group has not been qualified for native output.");
         if (!_active)
@@ -155,6 +170,7 @@ public sealed class NativeOutputController
                 return;
             }
             Interlocked.Increment(ref _routeEpoch); _active = true; _receiver = receiver; _stream = null; _remoteActual = null; _gateOpen = false; _lastGain = null;
+            _receiverWaitAt = null;
             await _session.SetNativeGainAsync(0).ConfigureAwait(false);
             await _session.StartAsync(receiver, Settings()).ConfigureAwait(false);
             _log?.Invoke("Native route started for the verified receiver.");
@@ -162,7 +178,9 @@ public sealed class NativeOutputController
         else if (receiver is not null && receiver != _receiver)
         {
             _receiver = receiver; await _session.UpdateReceiverAsync(receiver, Settings()).ConfigureAwait(false);
+            return; // Consume the new connection/volume snapshot before touching its capture gate.
         }
+        if (receiver is not null) _receiverWaitAt = null;
         if (_errorAt is { } failed && _session.Snapshot.State == PlaybackState.Error && _time.GetElapsedTime(failed) >= TimeSpan.FromMilliseconds(100))
             throw new IOException(_session.Snapshot.Message);
         if (_stream?.State is not (PlaybackState.Streaming or PlaybackState.Standby)) return;
@@ -170,15 +188,16 @@ public sealed class NativeOutputController
     }
     private async Task ApplyVolumeAsync(CancellationToken cancellation)
     {
+        if (!IsCurrentStream()) return;
         var volume = _volume!;
-        if (_clearPending && !_gateOpen) await GateAsync(false, true, cancellation).ConfigureAwait(false);
+        if (_clearPending && !_gateOpen && !await GateAsync(false, true, cancellation).ConfigureAwait(false)) return;
         var remote = _stream!.DeviceVolume;
         if (remote?.Available != true || remote.Actual is not { } actual)
         {
             await GainAsync(0).ConfigureAwait(false); await GateAsync(false, _clearPending, cancellation).ConfigureAwait(false); return;
         }
         var changed = _remoteActual != actual;
-        if (changed && actual == 0) _zeroRevision = _remoteActual is null ? _connectRevision : volume.Revision;
+        if (changed && actual == 0) _zeroRevision = _remoteActual is null ? _connectRevision : _remoteObservedRevision;
         _remoteActual = actual;
         if (actual > 0) _lastNonZero = actual;
         if (_restoreSequence is { } sequence)
@@ -194,7 +213,9 @@ public sealed class NativeOutputController
         }
         if (actual == 0 && !volume.Muted && volume.Scalar > 0 && volume.Revision > _zeroRevision)
         {
-            await GateAsync(false, true, cancellation).ConfigureAwait(false); await GainAsync(0).ConfigureAwait(false);
+            if (!await GateAsync(false, true, cancellation).ConfigureAwait(false)) return;
+            await GainAsync(0).ConfigureAwait(false);
+            if (!IsCurrentStream()) return;
             var target = _lastNonZero ?? _binding.Calibration!.ResumeDeviceVolume;
             if (target is < 1 or > 100) throw new InvalidDataException("No measured nonzero reference volume is available.");
             var write = _session.SetDeviceVolumeAsync(_binding.ReceiverId, target);
@@ -206,6 +227,7 @@ public sealed class NativeOutputController
         {
             if (!volume.Muted)
             {
+                if (!IsCurrentStream()) return;
                 await _monitor.SetMutedAsync(true, OwnVolumeContext, cancellation).ConfigureAwait(false);
                 AcceptVolume(_monitor.Snapshot.Volume); volume = _volume!;
                 if (!volume.Muted && volume.Revision > _zeroRevision) return;
@@ -220,11 +242,14 @@ public sealed class NativeOutputController
         if (_lastGain == value) return;
         await _session.SetNativeGainAsync(value).ConfigureAwait(false); _lastGain = value;
     }
-    private async Task GateAsync(bool open, bool clear, CancellationToken cancellation)
+    private bool IsCurrentStream() => _stream is not null && _streamCaptureEpoch == _host.CaptureEpoch && ReferenceEquals(_stream, _session.Snapshot);
+    private async Task<bool> GateAsync(bool open, bool clear, CancellationToken cancellation)
     {
-        if (_gateOpen == open && !clear) return;
-        await _host.SetCaptureGateAsync(open, clear, cancellation).ConfigureAwait(false); _gateOpen = open;
-        if (open) _clearPending = false;
+        if (!IsCurrentStream()) return false;
+        if (_gateOpen == open && !clear) return true;
+        if (!await _host.TrySetCaptureGateAsync(_streamCaptureEpoch, open, clear, cancellation).ConfigureAwait(false)) return false;
+        _gateOpen = open; _clearPending = false;
+        return true;
     }
     private async Task StopRouteAsync()
     {

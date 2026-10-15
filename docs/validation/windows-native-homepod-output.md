@@ -70,3 +70,7 @@ pwsh -NoProfile -File scripts/test-native-output.ps1 -Executable desktop/AirFlas
 本次 18 项启动测试与 25 项原托盘策略测试通过；完整 .NET 为 361 项通过，旧 UI 实际 smoke 为 577 项通过。实际隔离 `--native-check` 首轮在缺失任务的 COM HRESULT 被映射为 FileNotFoundException 时失败，修复该具体映射后通过；它在 Windows Task Scheduler 中创建**仅内存**的任务定义并验证真实 schema，未注册任务。`scripts/test-native-startup.ps1` 两项通过：缺少绑定仍为无界面检查，实际未校准绑定的 enable 请求返回非零，绑定/安装 EXE 哈希及任务存在状态不变。最新报告 `startup-c885afd4cc56404daa866bfcf5994209/`；正常窗口、日常托盘、引擎和采集均未创建。原生输出六项检查也重新通过，报告 `check-1052bbd907a443f293d5358c2582f265/`。
 
 校准、测试源和 enable 现在均要求私有安装前证明之后的重启；boot UTC 由系统单调 uptime 推算，系统时间大幅校正后需复核证明。当前不运行正向校准或 enable，不复制日常安装 EXE、不注册登录任务、不恢复旧物理 mute journal。一次性迁移代码只在资格通过且旧面板退出后使用既有 journal 所有权规则；正常后台的 RestoreAsync 始终无物理设备状态。通知代码共用原 Shell 结构，在专用 STA 的短时隐藏窗口上尊重 quiet time，最迟 15 秒清理；实际通知可见性和用户登录启动未验收，不能由代码或 schema 检查替代。
+
+整组软件由独立上下文审阅，范围 `6ab8c22..66b3eb9`。两项 Important 发现均先复现失败再修复：接收端 IP 更新/网络租约更换时不再用旧 streaming/音量状态放行，新 gate 写入携带预期采集 epoch 并在同一串行边界拒绝旧 epoch；发现固件/型号/leader 信息未补齐时在原 2 秒上限内等待，已知不兼容固件或分组仍拒绝。修复还保护关门期间新音量的 PCM 不被开门时重复清除，并按会话事件发出时的用户 Revision 识别先后顺序。宿主/协调器定向 35 项和完整 .NET 366 项通过。审阅没有提出 Critical 或 Minor；硬件、实际任务/通知、首音/尾音/时钟漂移/长播、断网及其他环境均明确留在既有门槛内，不因此取得资格。
+
+完整 Rust 检查为 62 项通过、2 项原有 ignored（需要明确设备的 WASAPI 检查和 30 分钟 localhost soak）；Clippy 以 warnings-as-errors 通过。`scripts/build-native.ps1 -Check` 已从当前源码重新构建 release 引擎并验证静态 CRT/兼容审核；原生静态审核保留 144 个未确认导入项，退出 0 不代表 Windows 11 实机资格。Python 96 项通过，Ruff 通过。候选与对应源码/哈希将在后续记录中固定，尚未安装或启用。

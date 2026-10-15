@@ -86,6 +86,21 @@ public sealed class NativeEngineHostTests
         await using var lease = host.Open(); await lease.SendAsync("next", "start", Start(), default);
         Assert.Equal(2, wire.Commands.Last(c => c.Command == "start").Params.Integer("capture_epoch"));
     }
+    [Fact]
+    public async Task OldEpochGateCannotOpenTheReplacementNetworkSession()
+    {
+        var wire = new WireConnection();
+        await using var host = new NativeEngineHost(wire, 42);
+        await host.ArmAsync(Binding, default);
+        var first = host.Open(); await first.SendAsync("old", "start", Start(), default);
+        var oldEpoch = host.CaptureEpoch; await first.DisposeAsync();
+        await using var next = host.Open(); await next.SendAsync("new", "start", Start(), default);
+        var before = wire.Commands.Count(c => c.Command == "set_capture_gate");
+        Assert.False(await host.TrySetCaptureGateAsync(oldEpoch, true, true, default));
+        Assert.Equal(before, wire.Commands.Count(c => c.Command == "set_capture_gate"));
+        Assert.True(await host.TrySetCaptureGateAsync(host.CaptureEpoch, true, false, default));
+        Assert.False(host.Completion.IsCompleted);
+    }
     [Theory]
     [InlineData("{invalid}\n")]
     [InlineData("{\"event\":")]
@@ -213,7 +228,7 @@ public sealed class NativeEngineHostTests
             return JsonSerializer.Deserialize<JsonElement>(line);
         }
         public ValueTask DisposeAsync() { Disposed = true; End(); return ValueTask.CompletedTask; }
-        public void Volume(string session, int value, long sequence) => Event(session, new { @event = "device_volume", host = "127.0.0.1", volume = value, sequence, status = "confirmed", available = true });
+        public void Volume(string session, int value, long sequence, string host = "127.0.0.1") => Event(session, new { @event = "device_volume", host, volume = value, sequence, status = "confirmed", available = true });
     }
     private sealed class NativeAudio : IAudioService
     {

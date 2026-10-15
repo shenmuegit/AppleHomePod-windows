@@ -126,7 +126,8 @@ public sealed class NativeOutputControllerTests
         await using var f = await Fixture.Create(initialVolume: 24, masterInPcm: true); f.Monitor.Select(true); f.Start();
         await Until(() => f.Gates.Any(c => c.Params.Boolean("open") == true));
         f.Monitor.Volume(new(1, -12, .25, true, Guid.NewGuid()));
-        await Until(() => f.Wire.Commands.Last(c => c.Command == "set_gain").Params.Number("gain") == 0);
+        await Until(() => f.Wire.Commands.Last(c => c.Command == "set_gain").Params.Number("gain") == 0
+            && f.Gates.Any(c => c.Params.Boolean("open") == true && c.Params.Boolean("clear_pending") == true));
         Assert.Contains(f.Gates, c => c.Params.Boolean("open") == true && c.Params.Boolean("clear_pending") == true);
         f.Time.Advance(TimeSpan.FromSeconds(15)); Assert.Single(f.Starts);
         f.Wire.Volume(f.StreamId, 0, 0); await Until(() => f.Session.Snapshot.DeviceVolume?.Actual == 0);
@@ -165,6 +166,7 @@ public sealed class NativeOutputControllerTests
         await Until(() => f.Gates.Any(c => c.Params.Boolean("open") == false && c.Params.Boolean("clear_pending") == true));
         f.Wire.Volume(f.StreamId, 38, 0);
         await Until(() => f.Gates.Any(c => c.Params.Boolean("open") == true));
+        Assert.False(f.Gates.Last(c => c.Params.Boolean("open") == true).Params.Boolean("clear_pending"));
         Assert.Equal(1, f.Wire.Commands.Last(c => c.Command == "set_gain").Params.Number("gain"));
     }
     [Fact]
@@ -179,6 +181,41 @@ public sealed class NativeOutputControllerTests
         f.Receiver = f.Receiver with { SoftwareVersion = "27.1" }; f.Time.Advance(TimeSpan.FromSeconds(1));
         await Assert.ThrowsAsync<InvalidOperationException>(() => f.Run!);
         Assert.Equal(2, f.Starts.Count);
+    }
+    [Fact]
+    public async Task IpChangeWithPendingVolumeClearCannotReleaseNewEpochBeforeItsReadback()
+    {
+        await using var f = await Fixture.Create(masterInPcm: true); f.Monitor.Select(true); f.Start();
+        await Until(() => f.Gates.Any(c => c.Params.Boolean("open") == true));
+        f.Wire.StreamReplies = false; f.Wire.InitialVolume = null;
+        f.Receiver = f.Receiver with { Address = "127.0.0.2" };
+        f.Monitor.Volume(new(1, -24, .0625, false, Guid.NewGuid()));
+        await Until(() => f.Starts.Count == 2 || f.Run!.IsCompleted);
+        Assert.False(f.Run!.IsCompleted, "Transport refresh must not apply the previous lease's streaming state.");
+        var next = f.Starts.Last().Session;
+        f.Wire.Event(next, new { @event = "streaming" });
+        await Until(() => f.Wire.Commands.Any(c => c.Session == next && c.Command == "set_gain" && c.Params.Number("gain") == 0) || f.Run.IsCompleted);
+        Assert.False(f.Run.IsCompleted);
+        Assert.DoesNotContain(f.Gates, c => c.Params.Integer("epoch") == 2 && c.Params.Boolean("open") == true);
+        f.Wire.Volume(next, 0, 0, "127.0.0.2");
+        await Until(() => f.Monitor.Snapshot.Volume.Muted);
+        Assert.DoesNotContain(f.Wire.Commands, c => c.Session == next && c.Command == "set_device_volume");
+    }
+    [Theory]
+    [InlineData("firmware")]
+    [InlineData("model")]
+    [InlineData("leader")]
+    public async Task PartialDiscoveryWaitsForQualificationMetadataWithinStartupBound(string missing)
+    {
+        await using var f = await Fixture.Create(); var complete = f.Receiver;
+        f.Receiver = missing switch { "firmware" => complete with { SoftwareVersion = "" }, "model" => complete with { Model = "" }, _ => complete with { IsLeader = false } };
+        f.Monitor.Select(true); f.Start(); await Until(() => f.Resolutions > 0);
+        using (var pending = new CancellationTokenSource(50))
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => f.Run!.WaitAsync(pending.Token));
+        Assert.Empty(f.Starts);
+        f.Receiver = complete; f.Time.Advance(TimeSpan.FromMilliseconds(250));
+        await Until(() => f.Gates.Any(c => c.Params.Boolean("open") == true));
+        Assert.Single(f.Starts);
     }
     [Fact]
     public async Task FullControllerQueueFailsInsteadOfSilentlyDroppingWindowsIntent()
@@ -203,6 +240,7 @@ public sealed class NativeOutputControllerTests
         public NativeOutputController Controller = null!;
         public Receiver Receiver = new("receiver-1", "da", "127.0.0.1") { Model = "AudioAccessory5,1", SoftwareVersion = "27.0", IsLeader = true, Codecs = [1] };
         public Task? Run;
+        public int Resolutions;
         public List<NativeEngineHostTests.Sent> Starts => Wire.Commands.Where(c => c.Command == "start").ToList();
         public List<NativeEngineHostTests.Sent> Gates => Wire.Commands.Where(c => c.Command == "set_capture_gate").ToList();
         public string StreamId => Starts.Last().Session;
@@ -216,7 +254,7 @@ public sealed class NativeOutputControllerTests
             f.Controller = new(binding, f.Monitor, f.Host, f.Session, f.Time);
             return f;
         }
-        public void Start() => Run = Controller.RunAsync(_ => Receiver, Stop.Token);
+        public void Start() => Run = Controller.RunAsync(_ => { Interlocked.Increment(ref Resolutions); return Receiver; }, Stop.Token);
         public async Task FlushVolume()
         {
             var db = Monitor.Snapshot.Volume.Db - .1;

@@ -9,3 +9,7 @@ AirFlash is dual-licensed under the GNU General Public License, version 3 or any
 - xUnit and Microsoft.NET.Test.Sdk are development-only and are not included in the published application.
 
 The application icon and UI templates are project assets.
+
+AppleHome modifications are distributed under GPL version 3 or later. The upstream commercial option does not grant a commercial license for these modifications.
+
+VB-CABLE is a separately installed driver from VB-Audio Software. Its package and installer are not included, embedded, redistributed, or automatically run by AppleHome. Obtain the original package from https://vb-audio.com/Cable/ and follow the vendor's separate installation and licensing terms. The GPL application uses the installed Windows render endpoint through platform APIs; VB-CABLE is not an application library or bundled dependency.

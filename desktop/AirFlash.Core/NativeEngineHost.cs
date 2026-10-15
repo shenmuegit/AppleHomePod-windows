@@ -22,6 +22,7 @@ public sealed class NativeEngineHost : IEngineFactory, IAsyncDisposable
     private ulong _epoch;
     private Lease? _transport;
     public int ProcessId { get; }
+    public ulong CaptureEpoch => Volatile.Read(ref _epoch);
     public string? CaptureSessionInstanceId { get; private set; }
     public Task Completion => _completion.Task;
     public NativeEngineHost(IEngineConnection connection, int processId)
@@ -105,7 +106,7 @@ public sealed class NativeEngineHost : IEngineFactory, IAsyncDisposable
             var ready = await ControlAsync("arm_capture", new { capture_id = id, endpoint_id = binding.Endpoint.EndpointId, sample_rate = 44100 }, "capture_ready", TimeSpan.FromSeconds(3), cancellation).ConfigureAwait(false);
             if (ready.Text("capture_id") != id || ready.Integer("epoch") != 1 || string.IsNullOrEmpty(ready.Text("session_instance_id")))
                 throw new IOException("Invalid capture-ready identity.");
-            _binding = binding; _captureId = id; _epoch = 1; CaptureSessionInstanceId = ready.Text("session_instance_id");
+            _binding = binding; _captureId = id; Volatile.Write(ref _epoch, 1); CaptureSessionInstanceId = ready.Text("session_instance_id");
         }
         catch (IOException error) { Fail(error); throw; }
         finally { _captureSerial.Release(); }
@@ -131,7 +132,7 @@ public sealed class NativeEngineHost : IEngineFactory, IAsyncDisposable
     {
         var next = checked(_epoch + 1);
         var ack = await ControlAsync("reset_capture", new { capture_id = _captureId, epoch = _epoch }, "capture_reset", TimeSpan.FromSeconds(2), cancellation).ConfigureAwait(false);
-        ValidateCaptureAck(ack, next); _epoch = next; _begun = false;
+        ValidateCaptureAck(ack, next); Volatile.Write(ref _epoch, next); _begun = false;
     }
     private async Task BeginLockedAsync(CancellationToken cancellation)
     {
@@ -142,15 +143,21 @@ public sealed class NativeEngineHost : IEngineFactory, IAsyncDisposable
         ValidateCaptureAck(begun, _epoch); _begun = true;
     }
     public async Task SetCaptureGateAsync(bool open, bool clearPending, CancellationToken cancellation)
+        => _ = await SetGateAsync(null, open, clearPending, cancellation).ConfigureAwait(false);
+    public Task<bool> TrySetCaptureGateAsync(ulong expectedEpoch, bool open, bool clearPending, CancellationToken cancellation)
+        => SetGateAsync(expectedEpoch, open, clearPending, cancellation);
+    private async Task<bool> SetGateAsync(ulong? expectedEpoch, bool open, bool clearPending, CancellationToken cancellation)
     {
         await _captureSerial.WaitAsync(cancellation).ConfigureAwait(false);
         try
         {
             EnsureHealthy();
+            if (expectedEpoch is { } epoch && (epoch != _epoch || !_begun || _transport is null || Volatile.Read(ref _transport.Closing))) return false;
             if (!_begun) throw new InvalidOperationException("Capture has not begun.");
             var ack = await ControlAsync("set_capture_gate", new { capture_id = _captureId, epoch = _epoch, open, clear_pending = clearPending }, "capture_gate", TimeSpan.FromSeconds(2), cancellation).ConfigureAwait(false);
             ValidateCaptureAck(ack, _epoch);
             if (ack.Boolean("open") != open) throw new IOException("Capture gate acknowledgment mismatch.");
+            return true;
         }
         catch (IOException error) { Fail(error); throw; }
         finally { _captureSerial.Release(); }

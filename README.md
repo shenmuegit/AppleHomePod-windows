@@ -1,14 +1,38 @@
 # AppleHome
 
-面向 Windows 10/11 x64 的原生 HomePod 音频发送项目，采用 WPF 界面、Rust 音频引擎和 GPLv3+ 开源许可，基于 Ding-Kyoma 的 [AirFlash](https://github.com/Ding-Kyoma/AirFlash)。
+面向 Windows 10/11 x64 的原生 HomePod 音频发送项目，采用 .NET 后台、Rust 音频引擎和 GPLv3+ 开源许可，保留 WPF 诊断界面，基于 Ding-Kyoma 的 [AirFlash](https://github.com/Ding-Kyoma/AirFlash)。
 
 **当前为可用测试版：Windows 10 Pro 22H2（19045）到单只 HomePod mini 27.0 的系统音乐播放、手动停止和本机声音恢复已由用户实机确认。** 当前使用 2 秒目标缓冲；声学延迟与视频同步未测量。Windows 11、其他型号、其他固件和立体声对均待实机验证。
 
 详细结果见 [兼容矩阵](docs/COMPATIBILITY.md)、[验证记录](docs/VALIDATION.md)。调研、已审阅规格和实施计划保存在 `docs/research/` 与 `docs/superpowers/`。
 
-用户已选择下一版的 Windows 原生输出设备方向：首次独立安装虚拟音频驱动并在 Windows 设备属性中命名，日常通过 Windows 选择 HomePod、调节音量与静音，后台自动发送。[设计规格](docs/superpowers/specs/2026-10-14-windows-native-homepod-output-design.md)及经共同工程审阅的[实施计划](docs/superpowers/plans/2026-10-14-windows-native-homepod-output-implementation.md)已进入执行；驱动已独立安装且身份核验通过，系统命名、重启、实机校准及无面板后台仍待完成，见[新路径验收记录](docs/validation/windows-native-homepod-output.md)。下面的便携包使用方式仍对应已交付的旧版面板。
+Windows 原生输出候选的软件实现已完成：日常通过 Windows 选择 HomePod、调节音量与静音，后台自动发送，常态不显示窗口或托盘菜单。独立驱动已安装且身份核验通过；当前用户暂时不能重启，系统命名持久性、PCM 校准、实际启用与听音验收仍待完成，候选尚未替换日常入口。详见[设计规格](docs/superpowers/specs/2026-10-14-windows-native-homepod-output-design.md)、[实施计划](docs/superpowers/plans/2026-10-14-windows-native-homepod-output-implementation.md)和[新路径验收记录](docs/validation/windows-native-homepod-output.md)。
 
-## 使用测试版
+## Windows 原生输出候选
+
+候选放在 `dist/native-output/`，原 `dist/AppleHome.exe` 仍是已出声的旧面板基线。候选需要一次设置；未完成资格检查时会拒绝采集、校准或启用后台。
+
+1. 单独从 [VB-Audio 官方网站](https://vb-audio.com/Cable/)取得并安装已核验的普通 VB-CABLE Pack45，按厂商要求重启。AppleHome 不分发、嵌入或自动运行驱动安装器；固定版本/哈希见新路径验收记录。已有其他虚拟设备不会被猜测占用。
+2. 首次在 Windows 的 `mmsys.cpl` →“播放”中，把普通 `CABLE Input (VB-Audio Virtual Cable)` 的属性名称设为 `HomePod – da`，核对重启后名称保留。不要选 16ch 或录音端点；之后的用户改名会保留。
+3. 通过维护流程完成稳定接收端身份绑定、PCM 增益位置校准、应用混音器检查与可听非零参考确认。仅成功发包不构成听音确认，不自动把 HomePod 音量设置为 100%。
+4. 资格通过并退出旧面板后，从候选运行 `AppleHome.exe --native-enable`。它仅安装本应用到 `%LOCALAPPDATA%\AppleHome\app\`，注册当前用户的限权登录任务，立即运行并等待采集就绪，无需再次登录。当前未通过门槛，不执行这一步。
+5. 日常在 Windows 音频输出中选择 HomePod，用 Windows 音量、静音和应用混音器控制。切回其他输出后，在虚拟端点仍有播放需求的应用会继续使用它；单应用暂停保留 30 秒。后台不改物理输出静音或其他应用的路由。
+
+首轮原生模式仅允许自动发现的单只 HomePod mini `AudioAccessory5,1 / 27.0`，采用 NTP/ALAC、44100 Hz 和 2000 ms 目标缓冲。首段暂存还会产生额外启动延迟；端到端延迟、视频同步、可听静音/切换尾音、真实 30 分钟稳定性、登录及错误通知仍待实测。Windows 11、其他型号/固件和立体声对不具备资格结论。断网测试已暂缓。
+
+原生候选的无参数入口运行后台；旧面板仅以 `--legacy-panel` 或显式诊断进入。发生需要处理的错误时短暂使用系统通知，遵循系统通知限制，健康后台无日常托盘。当前用户任务名为 `AppleHome.NativeOutput.<SID>`，不保存密码、不创建系统服务，失败最多重启 3 次，间隔 1 分钟。用户修改过的任务或安装 EXE 会被保留。
+
+只读检查和撤销：
+
+```powershell
+.\AppleHome.exe --native-check --output "$env:TEMP\applehome-native-check.json"
+.\AppleHome.exe --native-disable
+.\AppleHome.exe --native-unbind --output "$env:TEMP\applehome-unbind.json"
+```
+
+`disable` 先移除仍属本应用的登录任务，再优雅停止后台。`unbind` 再移除本应用绑定；保留用户设备名称、应用文件和文件所有权证明，不卸载第三方驱动。驱动卸载使用厂商工具，留在用户明确安排的撤销窗口。诊断检查不自动长播、录音或启用任务。
+
+## 使用旧版面板基线
 
 便携文件为 `dist/AppleHome.exe`。它包含 .NET 运行时和 Rust 引擎，使用 x64 Windows，无需另外安装开发工具。当前包未签名，也没有自动更新渠道。
 
@@ -26,19 +50,20 @@
 
 家庭 App 的自定义密码、PIN 持久配对和仅家庭成员访问需要分别验收。认证失败时应核对访问设置与设备，不关闭服务端证明或身份验证。
 
-## 本机声音与恢复
+## 旧版面板的本机声音与恢复
 
 应用在收到有声样本指标后才尝试静音本机输出；原状态先原子写入 `%APPDATA%\AppleHome\local-mute.json`。连续两次有声样本指标未推进时，会恢复本机播放并提示选择其他输出设备；自然静音也可能触发该保守回退。
 
 停止、失败、退出和切换采集源时恢复仍由应用拥有的静音改动。用户在 Windows 中解除静音会立即撤销运行中的恢复所有权，自动重连不会重新静音；应用不会改写音量标量。异常退出后的恢复只在正常启动中显式执行。若恢复文件损坏或无法写入，会显示错误；不要为此重置整个系统声音设置。清除文件失败时会保留用户当前选择并重试，但在清除成功前崩溃仍可能留下旧记录，应解决写入错误并重试后再退出。
 
-崩溃期间的同值外部静音写入无法辨认。需要完全独立的本机与 HomePod 路由时，应另行评估虚拟输出端点。
+崩溃期间的同值外部静音写入无法辨认。原生输出候选使用独立虚拟端点，正常后台不调用这条物理静音/恢复路径；旧 journal 仅在首次显式启用、资格通过且旧面板退出后按所有权规则迁移一次。
 
 ## 数据与诊断
 
 - 设置和日志：`%APPDATA%\AppleHome\`。
 - 当前用户保护的配对资料：`%APPDATA%\AppleHome\native-credentials\`。
 - 按哈希提取的引擎：`%LOCALAPPDATA%\AppleHome\engine\`。
+- 原生绑定和校准：`%APPDATA%\AppleHome\native-output.json`；安装前证明和启动所有权证明在同一私有目录。
 - 应用不读取或覆盖 AirFlash 的设置与配对目录。
 - 日志脱敏标记的 PIN、密码、令牌、密钥与用户路径；导出另处理设备地址和标识。分享前仍请查看诊断文本。
 - `--compat-check`、`--audio-check`、`--discovery-check` 为显式诊断入口；音频枚举不会采集或恢复声音。输出使用 `--output <绝对路径>`。
@@ -68,22 +93,22 @@ uv run ruff check .
 pwsh -NoProfile -File scripts/dotnet.ps1 run --project AirFlash.App -- --ui-smoke --output ../artifacts/validation/ui-smoke.json
 ```
 
-发布便携诊断包：
+构建独立原生候选，保留旧便携包：
 
 ```powershell
 $CheckoutRoot = (Get-Location).Path
-pwsh -NoProfile -File scripts/dotnet.ps1 publish AirFlash.App -c Release -r win-x64 --self-contained true -p:RestoreLockedMode=true -p:PublishTrimmed=false -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false "-p:PathMap=$CheckoutRoot=/_/" -p:Version=0.1.0 -p:InformationalVersion=0.1.0-rc.1 -o ../build/wpf-publish
+pwsh -NoProfile -File scripts/dotnet.ps1 publish AirFlash.App -c Release -r win-x64 --self-contained true -p:RestoreLockedMode=true -p:PublishTrimmed=false -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false "-p:PathMap=$CheckoutRoot=/_/" -o ../artifacts/native-output-publish
 if ($LASTEXITCODE -ne 0) { throw 'Publish failed' }
 $Audit = Get-Content artifacts/compatibility/bundle-audit.json -Raw | ConvertFrom-Json
 if (!$Audit.ok) { throw 'Compatibility audit failed' }
-New-Item -ItemType Directory -Force dist | Out-Null
-Copy-Item build/wpf-publish/AirFlash.exe dist/AppleHome.exe
-Get-FileHash dist/AppleHome.exe -Algorithm SHA256
+New-Item -ItemType Directory -Force dist/native-output | Out-Null
+Copy-Item artifacts/native-output-publish/AirFlash.exe dist/native-output/AppleHome.exe
+Get-FileHash dist/native-output/AppleHome.exe -Algorithm SHA256
 ```
 
 内部程序集名保留 `AirFlash`；最终可执行文件名为 `AppleHome.exe`。完整 MSI/版本预留/外部发布流水线不属于本轮构建。
 
-历史 `scripts/e2e_stream.py` 探测入口没有携带新发现的 mini 配置信息，不能代替最终 WPF 包的实机验收。它的旧 Python `--source loopback` 分支也未纳入产品验证。系统声音应通过用户主动开始的 WPF 路径检查。
+候选应附代码提交、文档提交、EXE/引擎 SHA256、对应源码和资格状态 manifest。内嵌引擎必须来自本次构建；若实机验收后改了代码，需要新包和受影响验收。历史 `scripts/e2e_stream.py` 和模拟回归均不能代替当前候选的 Windows 原生选择及听音验收。
 
 ## 来源与许可
 
