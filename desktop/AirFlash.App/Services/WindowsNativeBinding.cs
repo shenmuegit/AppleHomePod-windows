@@ -15,6 +15,17 @@ public sealed class WindowsNativeBinding
     internal static string PreflightPath => Path.Combine(AppPaths.DataDirectory, "native-output-preflight.json");
     private sealed record Adapter(string Id, string[] HardwareIds, string Provider, string Version, string Hash);
     private sealed record InstallSnapshot(string Machine, DateTimeOffset CreatedUtc, string[] AdapterIds);
+    internal static bool RebootedSincePreinstall()
+    {
+        using var file = File.OpenRead(PreflightPath);
+        if (file.Length > 65536) throw new InvalidDataException("The pre-install snapshot exceeds its size limit.");
+        var snapshot = JsonSerializer.Deserialize<InstallSnapshot>(file, new JsonSerializerOptions(AppSettings.JsonOptions) { RespectRequiredConstructorParameters = true })
+            ?? throw new InvalidDataException("The pre-install proof is missing.");
+        if (snapshot.Machine != MachineStamp() || snapshot.AdapterIds is null || snapshot.AdapterIds.Length != 0) return false;
+        // shortcut: boot UTC uses uptime; revalidate the proof after a major system-clock correction.
+        var boot = DateTimeOffset.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64);
+        return NativeStartupPolicy.RebootedAfter(snapshot.CreatedUtc, boot);
+    }
 
     public Task<IReadOnlyList<EndpointIdentity>> SnapshotAsync(CancellationToken cancellation)
         => OnMtaAsync<IReadOnlyList<EndpointIdentity>>(() => ReadEndpoints(ReadAdapters(), cancellation), cancellation);

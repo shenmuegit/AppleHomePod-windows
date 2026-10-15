@@ -6,6 +6,7 @@ using System.Windows.Interop;
 using System.Windows.Threading;
 using AirFlash.App.Ui;
 using AirFlash.App.ViewModels;
+using static AirFlash.App.Services.ShellNotification;
 namespace AirFlash.App.Services;
 
 public sealed class TrayService : IDisposable
@@ -182,19 +183,7 @@ public sealed class TrayService : IDisposable
         _registration.Dispose(); _source.Dispose();
         _icon.Dispose();
     }
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    private struct NotifyData
-    {
-        public uint Size; public IntPtr Window; public uint Id, Flags, Callback; public IntPtr Icon;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string Tip;
-        public uint State, StateMask;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)] public string Info;
-        public uint Version;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)] public string InfoTitle;
-        public uint InfoFlags; public Guid Guid; public IntPtr BalloonIcon;
-    }
     [StructLayout(LayoutKind.Sequential)] private struct IconIdentifier { public uint Size; public IntPtr Window; public uint Id; public Guid Guid; }
-    [DllImport("shell32.dll", CharSet = CharSet.Unicode)] private static extern bool Shell_NotifyIcon(uint message, ref NotifyData data);
     [DllImport("shell32.dll")] private static extern int Shell_NotifyIconGetRect(ref IconIdentifier identifier, out NativeWindowPlacement.Rectangle rectangle);
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)] private static extern uint ExtractIconEx(string file, int index, out IntPtr large, out IntPtr small, uint count);
     [DllImport("user32.dll")] private static extern bool DestroyIcon(IntPtr icon);

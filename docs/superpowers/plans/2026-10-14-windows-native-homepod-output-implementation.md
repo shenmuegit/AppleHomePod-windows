@@ -210,7 +210,7 @@ Assert.True(homePodRouteActiveAfterResume);
 
 **Interfaces:** `NativeOutputAgent.RunAsync(CancellationToken): Task<int>`；`NativeAutostart.InstallAsync(string executable, CancellationToken): Task` / `RemoveOwnedAsync(string executable, CancellationToken): Task`；`NativeNotification.ShowAsync(string message, CancellationToken): Task`。入口：`--native-agent`、`--native-enable`、`--native-disable`、`--native-check --output <json>`；`--native-unbind` 扩充为先 disable 再 Task 1 restore。SingleInstance 新 `Listen(Action<byte> command, Func<bool>? isReady = null)` / `NotifyExistingAsync(byte command)` / `QueryReadyAsync(CancellationToken): Task<bool>`，保留旧 Action/无参重载；新模式独立 suffix=`Native`，byte 2 优雅停止，byte 1 不打开日常面板。native 管道使用 InOut，byte 3 查询 isReady 并回 0/1；旧 byte 1 客户端仍可只写。
 
-- [ ] **Step 1 — RED:** `AgentDispatchPrecedesWpfInitialization` 断言显式 `--native-agent` 和有效 binding 的无参数原生入口均不构造 App/ControlPanel/TrayService、外层 catch 失败非零且无 MessageBox；`UserChangedStartupTaskIsPreserved` 验证 SID、exe/args 不匹配不删除；`OwnedNativeTaskHasBoundedRestart` 验证当前 SID InteractiveToken、RunLevel LeastPrivilege、Restart Count=3 / Interval=PT1M、无密码。增加 `FirstEnableArmsWithoutRelogin`、`RepeatedEnableKeepsOneAgent`、`FatalHostReturnsNonzero`、`SingleInstanceCanDisposeAfterThreadSwitch`。
+- [x] **Step 1 — RED:** `AgentDispatchPrecedesWpfInitialization` 断言显式 `--native-agent` 和有效 binding 的无参数原生入口均不构造 App/ControlPanel/TrayService、外层 catch 失败非零且无 MessageBox；`UserChangedStartupTaskIsPreserved` 验证 SID、exe/args 不匹配不删除；`OwnedNativeTaskHasBoundedRestart` 验证当前 SID InteractiveToken、RunLevel LeastPrivilege、Restart Count=3 / Interval=PT1M、无密码。增加 `FirstEnableArmsWithoutRelogin`、`RepeatedEnableKeepsOneAgent`、`FatalHostReturnsNonzero`、`SingleInstanceCanDisposeAfterThreadSwitch`。
 
 ```csharp
 Assert.False(wpfInitializedForNativeAgent);
@@ -221,17 +221,19 @@ Assert.Equal("PT1M", taskRestartInterval);
 Assert.False(backgroundUsesPhysicalMuteRecovery);
 ```
 
-- [ ] **Step 2 — Run RED:** `D test AirFlash.Tests --filter NativeStartupTests`，预期新分派/任务逻辑缺失，失败。
-- [ ] **Step 3 — 入口与资源：** 在 new App() 前判定并分派原生模式；外层 catch 也根据已判定模式处理，所有原生入口失败日志/通知/非零退出，不能走旧 MessageBox。正常启动有有效 binding 则原生模式，无 binding 则一次性安装指引，不创建空面板；原面板仅 `--legacy-panel` / 显式 smoke/诊断。Agent 先 arm/等 capture_ready，再接受需求，记录就绪与冷启动空窗；复用 WindowsDiscovery/ReceiverCatalog，按 ReceiverId 订阅地址变化。健康 Host 的网络失败保持 Task 5 重试；Host.Completion fatal 时取消协调器、清理后返回 1，由计划任务最多重启 3 次，新 Agent 重新核验并 arm。取消/显式 stop 返回 0。SingleInstance 改为创建不持有线程所有权的 named Mutex，按 createdNew 判定并保留句柄，Dispose 仅关句柄、不 ReleaseMutex；保持旧身份和重载，验证异步跨线程退出。
-- [ ] **Step 4 — 系统通知：** 仅状态进入需处理错误时复用既有 Shell_NotifyIcon / AppIconService；独立错误通知在专用 STA 的隐藏 HwndSource/消息泵上短暂注册无菜单图标，显示后在 dismiss/hide/timeout 或最多 15 秒清理，健康状态无图标，不创建 App/资源字典/控制面板。沿用 TrayRegistration 所有权与有界失败日志，用户关闭通知/安静时间须尊重；API 失败留诊断，不改变系统设置。使用现有桌面框架，无新 NuGet 或 Toast 部署层。依据：[微软 Shell_NotifyIcon 行为与通知限制](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shell_notifyiconw)。
-- [ ] **Step 5 — 启动与迁移：** 先请用户退出旧已停止的面板，核验仅旧应用仍拥有的 mute journal 并一次恢复。`--native-enable` 将已构建程序放入 `%LOCALAPPDATA%\AppleHome\app\AppleHome.exe`，使用系统 Task Scheduler COM 注册当前 SID 的 `AppleHome.NativeOutput` 登录任务，限权/无密码/允许电池供电/不因电池切换停止/无执行时限/IgnoreNew。绑定及校准有效后立即运行自有任务一次，等待 Agent 通过 CurrentUserOnly 管道报告 capture_ready 才返回成功，无需再次登录；重入不覆盖运行中程序、不创建第二实例。管道 byte 3 查询 ready，响应仅 0/1，不包含设备身份，沿用 3 秒连接界限及 5 秒就绪等待。HKCU Run 仅移除与已知旧路径/参数完全匹配的 AppleHome 值。任务所有权比较 SID、路径和参数；用户修改保留。disable 先取消自有启动再通过管道优雅停止，避免自动重启；不按进程通用名称杀进程、不删除第三方驱动。
-- [ ] **Step 6 — GREEN / Commit:** 重跑启动测试、TrayRegistrationTests 和既有 single-instance/兼容 UI smoke；隔离数据根运行实际 `--native-check`，确认健康状态 0 日常窗口/0 tray 注册、无密码/无服务。人工登录及退出验证启动、任务权限和资源释放；在系统允许通知时实际确认错误通知，关闭通知时只留诊断且不暴露身份/凭据。提交 `feat: run HomePod output as a per-user headless agent`。
+- [x] **Step 2 — Run RED:** `D test AirFlash.Tests --filter NativeStartupTests`，预期新分派/任务逻辑缺失，失败。
+- [x] **Step 3 — 入口与资源：** 在 new App() 前判定并分派原生模式；外层 catch 也根据已判定模式处理，所有原生入口失败日志/通知/非零退出，不能走旧 MessageBox。正常启动有有效 binding 则原生模式，无 binding 则一次性安装指引，不创建空面板；原面板仅 `--legacy-panel` / 显式 smoke/诊断。Agent 先 arm/等 capture_ready，再接受需求，记录就绪与冷启动空窗；复用 WindowsDiscovery/ReceiverCatalog，按 ReceiverId 订阅地址变化。健康 Host 的网络失败保持 Task 5 重试；Host.Completion fatal 时取消协调器、清理后返回 1，由计划任务最多重启 3 次，新 Agent 重新核验并 arm。取消/显式 stop 返回 0。SingleInstance 改为创建不持有线程所有权的 named Mutex，按 createdNew 判定并保留句柄，Dispose 仅关句柄、不 ReleaseMutex；保持旧身份和重载，验证异步跨线程退出。
+- [x] **Step 4 — 系统通知：** 仅状态进入需处理错误时复用既有 Shell_NotifyIcon / AppIconService；独立错误通知在专用 STA 的隐藏 HwndSource/消息泵上短暂注册无菜单图标，显示后在 dismiss/hide/timeout 或最多 15 秒清理，健康状态无图标，不创建 App/资源字典/控制面板。沿用 TrayRegistration 所有权与有界失败日志，用户关闭通知/安静时间须尊重；API 失败留诊断，不改变系统设置。使用现有桌面框架，无新 NuGet 或 Toast 部署层。依据：[微软 Shell_NotifyIcon 行为与通知限制](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shell_notifyiconw)。
+- [x] **Step 5 — 启动与迁移：** 先请用户退出旧已停止的面板，核验仅旧应用仍拥有的 mute journal 并一次恢复。`--native-enable` 将已构建程序放入 `%LOCALAPPDATA%\AppleHome\app\AppleHome.exe`，使用系统 Task Scheduler COM 注册当前 SID 的 `AppleHome.NativeOutput` 登录任务，限权/无密码/允许电池供电/不因电池切换停止/无执行时限/IgnoreNew。绑定及校准有效后立即运行自有任务一次，等待 Agent 通过 CurrentUserOnly 管道报告 capture_ready 才返回成功，无需再次登录；重入不覆盖运行中程序、不创建第二实例。管道 byte 3 查询 ready，响应仅 0/1，不包含设备身份，沿用 3 秒连接界限及 5 秒就绪等待。HKCU Run 仅移除与已知旧路径/参数完全匹配的 AppleHome 值。任务所有权比较 SID、路径和参数；用户修改保留。disable 先取消自有启动再通过管道优雅停止，避免自动重启；不按进程通用名称杀进程、不删除第三方驱动。
+- [x] **Step 6 — 软件 GREEN / Commit:** 重跑启动测试、TrayRegistrationTests 和既有 single-instance/兼容 UI smoke；隔离数据根运行实际 `--native-check`，确认检查路径 0 日常窗口/0 tray 注册、无密码/无服务，并由系统内存任务定义验证 schema。未校准 enable 必须拒绝且不改绑定/安装文件/任务。人工登录、实际任务运行/权限、通知可见性与资源退出验收受 Task 2 门槛约束，转到 Task 7；不能把只读 schema/模拟 ready 当作实际启用成功。提交 `feat: run HomePod output as a per-user headless agent`。
 
 ## Task 7: 当前 mini 的原生操作与听音验收
 
 **Files:** Modify `NativeOutputCheck.cs`、`docs/validation/windows-native-homepod-output.md`；只在复现实际失败后按所属 Task 补小回归再修复代码，不扩展范围。
 
 **Interfaces:** Consumes Tasks 1–6；Produces 分场景 JSON 统计及有用户反馈的验收记录，每项记录 build/hash、路由、开始/结束时间、实际观察时长、资源、错误和用户判断；无音频文件。`--native-check` 不自动长播或抓物理源。
+
+Task 6 软件完成后仍待在本任务验证：实际启用无需再次登录、真实登录/退出与限权任务、错误通知可见性/关闭通知的日志行为以及资源释放。用户暂不能重启时可先生成和审核候选包，不启用；该包仍是未取得实机资格的候选。
 
 - [ ] **Step 1 — 固定实际候选包：** 在 Task 6 代码提交上用既有 dotnet publish 自包含 win-x64 / 单文件 / 内嵌本次 Rust，输出 `artifacts/native-output-publish/`，复制为 `dist/native-output/AppleHome.exe` 并记录代码 commit、EXE/native hash；不运行会清空 dist 的 build.ps1。如开发后台在运行，先 disable 自有实例再更新到此候选包，Task 6 enable 后记录安装路径 SHA 与候选相等。驱动命名持久性、校准/B、认证均通过；用户暂停 iPhone，旧流退出。只在 Windows 选择 `HomePod – da`，用户明确反馈是否出声及物理扬声器有无先行副本，不能用发包替代听音。
 - [ ] **Step 2 — 首段/切换：** 已 arm 且无网络会话时播放短已知音，验证首段完整；分别测首次认证和已缓存认证路径。快速切到扬声器再切回，记录可听尾音/启动延迟，确保不重放之前提示音。Windows 全部三角色和实际单应用输出场景分别检查；输出切换后仍留在虚拟端点的应用行为如实记录。

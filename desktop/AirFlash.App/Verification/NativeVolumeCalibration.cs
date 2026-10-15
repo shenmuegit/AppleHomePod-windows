@@ -35,6 +35,8 @@ internal static class NativeVolumeCalibration
             throw new InvalidOperationException("The bound virtual output or its format changed. Revalidate it before calibration.");
         if (binding.Calibration is null && live.EndpointLabel == live.PinName && live.FriendlyName != binding.AssignedName)
             throw new InvalidOperationException("Complete the first-time Windows output naming before calibration.");
+        if (!WindowsNativeBinding.RebootedSincePreinstall())
+            throw new InvalidOperationException("Complete the independent driver's required reboot before capture or calibration.");
         return binding;
     }
 

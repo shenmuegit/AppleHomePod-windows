@@ -50,7 +50,7 @@ pwsh -NoProfile -File scripts/test-native-output.ps1 -Executable desktop/AirFlas
 | 常驻采集、首段暂存 | Rust 实现已通过隔离回归；真实音频路径未启用 |
 | .NET 常驻宿主 | 软件回归通过；真实进程与虚拟端点的组合待校准后验收 |
 | 系统路由/音量协调 | 软件回归通过；本机只读 MTA 监听通过，真实转发/通知操作待验收 |
-| 无面板后台与当前用户启动任务 | 待实现 |
+| 无面板后台与当前用户启动任务 | 软件实现和本机拒绝路径通过；实际启用/登录/错误通知待硬件门槛后验收 |
 | 新路径 15 秒暂停/静音恢复与完整 30 分钟 | 待验收；旧版被手动停止的长播不算成功 |
 | 断网测试 | 用户明确暂缓 |
 | Windows 11、其他型号/固件与立体声对 | 待对应环境实际验证 |
@@ -64,3 +64,9 @@ pwsh -NoProfile -File scripts/test-native-output.ps1 -Executable desktop/AirFlas
 路由协调已覆盖 Console/Multimedia/Communications、单独应用需求、三种 owned 身份排除、重复/旧代际通知、绑定失效、接收端名称/IP 改变和未验证固件拒绝。单应用实际活动持续保持，暂停后才开始 30 秒保持；可控单调时钟覆盖 15 秒暂停/静音、30 秒边界及模拟 30 分钟活动，后者不是实际长播。远端初值 0 无新意图时仅同步虚拟静音并零增益消费；后续 Windows 正向操作才恢复运行时/校准参考，匹配回读前不放行，连接中更新保留最新增益，post-master 的旧音量暂存被清除。新路径不调用物理 mute/恢复 journal，也不发送旧 UI EQ 更新。相关定向回归 99 项通过，完整 .NET 343 项通过，构建 0 警告/错误。
 
 本机六项诊断通过，报告 `check-899598d5117c4c69b214318a82febb5b/monitor.json` 记录真实 listener_apartment=MTA、2 个会话、1 次快照通知、三个默认角色；engine_started/capture_started/wpf_initialized 均为 false，binding_valid=false。绑定文件未变，未启动 PCM 或 HomePod 会话；该检查不要求校准合格，也不会把只读监听成功当作可启用资格。监听先订阅再 GetCount 的顺序依据 [NAudio 2.2.1 源码](https://github.com/naudio/NAudio/blob/v2.2.1/NAudio.Wasapi/CoreAudioApi/AudioSessionManager.cs)和[微软会话通知要求](https://learn.microsoft.com/en-us/windows/win32/api/audiopolicy/nf-audiopolicy-iaudiosessionmanager2-registersessionnotification)。真实用户通知、恢复听音和持续播放仍待硬件门槛后验证。
+
+无窗口入口、Native 独立单实例与 ready/stop 管道、当前 SID 登录任务及安装/撤销代码已实现；旧面板只通过 `--legacy-panel` 或既有显式诊断进入。Task Scheduler 定义固定 InteractiveToken/LeastPrivilege、失败最多 3 次且间隔 PT1M、电池允许、无执行时限、IgnoreNew，不保存密码或创建服务。任务名包含 SID；私有 receipt 保存系统归一化 XML 和实际安装二进制哈希，任务或文件被用户修改时保留。第一次启用在资格通过后运行自有任务并等待 capture_ready，无需再次登录；正常停止返回 0，Host fatal 返回 1。Native 管道断开的客户不能终止后续监听，Mutex 不持有线程所有权，异步跨线程退出已回归。
+
+本次 18 项启动测试与 25 项原托盘策略测试通过；完整 .NET 为 361 项通过，旧 UI 实际 smoke 为 577 项通过。实际隔离 `--native-check` 首轮在缺失任务的 COM HRESULT 被映射为 FileNotFoundException 时失败，修复该具体映射后通过；它在 Windows Task Scheduler 中创建**仅内存**的任务定义并验证真实 schema，未注册任务。`scripts/test-native-startup.ps1` 两项通过：缺少绑定仍为无界面检查，实际未校准绑定的 enable 请求返回非零，绑定/安装 EXE 哈希及任务存在状态不变。最新报告 `startup-c885afd4cc56404daa866bfcf5994209/`；正常窗口、日常托盘、引擎和采集均未创建。原生输出六项检查也重新通过，报告 `check-1052bbd907a443f293d5358c2582f265/`。
+
+校准、测试源和 enable 现在均要求私有安装前证明之后的重启；boot UTC 由系统单调 uptime 推算，系统时间大幅校正后需复核证明。当前不运行正向校准或 enable，不复制日常安装 EXE、不注册登录任务、不恢复旧物理 mute journal。一次性迁移代码只在资格通过且旧面板退出后使用既有 journal 所有权规则；正常后台的 RestoreAsync 始终无物理设备状态。通知代码共用原 Shell 结构，在专用 STA 的短时隐藏窗口上尊重 quiet time，最迟 15 秒清理；实际通知可见性和用户登录启动未验收，不能由代码或 schema 检查替代。

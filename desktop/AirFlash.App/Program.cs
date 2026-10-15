@@ -12,12 +12,15 @@ internal static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        var headless = NativeStartupPolicy.IsHeadless(args);
         // Also works when the WPF resource dictionary or localization cannot initialize.
         AppDomain.CurrentDomain.UnhandledException += (_, e) => AppPaths.Log($"Fatal stage=unhandled {e.ExceptionObject}");
         TaskScheduler.UnobservedTaskException += (_, e) => AppPaths.Log($"Background task failed {e.Exception}");
         var stage = "platform";
         try
         {
+            if (args.Contains("--native-check") && args.Contains("--data-directory"))
+                AppPaths.DataDirectory = Path.GetFullPath(NativeOutputCheck.Argument(args, "--data-directory"));
             // The collector gets isolated logs, including failures before WPF initialization.
             if (args.Contains("--compat-check"))
             {
@@ -34,6 +37,11 @@ internal static class Program
                 stage = "native-setup";
                 return NativeOutputCheck.RunAsync(args).GetAwaiter().GetResult();
             }
+            if (headless)
+            {
+                stage = "native-agent";
+                return NativeOutputAgent.RunAsync(CancellationToken.None).GetAwaiter().GetResult();
+            }
             stage = "wpf-resources";
             var app = new App();
             app.InitializeComponent();
@@ -45,7 +53,9 @@ internal static class Program
             AppPaths.Log($"Startup stage={stage} failed {error}");
             try { App.WriteOutput(args, new { ok = false, stage, error = error.ToString(), hresult = $"0x{error.HResult:X8}" }); }
             catch (Exception reportError) { AppPaths.Log($"Diagnostic output failed: {reportError.Message}"); }
-            if (!IsDiagnostic(args))
+            if (headless && !IsDiagnostic(args))
+                NativeNotification.ShowAsync("HomePod 输出尚未就绪，请查看 AppleHome 日志与首次设置说明。", CancellationToken.None).GetAwaiter().GetResult();
+            else if (!headless && !IsDiagnostic(args))
                 MessageBox(IntPtr.Zero, $"{error.Message}\n\nLogs: {AppPaths.LogDirectory}", $"{AppPaths.Name} startup failed", 0x10);
             return 1;
         }
