@@ -7,7 +7,7 @@ use anyhow::{Context, Result, ensure};
 use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::VecDeque,
     sync::{
@@ -31,10 +31,109 @@ use windows::{
     core::Interface,
 };
 #[derive(Clone, Copy)]
-struct Frame {
-    left: f32,
-    right: f32,
-    qpc: u64,
+pub struct Frame {
+    pub left: f32,
+    pub right: f32,
+    pub qpc: u64,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArmCapture {
+    pub capture_id: String,
+    pub endpoint_id: String,
+    pub sample_rate: u32,
+}
+impl ArmCapture {
+    pub fn validate(&self, armed: bool, running: bool) -> Result<()> {
+        ensure!(!armed && !running, "capture or transport already owned; stop and disarm first");
+        uuid::Uuid::parse_str(&self.capture_id).context("capture_id must be a UUID")?;
+        ensure!(!self.endpoint_id.is_empty() && self.endpoint_id.len() <= 1024 && !self.endpoint_id.contains('\0'), "explicit capture endpoint ID required");
+        ensure!(self.sample_rate == 44100, "armed capture requires 44100 Hz");
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Phase { Legacy, Idle, Buffering { open: bool } }
+
+/// The production queue is also usable without WASAPI for deterministic lifecycle tests.
+pub struct CaptureQueue {
+    frames: VecDeque<Frame>,
+    rate: u32,
+    phase: Phase,
+    epoch: u64,
+    min_qpc: u64,
+    overflow: bool,
+    dropped: u64,
+}
+impl CaptureQueue {
+    pub fn legacy(rate: u32) -> Self {
+        Self { frames: VecDeque::new(), rate, phase: Phase::Legacy, epoch: 1, min_qpc: 0, overflow: false, dropped: 0 }
+    }
+    pub fn armed(rate: u32) -> Self { Self { phase: Phase::Idle, ..Self::legacy(rate) } }
+    pub fn epoch(&self) -> u64 { self.epoch }
+    pub fn len(&self) -> usize { self.frames.len() }
+    pub fn is_empty(&self) -> bool { self.frames.is_empty() }
+    pub fn dropped_frames(&self) -> u64 { self.dropped }
+    pub fn check_epoch(&self, epoch: u64) -> Result<()> {
+        ensure!(self.phase != Phase::Legacy && epoch == self.epoch, "stale or invalid capture epoch");
+        Ok(())
+    }
+    pub fn check(&self) -> Result<()> {
+        if self.overflow {
+            return Err(crate::transport::Fault::new("", "capture", "capture_preroll_overflow", false, "Capture exceeded its 2000 ms bound; reset the epoch before retrying").into());
+        }
+        Ok(())
+    }
+    pub fn begin(&mut self, epoch: u64) -> Result<()> {
+        self.check_epoch(epoch)?;
+        self.check()?;
+        if self.phase == Phase::Idle { self.phase = Phase::Buffering { open: false }; }
+        Ok(())
+    }
+    pub fn reset(&mut self, epoch: u64, min_qpc: u64) -> Result<()> {
+        self.check_epoch(epoch)?;
+        let next = self.epoch.checked_add(1).context("capture epoch exhausted")?;
+        self.frames.clear();
+        self.overflow = false;
+        self.epoch = next;
+        self.min_qpc = min_qpc;
+        self.phase = Phase::Idle;
+        Ok(())
+    }
+    pub fn set_gate(&mut self, epoch: u64, open: bool, clear_pending: bool) -> Result<()> {
+        self.check_epoch(epoch)?;
+        self.check()?;
+        ensure!(matches!(self.phase, Phase::Buffering { .. }), "capture has not begun");
+        if clear_pending { self.frames.clear(); }
+        self.phase = Phase::Buffering { open };
+        Ok(())
+    }
+    pub fn gate_open(&self) -> Result<bool> {
+        self.check()?;
+        Ok(matches!(self.phase, Phase::Legacy | Phase::Buffering { open: true }))
+    }
+    pub fn push(&mut self, frame: Frame) {
+        if self.overflow || frame.qpc < self.min_qpc { return; }
+        let capacity = match self.phase { Phase::Legacy => self.rate as usize * 60 / 1000, Phase::Idle => self.rate as usize / 10, Phase::Buffering { .. } => self.rate as usize * 2 };
+        if self.frames.len() >= capacity {
+            if matches!(self.phase, Phase::Buffering { .. }) { self.overflow = true; return; }
+            self.frames.pop_front();
+            self.dropped += 1;
+        }
+        self.frames.push_back(frame);
+    }
+    pub fn pop(&mut self) -> Result<Option<Frame>> {
+        ensure!(self.gate_open()?, "capture_gate_closed");
+        Ok(self.frames.pop_front())
+    }
+    fn discard_stale(&mut self, cutoff: u64, target: usize) {
+        while self.frames.front().is_some_and(|f| f.qpc < cutoff) || self.frames.len() > target {
+            self.frames.pop_front();
+            self.dropped += 1;
+        }
+    }
 }
 #[derive(Default, Clone, Serialize)]
 pub struct Metrics {
@@ -48,8 +147,7 @@ pub struct Metrics {
 }
 struct State {
     equalizer: crate::equalizer::Processor,
-    frames: VecDeque<Frame>,
-    capacity: usize,
+    queue: CaptureQueue,
     target: usize,
     error: Option<String>,
     metrics: Metrics,
@@ -57,14 +155,14 @@ struct State {
 }
 impl State {
     fn push_frame(&mut self, frame: Frame) {
-        if self.frames.len() >= self.capacity {
-            self.frames.pop_front();
-            self.metrics.dropped_frames += 1;
-        }
-        self.frames.push_back(frame);
+        self.queue.push(frame);
     }
 }
 pub struct Loopback {
+    pub capture_id: Option<String>,
+    pub endpoint_id: Option<String>,
+    pub session_instance_id: String,
+    pub sample_rate: u32,
     equalizer_control: crate::equalizer::Control,
     state: Arc<Mutex<State>>,
     stop: Arc<AtomicBool>,
@@ -72,12 +170,17 @@ pub struct Loopback {
 }
 impl Loopback {
     pub fn start(endpoint: Option<String>, rate: u32, equalizer: crate::equalizer::Control) -> Result<Self> {
-        let capacity = rate as usize * 60 / 1000;
+        Self::create(endpoint, rate, equalizer, None)
+    }
+    pub fn arm(endpoint: String, rate: u32, equalizer: crate::equalizer::Control, capture_id: String) -> Result<Self> {
+        ArmCapture { capture_id: capture_id.clone(), endpoint_id: endpoint.clone(), sample_rate: rate }.validate(false, false)?;
+        Self::create(Some(endpoint), rate, equalizer, Some(capture_id))
+    }
+    fn create(endpoint: Option<String>, rate: u32, equalizer: crate::equalizer::Control, capture_id: Option<String>) -> Result<Self> {
         let target = rate as usize * 20 / 1000;
         let state = Arc::new(Mutex::new(State {
             equalizer: crate::equalizer::Processor::new(equalizer.initial(), rate),
-            frames: VecDeque::with_capacity(capacity),
-            capacity,
+            queue: if capture_id.is_some() { CaptureQueue::armed(rate) } else { CaptureQueue::legacy(rate) },
             target,
             error: None,
             metrics: Metrics::default(),
@@ -86,18 +189,24 @@ impl Loopback {
         let stop = Arc::new(AtomicBool::new(false));
         let child_stop = stop.clone();
         let child_state = state.clone();
+        let child_endpoint = endpoint.clone();
+        let session_guid = capture_id.as_ref().map(|id| uuid::Uuid::parse_str(id).map(|u| windows::core::GUID::from_u128(u.as_u128()))).transpose()?;
         let (tx, rx) = mpsc::sync_channel(1);
         let worker = thread::Builder::new()
             .name("wasapi-capture".into())
             .spawn(move || {
-                if let Err(e) = capture(endpoint, rate, child_stop, &child_state, &tx) {
+                if let Err(e) = capture(child_endpoint, rate, session_guid, child_stop, &child_state, &tx) {
                     let message = format!("{e:#}");
                     child_state.lock().unwrap().error = Some(message.clone());
                     let _ = tx.try_send(Err(message));
                 }
             })?;
         match rx.recv_timeout(Duration::from_secs(3)) {
-            Ok(Ok(())) => Ok(Self {
+            Ok(Ok(session_instance_id)) => Ok(Self {
+                capture_id,
+                endpoint_id: endpoint,
+                session_instance_id,
+                sample_rate: rate,
                 equalizer_control: equalizer,
                 state,
                 stop,
@@ -115,20 +224,48 @@ impl Loopback {
         if let Some(e) = &s.error {
             anyhow::bail!("{e}");
         }
-        Ok(s.frames.len() >= s.target)
+        s.queue.check()?;
+        Ok(s.queue.len() >= s.target)
+    }
+    pub fn epoch(&self) -> u64 { self.state.lock().unwrap().queue.epoch() }
+    pub fn begin(&self, epoch: u64) -> Result<()> { self.state.lock().unwrap().queue.begin(epoch) }
+    pub fn reset(&self, epoch: u64) -> Result<()> { self.state.lock().unwrap().queue.reset(epoch, qpc_ns()) }
+    pub fn set_gate(&self, epoch: u64, open: bool, clear_pending: bool) -> Result<()> {
+        let mut s = self.state.lock().unwrap();
+        s.queue.set_gate(epoch, open, clear_pending)?;
+        if clear_pending { s.queue.min_qpc = qpc_ns(); }
+        Ok(())
+    }
+    pub fn gate_open(&self, epoch: u64) -> Result<bool> {
+        let s = self.state.lock().unwrap();
+        if let Some(e) = &s.error { anyhow::bail!("capture stopped: {e}"); }
+        s.queue.check_epoch(epoch)?;
+        s.queue.gate_open()
+    }
+    pub fn validate_key(&self, capture_id: &str, epoch: u64) -> Result<()> {
+        ensure!(self.capture_id.as_deref() == Some(capture_id), "capture_id does not match armed capture");
+        self.state.lock().unwrap().queue.check_epoch(epoch)
+    }
+    pub fn ensure_begun(&self) -> Result<()> {
+        ensure!(matches!(self.state.lock().unwrap().queue.phase, Phase::Buffering { .. }), "begin_capture must precede start");
+        Ok(())
     }
     pub fn packet(&self, gain: f32) -> Result<(Vec<u8>, Option<u64>)> {
+        self.packet_if_open(gain)?.context("capture_gate_closed")
+    }
+    pub fn packet_if_open(&self, gain: f32) -> Result<Option<(Vec<u8>, Option<u64>)>> {
         let mut s = self.state.lock().unwrap();
         if let Some((sequence, prepared)) = self.equalizer_control.latest() { s.equalizer.update(sequence, prepared); }
         if let Some(e) = &s.error {
             anyhow::bail!("capture stopped: {e}");
         }
+        if !s.queue.gate_open()? { return Ok(None); }
         let mut out = Vec::with_capacity(FRAMES * 4);
         let mut marker = None;
         let now = qpc_ns();
         let mut underrun = false;
         for _ in 0..FRAMES {
-            let frame = if let Some(f) = s.frames.pop_front() {
+            let frame = if let Some(f) = s.queue.pop()? {
                 f
             } else {
                 underrun = true;
@@ -156,20 +293,19 @@ impl Loopback {
         if underrun {
             s.metrics.underrun_packets += 1;
         }
-        Ok((out, marker))
+        Ok(Some((out, marker)))
     }
     /// Restore the capture queue to its normal target after a scheduler stall.
     pub fn discard_stale(&self) {
         let mut s = self.state.lock().unwrap();
         let cutoff = qpc_ns().saturating_sub(20_000_000);
-        while s.frames.front().is_some_and(|frame| frame.qpc < cutoff) || s.frames.len() > s.target {
-            s.frames.pop_front();
-            s.metrics.dropped_frames += 1;
-        }
+        let target = s.target;
+        s.queue.discard_stale(cutoff, target);
     }
     pub fn metrics(&self) -> Metrics {
         let s = self.state.lock().unwrap();
         let mut metrics = s.metrics.clone();
+        metrics.dropped_frames = s.queue.dropped_frames();
         let mut ages: Vec<_> = s.ages.iter().copied().collect();
         ages.sort_by(f64::total_cmp);
         metrics.capture_to_send_p95_ms = ages.get(ages.len() * 95 / 100).copied();
@@ -258,16 +394,20 @@ fn find_device(enumerator: &IMMDeviceEnumerator, name: Option<&str>) -> Result<I
 fn capture(
     endpoint: Option<String>,
     stream_rate: u32,
+    session_guid: Option<windows::core::GUID>,
     stop: Arc<AtomicBool>,
     state: &Arc<Mutex<State>>,
-    ready: &mpsc::SyncSender<std::result::Result<(), String>>,
+    ready: &mpsc::SyncSender<std::result::Result<String, String>>,
 ) -> Result<()> {
     unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok() }?;
     let _com = ComGuard;
     let _priority = Mmcss::new();
     let enumerator: IMMDeviceEnumerator =
         unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }?;
-    let device = find_device(&enumerator, endpoint.as_deref())?;
+    let device = if session_guid.is_some() {
+        let wide: Vec<u16> = endpoint.as_deref().context("explicit capture endpoint required")?.encode_utf16().chain(Some(0)).collect();
+        unsafe { enumerator.GetDevice(windows::core::PCWSTR(wide.as_ptr())) }?
+    } else { find_device(&enumerator, endpoint.as_deref())? };
     let flow = unsafe { device.cast::<IMMEndpoint>()?.GetDataFlow() }?;
     let flags = capture_flags(flow)?;
     let client: IAudioClient = unsafe { device.Activate(CLSCTX_ALL, None) }?;
@@ -296,14 +436,14 @@ fn capture(
                 &mut maximum,
             )
         }
-        .and_then(|_| unsafe { client3.InitializeSharedAudioStream(flags, default, pointer, None) })
+        .and_then(|_| unsafe { client3.InitializeSharedAudioStream(flags, default, pointer, session_guid.as_ref().map(|g| g as *const _)) })
     } else {
         Err(windows::core::Error::from_hresult(windows::core::HRESULT(
             -1,
         )))
     };
     let initialized = initialized.or_else(|_| unsafe {
-        client.Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 200_000, 0, pointer, None)
+        client.Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 200_000, 0, pointer, session_guid.as_ref().map(|g| g as *const _))
     });
     unsafe { CoTaskMemFree(Some(pointer.cast())) };
     initialized?;
@@ -317,6 +457,12 @@ fn capture(
     );
     unsafe { client.SetEventHandle(event.0) }?;
     let reader: IAudioCaptureClient = unsafe { client.GetService() }?;
+    let session: IAudioSessionControl = unsafe { client.GetService() }?;
+    let session: IAudioSessionControl2 = session.cast()?;
+    let instance = unsafe { session.GetSessionInstanceIdentifier() }?;
+    let session_instance_id = unsafe { instance.to_string() };
+    unsafe { CoTaskMemFree(Some(instance.0.cast())) };
+    let session_instance_id = session_instance_id?;
     let chunk = (rate / 100) as usize;
     let mut resampler = SincFixedIn::<f32>::new(
         stream_rate as f64 / rate as f64,
@@ -333,10 +479,11 @@ fn capture(
     )?;
     let mut inputs = [VecDeque::<f32>::new(), VecDeque::<f32>::new()];
     let mut input_times = VecDeque::new();
+    let mut capture_epoch = state.lock().unwrap().queue.epoch();
     unsafe { client.Start() }?;
     let _audio = AudioGuard(client);
     state.lock().unwrap().metrics.input_rate = rate;
-    let _ = ready.send(Ok(()));
+    let _ = ready.send(Ok(session_instance_id));
     let mut last_packet = Instant::now();
     while !stop.load(Ordering::Acquire) {
         if unsafe { WaitForSingleObject(event.0, 50) } != WAIT_OBJECT_0 {
@@ -347,6 +494,13 @@ fn capture(
             continue;
         }
         while unsafe { reader.GetNextPacketSize() }? > 0 {
+            let epoch = state.lock().unwrap().queue.epoch();
+            if epoch != capture_epoch {
+                inputs.iter_mut().for_each(VecDeque::clear);
+                input_times.clear();
+                resampler.reset();
+                capture_epoch = epoch;
+            }
             let (mut data, mut frames, mut flags, mut position, mut qpc) =
                 (std::ptr::null_mut(), 0, 0, 0, 0);
             unsafe {
@@ -413,10 +567,12 @@ fn capture(
                 input_times.drain(..chunk);
                 let (have, target) = {
                     let s = state.lock().unwrap();
-                    (s.frames.len(), s.target)
+                    (s.queue.len(), s.target)
                 };
-                let correction =
-                    ((target as f64 - have as f64) / stream_rate as f64 * 0.01).clamp(-0.0005, 0.0005);
+                // Preserve startup backlog; queue-target feedback is for the legacy path only.
+                let correction = if session_guid.is_some() { 0.0 } else {
+                    ((target as f64 - have as f64) / stream_rate as f64 * 0.01).clamp(-0.0005, 0.0005)
+                };
                 resampler.set_resample_ratio_relative(1.0 + correction, true)?;
                 let output = resampler.process(&input, None)?;
                 let delay = resampler.output_delay() as u64 * 1_000_000_000 / stream_rate as u64;
@@ -490,10 +646,13 @@ mod tests {
     fn source() -> Loopback {
         let equalizer_control = crate::equalizer::Control::new(crate::equalizer::Settings::default(), crate::rtp::RATE).unwrap();
         Loopback {
+            capture_id: None,
+            endpoint_id: None,
+            session_instance_id: "test".into(),
+            sample_rate: crate::rtp::RATE,
             state: Arc::new(Mutex::new(State {
                 equalizer: crate::equalizer::Processor::new(equalizer_control.initial(), crate::rtp::RATE),
-                frames: VecDeque::new(),
-                capacity: CAPACITY,
+                queue: CaptureQueue::legacy(crate::rtp::RATE),
                 target: TARGET,
                 error: None,
                 metrics: Metrics::default(),
@@ -545,7 +704,7 @@ mod tests {
                     qpc: 0,
                 });
             }
-            assert_eq!(s.frames.len(), CAPACITY);
+            assert_eq!(s.queue.len(), CAPACITY);
         }
         assert_eq!(source.metrics().dropped_frames, 100);
         source.discard_stale();

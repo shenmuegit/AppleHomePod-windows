@@ -1,7 +1,7 @@
 //! Versioned JSONL qualification interface. stdout is exclusively structured IPC.
 use airflash_engine::{
     rtsp::Cancellation,
-    session::{ProbeOptions, probe_with_controls},
+    session::{ProbeOptions, probe_with_capture},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -42,6 +42,7 @@ struct Running {
     gain_limit: f64,
     volume: airflash_engine::volume::Control,
     equalizer: Option<(airflash_engine::equalizer::Control, u32)>,
+    capture_id: Option<String>,
 }
 impl Drop for Running {
     fn drop(&mut self) {
@@ -53,6 +54,7 @@ impl Drop for Running {
 }
 fn main() {
     let mut running: Option<Running> = None;
+    let mut armed: Option<std::sync::Arc<airflash_engine::live::Loopback>> = None;
     // Limit individual IPC commands; no unbounded read_line allocation.
     let mut input = io::stdin().lock();
     let mut bytes = Vec::new();
@@ -112,8 +114,64 @@ fn main() {
             "hello" => send(
                 &request.id,
                 &request.session_id,
-                json!({"event":"hello","engine_version":env!("CARGO_PKG_VERSION"),"mode":"native","qualification":"partial","live_loopback":true,"commands":["hello","start","probe","stop","set_gain","set_equalizer","set_device_volume","pair","pair_pin"],"production_ready":false}),
+                json!({"event":"hello","engine_version":env!("CARGO_PKG_VERSION"),"mode":"native","qualification":"partial","live_loopback":true,"commands":["hello","start","probe","stop","set_gain","set_equalizer","set_device_volume","pair","pair_pin","arm_capture","begin_capture","reset_capture","disarm_capture","set_capture_gate"],"production_ready":false}),
             ),
+            "arm_capture" => {
+                let result = (|| -> anyhow::Result<_> {
+                    let options: airflash_engine::live::ArmCapture = serde_json::from_value(request.params)?;
+                    options.validate(armed.is_some(), running.is_some())?;
+                    let eq = airflash_engine::equalizer::Control::new(Default::default(), options.sample_rate)?;
+                    airflash_engine::live::Loopback::arm(options.endpoint_id, options.sample_rate, eq, options.capture_id)
+                })();
+                match result {
+                    Ok(source) => {
+                        send(&request.id, &request.session_id, json!({"event":"capture_ready", "capture_id":source.capture_id, "epoch":source.epoch(), "session_instance_id":source.session_instance_id}));
+                        armed = Some(std::sync::Arc::new(source));
+                    }
+                    Err(e) => send(&request.id, &request.session_id, json!({"event":"error", "message":format!("{e:#}")})),
+                }
+            }
+            "begin_capture" | "reset_capture" | "set_capture_gate" | "disarm_capture" => {
+                #[derive(Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct Key { capture_id: String, epoch: u64 }
+                #[derive(Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct Gate { capture_id: String, epoch: u64, open: bool, clear_pending: bool }
+                #[derive(Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct Disarm { capture_id: String }
+                let result = (|| -> anyhow::Result<Value> {
+                    let source = armed.as_ref().ok_or_else(|| anyhow::anyhow!("no armed capture"))?;
+                    if request.command == "disarm_capture" {
+                        let key: Disarm = serde_json::from_value(request.params)?;
+                        source.validate_key(&key.capture_id, source.epoch())?;
+                        anyhow::ensure!(running.as_ref().is_none_or(|r| r.capture_id.as_deref() != Some(&key.capture_id)), "stop transport before disarming capture");
+                        return Ok(json!({"event":"capture_disarmed", "capture_id":key.capture_id}));
+                    }
+                    if request.command == "set_capture_gate" {
+                        let gate: Gate = serde_json::from_value(request.params)?;
+                        source.validate_key(&gate.capture_id, gate.epoch)?;
+                        source.set_gate(gate.epoch, gate.open, gate.clear_pending)?;
+                        return Ok(json!({"event":"capture_gate", "capture_id":gate.capture_id, "epoch":gate.epoch, "open":gate.open}));
+                    }
+                    let key: Key = serde_json::from_value(request.params)?;
+                    source.validate_key(&key.capture_id, key.epoch)?;
+                    if request.command == "begin_capture" { source.begin(key.epoch)?; }
+                    else {
+                        anyhow::ensure!(running.as_ref().is_none_or(|r| r.capture_id.as_deref() != Some(&key.capture_id)), "stop transport before resetting capture");
+                        source.reset(key.epoch)?;
+                    }
+                    Ok(json!({"event":if request.command == "begin_capture" {"capture_begun"} else {"capture_reset"}, "capture_id":key.capture_id, "epoch":source.epoch()}))
+                })();
+                match result {
+                    Ok(event) => {
+                        if request.command == "disarm_capture" { drop(armed.take()); }
+                        send(&request.id, &request.session_id, event);
+                    }
+                    Err(e) => send(&request.id, &request.session_id, json!({"event":"error", "message":format!("{e:#}")})),
+                }
+            }
             "probe" | "start" => {
                 let options: ProbeOptions = match serde_json::from_value(request.params) {
                     Ok(o) => o,
@@ -138,6 +196,25 @@ fn main() {
                     );
                     continue;
                 }
+                let prepared = match (|| -> anyhow::Result<_> {
+                    if let Some(id) = &options.capture_id {
+                        let source = armed.as_ref().ok_or_else(|| anyhow::anyhow!("no armed capture"))?;
+                        source.validate_key(id, options.capture_epoch.unwrap())?;
+                        source.ensure_begun()?;
+                        anyhow::ensure!(options.sample_rate == source.sample_rate && options.capture_endpoint.as_ref().is_none_or(|e| Some(e) == source.endpoint_id.as_ref()), "capture endpoint or rate mismatch");
+                        anyhow::ensure!(running.is_none(), "stop transport before starting a new capture session");
+                        Ok(Some(source.clone()))
+                    } else {
+                        anyhow::ensure!(armed.is_none(), "legacy source cannot replace an armed capture");
+                        Ok(None)
+                    }
+                })() {
+                    Ok(source) => source,
+                    Err(e) => {
+                        send(&request.id, &request.session_id, json!({"event":"error", "message":format!("{e:#}")}));
+                        continue;
+                    }
+                };
                 if let Some(old) = running.take() {
                     drop(old);
                 }
@@ -153,10 +230,11 @@ fn main() {
                 let rate = options.sample_rate;
                 let equalizer = airflash_engine::equalizer::Control::new(options.equalizer, rate).unwrap();
                 let worker_equalizer = equalizer.clone();
-                let live_equalizer = (request.command == "start").then_some((equalizer, rate));
+                let live_equalizer = (request.command == "start" && prepared.is_none()).then_some((equalizer, rate));
+                let capture_id = options.capture_id.clone();
                 let worker = thread::spawn(move || {
                     let emit = |e| send(&request.id, &request.session_id, e);
-                    if let Err(error) = probe_with_controls(options, worker_cancel, worker_gain, worker_volume, worker_equalizer, emit) {
+                    if let Err(error) = probe_with_capture(options, worker_cancel, worker_gain, worker_volume, worker_equalizer, prepared, emit) {
                         emit(airflash_engine::transport::error_event(&error));
                     }
                 });
@@ -169,6 +247,7 @@ fn main() {
                     gain_limit,
                     volume,
                     equalizer: live_equalizer,
+                    capture_id,
                 });
             }
             "set_device_volume" => {
@@ -236,6 +315,10 @@ fn main() {
                 }
             }
             "pair" => {
+                if armed.is_some() {
+                    send(&request.id, &request.session_id, json!({"event":"error", "message":"disarm capture before pairing"}));
+                    continue;
+                }
                 let peer: airflash_engine::session::Peer = match serde_json::from_value(
                     request.params.get("peer").cloned().unwrap_or(Value::Null),
                 ) {
@@ -319,6 +402,7 @@ fn main() {
                     gain_limit: 0.0,
                     volume: airflash_engine::volume::Control::default(),
                     equalizer: None,
+                    capture_id: None,
                 });
             }
             "stop" => {

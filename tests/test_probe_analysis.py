@@ -70,6 +70,18 @@ def test_known_delay_is_recovered_but_stereo_not_certified(tmp_path):
     assert not result["stereo_verified"]
 
 
+def test_actual_first_send_event_supersedes_streaming_initialization(tmp_path):
+    report, wav = make_recording(tmp_path)
+    data = json.loads(report.read_text())
+    start = data["events"][0].pop("first_send_qpc_ns")
+    data["events"][0]["first_send_qpc_ns"] = None
+    data["events"].append({"event": "first_send", "first_send_qpc_ns": start})
+    report.write_text(json.dumps(data))
+    result = analyze(report, wav)
+    assert result["valid"]
+    assert abs(result["p95_ms"] - 173) < 10
+
+
 def test_noise_and_invalid_hardware_timestamps_cannot_pass(tmp_path):
     for noise, timestamp_error in [(True, False), (False, True)]:
         report, wav = make_recording(tmp_path, noise, timestamp_error)

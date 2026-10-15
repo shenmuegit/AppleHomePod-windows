@@ -49,6 +49,12 @@ pub struct ProbeOptions {
     pub source: String,
     #[serde(default)]
     pub capture_endpoint: Option<String>,
+    #[serde(default)]
+    pub capture_id: Option<String>,
+    #[serde(default)]
+    pub capture_epoch: Option<u64>,
+    #[serde(default)]
+    pub await_volume_gate: Option<bool>,
     pub duration_ms: u32,
     pub latency_ms: u32,
     pub gain: f32,
@@ -73,6 +79,7 @@ fn default_timing() -> String {
 }
 impl ProbeOptions {
     pub fn validate_start(&self) -> Result<()> {
+        self.validate_capture_fields()?;
         ensure!(
             self.source == "loopback" && self.duration_ms == 0,
             "start requires unbounded loopback source"
@@ -84,11 +91,15 @@ impl ProbeOptions {
         let mut bounded = self.clone();
         bounded.duration_ms = 5000;
         bounded.gain = 0.1;
+        bounded.capture_id = None;
+        bounded.capture_epoch = None;
+        bounded.await_volume_gate = None;
         self.equalizer.validate()?;
         bounded.equalizer = crate::equalizer::Settings::default();
         bounded.validate()
     }
     pub fn validate(&self) -> Result<()> {
+        ensure!(self.capture_id.is_none() && self.capture_epoch.is_none() && self.await_volume_gate.is_none(), "prepared capture is only available to start");
         self.equalizer.validate()?;
         ensure!(!self.equalizer.enabled, "finite probes require the equalizer to be disabled");
         ensure!(
@@ -126,6 +137,14 @@ impl ProbeOptions {
             crate::rtp::SUPPORTED_RATES.contains(&self.sample_rate),
             "sample rate must be 44100 or 48000"
         );
+        Ok(())
+    }
+    fn validate_capture_fields(&self) -> Result<()> {
+        if self.capture_id.is_none() && self.capture_epoch.is_none() && self.await_volume_gate.is_none() { return Ok(()); }
+        let id = self.capture_id.as_deref().context("capture_id required")?;
+        Uuid::parse_str(id).context("capture_id must be a UUID")?;
+        ensure!(self.capture_epoch.is_some_and(|e| e > 0) && self.await_volume_gate == Some(true), "positive capture_epoch and await_volume_gate=true required");
+        ensure!(self.sample_rate == 44100 && !self.equalizer.enabled, "prepared capture requires 44100 Hz and neutral EQ");
         Ok(())
     }
 }
@@ -504,10 +523,29 @@ pub fn probe_with_controls(
     equalizer: crate::equalizer::Control,
     emit: impl Fn(Json),
 ) -> Result<()> {
+    probe_with_capture(options, cancel, gain, volume, equalizer, None, emit)
+}
+
+pub fn probe_with_capture(
+    options: ProbeOptions,
+    cancel: Cancellation,
+    gain: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    volume: crate::volume::Control,
+    equalizer: crate::equalizer::Control,
+    prepared: Option<std::sync::Arc<crate::live::Loopback>>,
+    emit: impl Fn(Json),
+) -> Result<()> {
     if options.duration_ms == 0 {
         options.validate_start()?;
     } else {
         options.validate()?;
+    }
+    if let Some(source) = &prepared {
+        source.validate_key(options.capture_id.as_deref().context("capture_id required")?, options.capture_epoch.context("capture_epoch required")?)?;
+        source.ensure_begun()?;
+        ensure!(source.sample_rate == options.sample_rate && options.capture_endpoint.as_ref().is_none_or(|e| Some(e) == source.endpoint_id.as_ref()), "capture endpoint or rate does not match armed source");
+    } else {
+        ensure!(options.capture_id.is_none(), "prepared capture unavailable");
     }
     let samples = if options.source == "wav" {
         load_quiet_wav(&options)?
@@ -573,16 +611,17 @@ pub fn probe_with_controls(
         }
     }
     let rate = options.sample_rate;
-    let live = if options.source == "loopback" {
-        Some(crate::live::Loopback::start(
+    let is_prepared = prepared.is_some();
+    let live = if let Some(source) = prepared { Some(source) } else if options.source == "loopback" {
+        Some(std::sync::Arc::new(crate::live::Loopback::start(
             options.capture_endpoint.clone(),
             rate,
             equalizer,
-        )?)
+        )?))
     } else {
         None
     };
-    if let Some(source) = &live {
+    if let Some(source) = live.as_ref().filter(|_| !is_prepared) {
         let until = Instant::now() + Duration::from_millis(200);
         while !source.ready()? && Instant::now() < until {
             cancel.check()?;
@@ -594,6 +633,7 @@ pub fn probe_with_controls(
     let latency = options.latency_ms * rate / 1000;
     let mut schedule = MediaSchedule::new(start, rate);
     let mut packets = 0u64;
+    let mut first_send_reported = false;
     for member in &mut members {
         member.start_feedback(start)?;
     }
@@ -603,7 +643,7 @@ pub fn probe_with_controls(
     let mut last_marker = 0u64;
     let mut next_sync = start;
     emit(
-        json!({"event":"streaming","members":members.len(),"clock_id":clock_id,"first_send_unix_ns":clock.now_ns(),"first_send_qpc_ns":crate::wasapi::qpc_ns(),"requested_latency_ms":options.latency_ms,"sample_rate":rate,"measured_latency_ms":null,"qualified":false}),
+        json!({"event":"streaming","members":members.len(),"clock_id":clock_id,"first_send_unix_ns":null,"first_send_qpc_ns":null,"requested_latency_ms":options.latency_ms,"sample_rate":rate,"measured_latency_ms":null,"qualified":false}),
     );
     let mut pcm = vec![0; PCM_BYTES];
     let outcome = (|| -> Result<()> {
@@ -614,6 +654,25 @@ pub fn probe_with_controls(
                     emit(notice);
                 }
                 member.health.check()?;
+            }
+            if is_prepared && !live.as_ref().unwrap().gate_open(options.capture_epoch.unwrap())? {
+                let now = Instant::now();
+                if now >= next_sync {
+                    for m in &mut members {
+                        let (id, ns) = if let Some(ptp) = &ptp {
+                            let (id, ns) = ptp.timeline(m.peer.host, clock.now_ns()).context("Receiver PTP clock became stale")?;
+                            (Some(id), ns)
+                        } else { (None, clock.now_ns()) };
+                        m.media.sync(ns, id, latency, packets == 0);
+                    }
+                    next_sync = now + Duration::from_millis(100);
+                }
+                thread::sleep(Duration::from_millis(2));
+                continue;
+            }
+            if is_prepared && packets == 0 {
+                schedule.rebase_before_first_send(Instant::now())?;
+                next_sync = Instant::now();
             }
             let deadline = schedule.deadline();
             let now = Instant::now();
@@ -646,8 +705,8 @@ pub fn probe_with_controls(
                 next_sync = now + Duration::from_millis(100);
             }
             if let Some(source) = &live {
-                let (packet, marker) =
-                    source.packet(f32::from_bits(gain.load(Ordering::Relaxed)))?;
+                let Some((packet, marker)) =
+                    source.packet_if_open(f32::from_bits(gain.load(Ordering::Relaxed)))? else { continue; };
                 pcm = packet;
                 if let Some(qpc) = marker {
                     if qpc.saturating_sub(last_marker) > 200_000_000 {
@@ -680,6 +739,10 @@ pub fn probe_with_controls(
                     schedule.deadline(),
                     &member.health,
                 )?;
+            }
+            if !first_send_reported && members.iter().any(|m| m.media.metrics.packets_sent > 0) {
+                emit(json!({"event":"first_send","first_send_unix_ns":clock.now_ns(),"first_send_qpc_ns":crate::wasapi::qpc_ns()}));
+                first_send_reported = true;
             }
             for member in &mut members {
                 member.media.service_retransmits();
@@ -725,6 +788,16 @@ fn transport_metrics(members: &[Member], schedule: &MediaSchedule) -> Json {
 mod tests {
     use super::*;
     #[test]
+    fn finite_wav_rejects_peak_above_existing_quiet_cap() {
+        let mut options: ProbeOptions = serde_json::from_value(json!({"peers":[{"host":"127.0.0.1"}],"duration_ms":5000,"latency_ms":200,"gain":0.1})).unwrap();
+        options.wav_path = std::env::temp_dir().join(format!("airflash-quiet-cap-{}.wav", Uuid::new_v4()));
+        let mut writer = hound::WavWriter::create(&options.wav_path, hound::WavSpec { channels:2, sample_rate:44100, bits_per_sample:16, sample_format:hound::SampleFormat::Int }).unwrap();
+        writer.write_sample(1640i16).unwrap(); writer.write_sample(0i16).unwrap(); writer.finalize().unwrap();
+        let result = load_quiet_wav(&options);
+        std::fs::remove_file(&options.wav_path).unwrap();
+        assert!(result.unwrap_err().to_string().contains("peak amplitude <= 0.05"));
+    }
+    #[test]
     fn unsafe_probe_rejected() {
         let mut o = ProbeOptions {
             peers: vec![Peer {
@@ -736,6 +809,9 @@ mod tests {
             wav_path: PathBuf::new(),
             source: "wav".into(),
             capture_endpoint: None,
+            capture_id: None,
+            capture_epoch: None,
+            await_volume_gate: None,
             duration_ms: 5001,
             latency_ms: 200,
             gain: 0.1,

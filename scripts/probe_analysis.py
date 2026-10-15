@@ -38,7 +38,17 @@ def _float_wav(path: Path) -> np.ndarray:
 def analyze(report_path: Path, recording_path: Path) -> dict:
     report = json.loads(report_path.read_text(encoding="utf-8"))
     recording = json.loads(recording_path.with_suffix(".timestamps.json").read_text())
-    start = next(e["first_send_qpc_ns"] for e in report["events"] if e["event"] == "streaming")
+    start = next(
+        (e["first_send_qpc_ns"] for e in report["events"] if e["event"] == "first_send"),
+        None,
+    )
+    if start is None:
+        start = next(
+            (e.get("first_send_qpc_ns") for e in report["events"] if e["event"] == "streaming"),
+            None,
+        )
+    if not isinstance(start, int) or start <= 0:
+        return {"valid": False, "qualified": False, "reason": "No actual media send timestamp"}
     samples = _float_wav(recording_path)
     rate = recording["sample_rate"]
     window = round(rate * 0.01)

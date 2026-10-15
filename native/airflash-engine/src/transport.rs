@@ -616,6 +616,11 @@ impl MediaSchedule {
     pub fn deadline(&self) -> Instant {
         self.start + Duration::from_nanos(self.frames * 1_000_000_000 / self.rate as u64)
     }
+    pub fn rebase_before_first_send(&mut self, now: Instant) -> Result<()> {
+        anyhow::ensure!(self.frames == 0, "cannot rebase after media was sent");
+        self.start = now;
+        Ok(())
+    }
     pub fn recover(&mut self, now: Instant, live: bool) -> Result<u64> {
         let late = now.saturating_duration_since(self.deadline());
         self.max_lateness_us = self.max_lateness_us.max(late.as_micros());
