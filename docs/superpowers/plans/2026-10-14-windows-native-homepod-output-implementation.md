@@ -42,7 +42,7 @@
 | --- | --- |
 | 新 `desktop/AirFlash.Core/NativeBinding.cs`、`NativeBindingStore.cs` | 端点/驱动绑定、配置所有权与原子持久化 |
 | 新 `desktop/AirFlash.Core/PcmVolumeCalibration.cs` | 校准判定与唯一发送增益计算 |
-| 新 `desktop/AirFlash.App/Services/WindowsNativeBinding.cs`、`Verification/NativeOutputCheck.cs` | PnP/拓扑核验、显式管理员命名维护、低峰值校准和只读诊断 |
+| 新 `desktop/AirFlash.App/Services/WindowsNativeBinding.cs`、`Verification/NativeOutputCheck.cs` | PnP/拓扑核验、系统命名核验、低峰值校准和只读诊断 |
 | 改 `native/airflash-engine/src/live.rs`、`session.rs`、`main.rs` | 常驻采集、有界暂存与增量 JSONL 命令 |
 | 新 `desktop/AirFlash.Core/NativeEngineHost.cs`；改 `EngineConnection.cs`、`SessionController.cs` | 单进程、单 stdout 读泵和网络会话租约；原生增益覆盖 |
 | 新 `desktop/AirFlash.Core/NativeOutputController.cs`、`desktop/AirFlash.App/Services/WindowsNativeOutput.cs` | 路由/会话需求、Windows 音量与代际；MTA COM 生命周期 |
@@ -55,7 +55,7 @@
 ```csharp
 record EndpointIdentity(string EndpointId, string AdapterInstanceId, string HardwareId,
     string Provider, string DriverVersion, string DriverSha256, string PinName,
-    string FriendlyName, string MixFormat, int Channels, AudioEndpointKind Kind, bool Active);
+    string FriendlyName, string MixFormat, int Channels, AudioEndpointKind Kind, bool Active, string? EndpointLabel = null);
 record PcmVolumeCalibration(bool MasterInPcm, string MixFormat, string DriverSha256,
     double MaxDb, int ResumeDeviceVolume);
 record NativeBinding(int SchemaVersion, string ReceiverId, EndpointIdentity Endpoint,
@@ -75,7 +75,7 @@ record NativeOutputSnapshot(long Generation, IReadOnlyList<string?> DefaultRende
 
 **Files:** Create 上表 `NativeBinding.cs` / `NativeBindingStore.cs` / `PcmVolumeCalibration.cs`（仅持久化记录）/ `WindowsNativeBinding.cs` / `NativeOutputCheck.cs`；Modify `Program.cs`、`DiagnosticText.cs`；Test 新 `NativeBindingTests.cs`、既有 `DiagnosticTextTests.cs`。`Program` 只增加显式诊断/维护分派，正常入口待 Task 6。
 
-**Interfaces:** Produces `NativeBindingPolicy.CanClaim(EndpointIdentity, IReadOnlySet<string>): bool`、`MayRestoreName(string current, string assigned): bool`、`ValidateLive(NativeBinding, EndpointIdentity): string?`；`NativeBindingStore(string path).Load(): NativeBinding?` / `SaveAsync(NativeBinding, CancellationToken): Task`。平台 `WindowsNativeBinding.SnapshotAsync(CancellationToken): Task<IReadOnlyList<EndpointIdentity>>`、`BindAsync(string receiverId, string endpointId, string assignedName, CancellationToken): Task<NativeBinding>`、`RestoreAsync(NativeBinding, CancellationToken): Task`。预安装快照保存在同一用户数据目录；不接受命令行自报驱动身份替代实时核验。
+**Interfaces:** Produces `NativeBindingPolicy.CanClaim(EndpointIdentity, IReadOnlySet<string>): bool`、`PrepareBinding(EndpointIdentity candidate, string receiverId, string requestedName, NativeBinding? previous, IReadOnlySet<string> preexistingAdapterIds): NativeBinding`、`ValidateLive(NativeBinding, EndpointIdentity): string?`；`NativeBindingStore(string path).Load(): NativeBinding?` / `SaveAsync(NativeBinding, CancellationToken): Task`。平台 `WindowsNativeBinding.SnapshotAsync(CancellationToken): Task<IReadOnlyList<EndpointIdentity>>`、`BindAsync(string receiverId, string endpointId, string assignedName, CancellationToken): Task<NativeBinding>`、`RestoreAsync(NativeBinding, CancellationToken): Task`。Restore 仅校验绑定并保留用户系统名称；预安装快照保存在同一用户数据目录，不接受命令行自报驱动身份替代实时核验。
 
 - [x] **Step 1 — RED:** 添加以下行为测试；候选的 Provider=`VB-Audio Software`、HardwareId=`VBAudioVACWDM`、DriverVersion=`3.3.1.7`、SYS 哈希使用 Task 2 固定值，其余字段填本测试的明确值。
 
@@ -84,16 +84,16 @@ record NativeOutputSnapshot(long Generation, IReadOnlyList<string?> DefaultRende
 Assert.False(NativeBindingPolicy.CanClaim(candidate, new HashSet<string>{candidate.AdapterInstanceId}));
 Assert.False(NativeBindingPolicy.CanClaim(candidate with { Channels = 16 }, new HashSet<string>()));
 Assert.False(NativeBindingPolicy.CanClaim(candidate with { Kind = AudioEndpointKind.Recording }, new HashSet<string>()));
-// UserRenameIsNotUndone
-Assert.False(NativeBindingPolicy.MayRestoreName("我的输出", "HomePod – da"));
-Assert.True(NativeBindingPolicy.MayRestoreName("HomePod – da", "HomePod – da"));
+// UserRenameIsNotUndone: PrepareBinding adopts the actual Windows user label and keeps OriginalName.
+Assert.Equal("我的输出", adopted.AssignedName);
+Assert.Equal(binding.OriginalName, adopted.OriginalName);
 // DriverOrMixChangeInvalidatesCalibration
 Assert.NotNull(NativeBindingPolicy.ValidateLive(binding, candidate with { DriverSha256 = new string('0',64) }));
 ```
 
 - [x] **Step 2 — Run RED:** `D test AirFlash.Tests --filter NativeBindingTests`。预期新类型尚未定义而失败；随后补充持久化取消/损坏 JSON/缺失字段不能产出可激活绑定的测试，以行为失败收敛。
 - [x] **Step 3 — 实现最小边界：** 按现有 SettingsStore 原子替换方式持久化 `%APPDATA%\AppleHome\native-output.json`。枚举 Core Audio 所有端点状态，并用拓扑连接与 SetupAPI/ConfigManager 对应适配器、HardwareId、Provider、版本和加载 SYS 文件哈希；原始 pin/interface 描述与通道数共同排除 `CABLE In16Ch`，不能只靠 FriendlyName。安装前还查已有非 present 的同 HardwareId 适配器；存在未归本应用管理的实例即停止。本机默认输出和其他设备只读。
-- [x] **Step 4 — 维护与恢复：** 先持久化未校准绑定及 OriginalName/AssignedName，再在明确的管理员维护入口写入端点友好名并 Commit、重新读取；失败恢复仍属本应用的改变。普通后台不写基本属性。不使用直接写 MMDevices 注册表或未文档化 PolicyConfig 补救。新增诊断命令 `--native-preflight-check --output <json>`（只读）和 `--native-bind --receiver-id <id> --endpoint-id <id>`（需要已核验的安装前快照）；`--native-unbind` 仅恢复名称/绑定，Task 6 补启动任务撤销。新增维护/校准命令失败写 JSON/日志并非零退出，不落入旧 MessageBox；脱敏导出中的 endpoint/adapter/session 身份，不导出凭据。
+- [x] **Step 4 — 维护与恢复：** 管理员属性写入在实机返回拒绝后，删除该写入/还原路径；首次用户在 Windows 设备属性命名，应用读取并以 PrepareBinding 核验、原子保存。卸载保留用户名称，清除自己的绑定，Task 6 补启动任务撤销。不直接写 MMDevices 注册表或用未文档化 PolicyConfig。`--native-preflight-check --output <json>` 只读 Windows 状态；`--native-bind --receiver-id <id> --endpoint-id <id>` 要求安装前快照和已完成系统命名。维护失败返回 JSON/非零，无 MessageBox；导出隐藏端点标签与身份，不导出凭据。
 - [x] **Step 5 — GREEN / Commit:** 重跑上述测试及 `DiagnosticTextTests`，预期全部通过；只读检查输出完整设备事实且没有写入默认输出、静音或启动项。提交 `feat: add owned virtual endpoint binding and rollback`。
 
 ## Task 2: 独立驱动安装、命名持久性与音量校准门槛
@@ -116,7 +116,7 @@ Assert.Throws<ArgumentException>(() => PcmVolumeMath.Classify(samples, "44100/2/
 - [ ] **Step 3 — 实现校准：** 用已有 NAudio 在绑定 render 端点发送峰值 ≤0.05 的短已知信号，只计算内存 RMS/peak。固定测试会话音量，采集最大 dB 与最大值−12 dB 的至少两组重复数据；已包含模型要求变化 −12±1 dB，未包含模型要求变化 0±0.5 dB，否则拒绝。若端点不支持两档则停止复核。再改变本测试会话音量至 0.5，要求其 PCM 振幅比 0.5±0.05；分别记录 mute/0、Scalar、Db、MixFormat、驱动哈希。沿用既有有界 NTP/ALAC probe 和实际远端音量回读确认参考 B（1–100），仍遵守 probe ≤5 秒 / WAV 峰值≤0.05 / gain≤0.1；需要用户听音确认，不能复制过往日志当本次 B。初值为 0 时先取得用户明确操作形成的可听参考，不能猜测。恢复且仅恢复本测试仍拥有的端点/测试会话设置，不自动设远端为 100，不录音落盘。
 - [x] **Step 4 — GREEN:** 重跑 Task 2 测试，预期通过；诊断无有效 binding 时须退出非零且不选择物理端点。此时未通过下述实机门槛不得启用后台或声称原生音量可用。
 - [ ] **Step 5 — 独立安装门槛：** 先出示具体包与改动范围，保存 Task 1 安装前快照。用户单独运行官方 `VBCABLE_Setup_x64.exe` 并按原厂要求重启；AppleHome 不自动启动/嵌入该安装器。包 SHA256=`b950e39f01af1d04ea623c8f6d8eb9b6ea5c477c637295fabf20631c85116bfb`；x64 Win10 SYS SHA256=`f01344602472f1b527de5ee98f18987c03db48fea444e457d061e937f1d531d5`。复核原厂 setup Authenticode、Microsoft 目录签名及 `/kp /c` SYS 校验；不以已下载或已验签冒称安装成功。
-- [ ] **Step 6 — 实机门槛 / Commit:** 在全状态快照中唯一识别新普通 CABLE Input、绑定为 `HomePod – da`，用 Windows 输出选择界面与 fresh property read 确认名称；按原厂重启后再确认持久性。执行校准并取得有效结果/B；核对其他端点与默认选择。命名不持久、主/应用音量链路不稳定或参考音量不明时停在此处，提交证据并复核路线，不绕过门槛。通过后提交 `feat: calibrate native endpoint gain on verified VB-CABLE`。
+- [ ] **Step 6 — 实机门槛 / Commit:** 已唯一识别新普通 CABLE Input；因管理员属性写入实测被拒绝，按规格更新改用一次 Windows 系统属性命名为 `HomePod – da`，应用只读取和绑定，保留用户名称。真实 pin 改从连接的适配器 Part.Name 读取，新增可变 EndpointLabel（可选字段兼容旧绑定），不以 DeviceDesc 或通道数猜身份。命名后按原厂重启，用 Windows 输出选择和 fresh read 验证持久性；执行校准并取得有效结果/B，核对其他端点与默认选择。未通过仍停在此处。相关软件修正与测试先保存，硬件门槛通过后才提交资格结论。
 
 ## Task 3: Rust 常驻准备采集与有界首段暂存
 

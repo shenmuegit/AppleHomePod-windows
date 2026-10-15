@@ -33,6 +33,8 @@ internal static class NativeVolumeCalibration
         if (live is null || !NativeBindingPolicy.CanClaim(live, new HashSet<string>())
             || live.AdapterInstanceId != binding.Endpoint.AdapterInstanceId || live.MixFormat != binding.Endpoint.MixFormat)
             throw new InvalidOperationException("The bound virtual output or its format changed. Revalidate it before calibration.");
+        if (binding.Calibration is null && live.EndpointLabel == live.PinName && live.FriendlyName != binding.AssignedName)
+            throw new InvalidOperationException("Complete the first-time Windows output naming before calibration.");
         return binding;
     }
 

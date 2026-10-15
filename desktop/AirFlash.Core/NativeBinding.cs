@@ -4,7 +4,7 @@ namespace AirFlash.Core;
 
 public sealed record EndpointIdentity(string EndpointId, string AdapterInstanceId, string HardwareId,
     string Provider, string DriverVersion, string DriverSha256, string PinName,
-    string FriendlyName, string MixFormat, int Channels, AudioEndpointKind Kind, bool Active);
+    string FriendlyName, string MixFormat, int Channels, AudioEndpointKind Kind, bool Active, string? EndpointLabel = null);
 
 public sealed record NativeBinding(int SchemaVersion, string ReceiverId, EndpointIdentity Endpoint,
     string OriginalName, string AssignedName, PcmVolumeCalibration? Calibration);
@@ -40,6 +40,7 @@ public static class NativeBindingPolicy
         && endpoint.Kind == AudioEndpointKind.Playback && endpoint.Channels is >= 2 and <= 8
         && Text(endpoint.EndpointId, 2048) && Text(endpoint.AdapterInstanceId, 2048)
         && Text(endpoint.FriendlyName, 256) && Text(endpoint.MixFormat, 128)
+        && (endpoint.EndpointLabel is null || Text(endpoint.EndpointLabel, 256))
         && Same(endpoint.HardwareId, HardwareId) && Same(endpoint.Provider, Provider)
         && Same(endpoint.DriverVersion, DriverVersion) && Same(endpoint.DriverSha256, DriverSha256)
         && Same(endpoint.PinName, "CABLE Input");
@@ -47,8 +48,23 @@ public static class NativeBindingPolicy
     public static bool CanClaim(EndpointIdentity candidate, IReadOnlySet<string> preexistingAdapterIds)
         => VerifiedEndpoint(candidate) && !preexistingAdapterIds.Any(id => Same(id, candidate.AdapterInstanceId));
 
-    public static bool MayRestoreName(string current, string assigned)
-        => Text(assigned, 256) && string.Equals(current, assigned, StringComparison.Ordinal);
+    public static NativeBinding PrepareBinding(EndpointIdentity candidate, string receiverId, string requestedName,
+        NativeBinding? previous, IReadOnlySet<string> preexistingAdapterIds)
+    {
+        if (!CanClaim(candidate, preexistingAdapterIds)) throw new InvalidOperationException("The output is not a verified ordinary VB-CABLE playback pin.");
+        receiverId = ReceiverIdentity.Normalize(receiverId);
+        if (previous is not null && (previous.ReceiverId != receiverId || !Same(previous.Endpoint.EndpointId, candidate.EndpointId)
+            || !Same(previous.Endpoint.AdapterInstanceId, candidate.AdapterInstanceId) || !Same(previous.Endpoint.DriverSha256, candidate.DriverSha256)))
+            throw new InvalidOperationException("Remove the existing binding before replacing its receiver or adapter.");
+        var desired = candidate.EndpointLabel == requestedName || candidate.FriendlyName == requestedName;
+        if (previous?.Calibration is null && !desired && (candidate.EndpointLabel is null || Same(candidate.EndpointLabel, candidate.PinName)))
+            throw new InvalidOperationException("First name this output in Windows sound device properties. Application property writes are not supported.");
+        var name = desired ? requestedName : candidate.EndpointLabel ?? candidate.FriendlyName;
+        var calibration = previous?.Endpoint.MixFormat == candidate.MixFormat ? previous.Calibration : null;
+        var binding = new NativeBinding(1, receiverId, candidate, previous?.OriginalName ?? candidate.FriendlyName, name, calibration);
+        if (ValidateStored(binding) is { } error) throw new ArgumentException(error);
+        return binding;
+    }
 
     public static string? ValidateStored(NativeBinding? binding)
     {

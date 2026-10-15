@@ -10,12 +10,13 @@ public sealed class DiagnosticTextTests
     {
         var json = JsonSerializer.Serialize(new { endpoint_id = "private-endpoint", adapter_instance_id = "private-adapter",
             session_instance_id = "private-session", receiver_id = "private-receiver", friendly_name = "Private room",
-            original_name = "Private original", assigned_name = "Private assigned", driver_version = "3.3.1.7", channels = 2 });
+            original_name = "Private original", assigned_name = "Private assigned", endpoint_label="Private endpoint label", driver_version = "3.3.1.7", channels = 2 });
         var safe = DiagnosticText.ForExport(json);
         Assert.DoesNotContain("private-", safe, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Private room", safe);
         Assert.DoesNotContain("Private original", safe);
         Assert.DoesNotContain("Private assigned", safe);
+        Assert.DoesNotContain("Private endpoint label", safe);
         using var parsed = JsonDocument.Parse(safe);
         Assert.Equal("3.3.1.7", parsed.RootElement.GetProperty("driver_version").GetString());
         Assert.Equal(2, parsed.RootElement.GetProperty("channels").GetInt32());

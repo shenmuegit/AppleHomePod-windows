@@ -5,7 +5,7 @@ public static class DiagnosticText
 {
     public static string ForExport(string text)
     {
-        const string labels = @"(?:host|address|ip_?address|(?:device|receiver|endpoint|adapter|session)_?(?:instance_?)?(?:id|name)|(?:friendly|original|assigned)_?name|name|old_?id|new_?id|sid|task_?path)";
+        const string labels = @"(?:host|address|ip_?address|(?:device|receiver|endpoint|adapter|session)_?(?:instance_?)?(?:id|name)|endpoint_?label|(?:friendly|original|assigned)_?name|name|old_?id|new_?id|sid|task_?path)";
         text = Regex.Replace(Protect(text), "(?i)(\"" + labels + @"""\s*:\s*)(""(?:\\.|[^""\\])*""|[0-9]+)", "$1\"[device]\"");
         // Free-form engine text can embed arbitrary room, endpoint and device names.
         text = Regex.Replace(text, @"(?i)(""(?:message|detail)""\s*:\s*)""(?:\\.|[^""\\])*""", "$1\"[detail omitted]\"");

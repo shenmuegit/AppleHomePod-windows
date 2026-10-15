@@ -32,12 +32,19 @@ pwsh -NoProfile -File scripts/test-native-output.ps1 -Executable desktop/AirFlas
 
 ## 驱动门槛与未完成项
 
-当前尚未安装独立 VB-CABLE。安装必须使用独立原厂包，管理员运行 `VBCABLE_Setup_x64.exe`，遵循厂商重启要求；AppleHome 不自动运行或嵌入该安装器。包 SHA256 固定为 `b950e39f01af1d04ea623c8f6d8eb9b6ea5c477c637295fabf20631c85116bfb`，x64 Win10 SYS 为 `f01344602472f1b527de5ee98f18987c03db48fea444e457d061e937f1d531d5`。此前验签证据在 `artifacts/validation/vbcable-pack45-inspection.json` 与 `vbcable-kernel-signature.log`，不能替代本次实际安装/绑定证据。
+用户已从桌面的完整原厂包独立安装 VB-CABLE，尚未重启；Windows 已枚举新增的普通 Input、16ch 播放和 Output 录音端点。实际供应商、版本 `3.3.1.7` 与 x64 Win10 SYS 哈希均匹配。包 SHA256 为 `b950e39f01af1d04ea623c8f6d8eb9b6ea5c477c637295fabf20631c85116bfb`，SYS 为 `f01344602472f1b527de5ee98f18987c03db48fea444e457d061e937f1d531d5`。
+
+管理员进程的首次命名尝试在 `IPropertyStore.SetValue` 返回 `0x80070005`，原名称未改变；保存的未校准绑定不能激活。已删除不受支持的名称写入/还原代码，采用首次在 Windows 自带 `mmsys.cpl` 的播放设备属性中命名。用户名称保留，绑定无需管理员权限。
+
+检查还证明 16ch 变体当前同样报告 2 通道，不能靠混音通道数排除；用户也可通过系统属性改变 DeviceDesc。识别已改为 `connector.ConnectedTo.Part.Name` 的原始驱动 pin，普通输出为 `CABLE Input`、16ch 为 `CABLE In 16 Ch`，独立保存可变 EndpointLabel。全状态枚举中失效连接器保留为不能认领的未知 pin，避免旧设备的 `FileNotFoundException` 阻塞新设备检查。相关回归按失败再修复执行；现有 .NET 测试 311 项通过，构建 0 警告/错误，本机五项检查通过（含命名前拒绝绑定且原绑定文件不变）。
+
+当前全状态端点数 66。Console/Multimedia 默认输出在安装前后已变为 CABLE Input，Communications 仍为原输出；应用没有修改默认输出。后台未启用，用户需要临时电脑声音时可用 Windows 切回物理输出。证据在 `post-install.json`、`first-bind.json`、`check-a89408fcb6a8475e999dfa920b97dac0/`，均为本地忽略报告。
 
 | 项目 | 状态 |
 | --- | --- |
 | 端点绑定规则/存储/诊断出口 | 已有软件回归与本机只读检查 |
-| 实际驱动安装、名称写入和重启持久性 | 待执行 |
+| 实际驱动安装 | 已独立安装且实际身份/文件哈希核验通过；厂商要求的重启待完成 |
+| 首次系统命名与重启持久性 | 改为 Windows 系统属性一次性命名；待用户完成并重启验证 |
 | PCM 取样位置与 Windows 主/应用音量校准 | 软件工具就绪，实际正向路径待驱动安装后执行 |
 | 真实 HomePod 非零参考音量与听音确认 | 待执行 |
 | 常驻采集、首段暂存、无面板后台 | 待实现 |
@@ -45,4 +52,4 @@ pwsh -NoProfile -File scripts/test-native-output.ps1 -Executable desktop/AirFlas
 | 断网测试 | 用户明确暂缓 |
 | Windows 11、其他型号/固件与立体声对 | 待对应环境实际验证 |
 
-未通过驱动、命名与 PCM 门槛，不启用登录后台，不把开发代码替换为日常入口。实际路由、物理设备音量/静音、Voicemeeter、驱动策略与系统启动任务本轮均未改动。
+未通过重启、命名与 PCM 门槛，不启用登录后台，不把开发代码替换为日常入口。物理设备音量/静音、Voicemeeter、驱动签名策略与系统启动任务未由应用改动；默认角色变化如上如实记录。

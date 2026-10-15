@@ -74,9 +74,39 @@ public sealed class NativeBindingTests
     [Fact]
     public void UserRenameIsNotUndone()
     {
-        Assert.False(NativeBindingPolicy.MayRestoreName("我的输出", "HomePod – da"));
-        Assert.True(NativeBindingPolicy.MayRestoreName("HomePod – da", "HomePod – da"));
-        Assert.False(NativeBindingPolicy.MayRestoreName("", ""));
+        var renamed = Candidate with { FriendlyName = "我的输出 (VB-Audio Virtual Cable)", EndpointLabel = "我的输出" };
+        var adopted = NativeBindingPolicy.PrepareBinding(renamed,"receiver-1","HomePod – da",Binding,new HashSet<string>());
+        Assert.Equal("我的输出",adopted.AssignedName);
+        Assert.Equal(renamed.FriendlyName,adopted.Endpoint.FriendlyName);
+        Assert.Equal(Binding.OriginalName,adopted.OriginalName);
+        Assert.Equal(Binding.Calibration,adopted.Calibration);
+    }
+
+    [Fact]
+    public void InitialSystemNameMustBeChosenBeforeTheBindingIsActivated()
+    {
+        Assert.Throws<InvalidOperationException>(() => NativeBindingPolicy.PrepareBinding(
+            Candidate with { EndpointLabel="CABLE Input" },"receiver-1","HomePod – da",null,new HashSet<string>()));
+        var renamed=Candidate with { EndpointLabel="HomePod – da",FriendlyName="HomePod – da (VB-Audio Virtual Cable)" };
+        var binding=NativeBindingPolicy.PrepareBinding(renamed,"receiver-1","HomePod – da",null,new HashSet<string>());
+        Assert.Equal("HomePod – da",binding.AssignedName);
+        Assert.Null(binding.Calibration);
+    }
+
+    [Fact]
+    public void AUserLabelCannotDisguiseTheSixteenChannelDriverPin()
+    {
+        var renamed=Candidate with { EndpointLabel="HomePod – da",FriendlyName="HomePod – da",PinName="CABLE In 16 Ch",Channels=2 };
+        Assert.Throws<InvalidOperationException>(() => NativeBindingPolicy.PrepareBinding(
+            renamed,"receiver-1","HomePod – da",null,new HashSet<string>()));
+    }
+
+    [Fact]
+    public void RebindingCannotReplaceAnotherReceiverOrAdapter()
+    {
+        var renamed=Candidate with { EndpointLabel="HomePod – da" };
+        Assert.Throws<InvalidOperationException>(()=>NativeBindingPolicy.PrepareBinding(renamed,"other-receiver","HomePod – da",Binding,new HashSet<string>()));
+        Assert.Throws<InvalidOperationException>(()=>NativeBindingPolicy.PrepareBinding(renamed with { AdapterInstanceId="other-adapter" },"receiver-1","HomePod – da",Binding,new HashSet<string>()));
     }
 
     [Fact]

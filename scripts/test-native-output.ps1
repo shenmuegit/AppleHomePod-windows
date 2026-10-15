@@ -48,6 +48,20 @@ $protectedExit = Invoke-NativeCheck @('--native-preflight-check','--output',('"'
 $protectedBinding = if (Test-Path -LiteralPath $bindingPath) { (Get-FileHash -LiteralPath $bindingPath).Hash } else { $null }
 if ($protectedExit -ne 1 -or $beforeBinding -ne $protectedBinding) { throw 'A diagnostic output path must not overwrite private configuration.' }
 $checks = 4
+if (Test-Path -LiteralPath $bindingPath) {
+    $storedBinding = Get-Content -LiteralPath $bindingPath -Raw | ConvertFrom-Json
+    $unnamed = @($preflight.endpoints | Where-Object { $_.endpoint_id -eq $storedBinding.endpoint.endpoint_id -and
+        $_.pin_name -eq 'CABLE Input' -and $_.endpoint_label -eq 'CABLE Input' -and -not $storedBinding.calibration })
+    if ($unnamed.Count -eq 1) {
+        $nameGatePath = Join-Path $reportDirectory 'system-name-required.json'
+        $nameExit = Invoke-NativeCheck @('--native-bind','--receiver-id',$storedBinding.receiver_id,
+            '--endpoint-id',$unnamed[0].endpoint_id,'--output',('"' + $nameGatePath + '"'))
+        $nameGate = Get-Content -LiteralPath $nameGatePath -Raw | ConvertFrom-Json
+        if ($nameExit -ne 1 -or $nameGate.error -notmatch 'First name this output in Windows' -or
+            $beforeBinding -ne (Get-FileHash -LiteralPath $bindingPath).Hash) { throw 'First-time naming must use Windows properties without changing the binding.' }
+        $checks++
+    }
+}
 if (-not (Test-Path -LiteralPath $bindingPath)) {
     $unboundCalibrationPath = Join-Path $reportDirectory 'unbound-calibration.json'
     $unboundExit = Invoke-NativeCheck @('--native-calibrate','--output',('"' + $unboundCalibrationPath + '"'))

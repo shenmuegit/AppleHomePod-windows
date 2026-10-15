@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
-using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using AirFlash.Core;
@@ -43,7 +42,6 @@ public sealed class WindowsNativeBinding
 
     public Task<NativeBinding> BindAsync(string receiverId, string endpointId, string assignedName, CancellationToken cancellation)
         => OnMtaAsync(() => {
-            RequireAdministrator();
             using var snapshotFile = File.OpenRead(PreflightPath);
             if (snapshotFile.Length > 65536) throw new InvalidDataException("The pre-install snapshot exceeds its size limit.");
             var snapshot = JsonSerializer.Deserialize<InstallSnapshot>(snapshotFile,
@@ -59,59 +57,18 @@ public sealed class WindowsNativeBinding
             if (endpoints.Count(e => NativeBindingPolicy.CanClaim(e, new HashSet<string>())) != 1)
                 throw new InvalidOperationException("The verified output is ambiguous; do not guess a device.");
             var store = new NativeBindingStore(BindingPath);
-            var previous = store.Load();
-            if (previous is not null && (previous.ReceiverId != receiverId || previous.Endpoint.EndpointId != endpointId
-                || previous.AssignedName != assignedName || previous.Endpoint.AdapterInstanceId != candidate.AdapterInstanceId
-                || previous.Endpoint.DriverSha256 != candidate.DriverSha256))
-                throw new InvalidOperationException("An existing binding must be explicitly removed before it can be replaced.");
-            var binding = previous ?? new NativeBinding(1, receiverId, candidate, candidate.FriendlyName, assignedName, null);
-            if (candidate.FriendlyName != binding.OriginalName && candidate.FriendlyName != binding.AssignedName)
-                throw new InvalidOperationException("The output was renamed by the user. Its name has been preserved.");
+            var binding = NativeBindingPolicy.PrepareBinding(candidate, receiverId, assignedName, store.Load(),
+                new HashSet<string>(snapshot.AdapterIds, StringComparer.OrdinalIgnoreCase));
             store.SaveAsync(binding, cancellation).GetAwaiter().GetResult();
-            cancellation.ThrowIfCancellationRequested();
-            try { SetName(candidate.EndpointId, binding.AssignedName); }
-            catch (Exception nameError)
-            {
-                try
-                {
-                    using var enumerator = new MMDeviceEnumerator();
-                    using var fresh = enumerator.GetDevice(candidate.EndpointId);
-                    if (NativeBindingPolicy.MayRestoreName(ReadProperty(fresh, PropertyKeys.PKEY_Device_FriendlyName) as string ?? "", binding.AssignedName))
-                        SetName(candidate.EndpointId, binding.OriginalName);
-                }
-                catch (Exception recoveryError) { throw new AggregateException("Endpoint naming failed; recovery is pending in the saved binding.", nameError, recoveryError); }
-                throw;
-            }
             return binding;
         }, cancellation);
 
     public Task RestoreAsync(NativeBinding binding, CancellationToken cancellation)
-        => OnMtaAsync(() => {
-            RequireAdministrator();
-            if (NativeBindingPolicy.ValidateStored(binding) is { } error) throw new InvalidDataException(error);
-            var live = ReadEndpoints(ReadAdapters(), cancellation).SingleOrDefault(e => e.EndpointId == binding.Endpoint.EndpointId);
-            if (live is null || !NativeBindingPolicy.CanClaim(live, new HashSet<string>())
-                || live.AdapterInstanceId != binding.Endpoint.AdapterInstanceId)
-                throw new InvalidOperationException("The original output cannot be verified. No other endpoint was changed.");
-            if (NativeBindingPolicy.MayRestoreName(live.FriendlyName, binding.AssignedName))
-                SetName(live.EndpointId, binding.OriginalName);
-            return true;
-        }, cancellation);
-
-    private static void SetName(string endpointId, string name)
     {
-        using (var enumerator = new MMDeviceEnumerator())
-        using (var device = enumerator.GetDevice(endpointId))
-        {
-            device.GetPropertyInformation(StorageAccessMode.ReadWrite);
-            var value = new PropVariant { vt = (short)VarEnum.VT_LPWSTR, pointerValue = Marshal.StringToCoTaskMemUni(name) };
-            try { device.Properties.SetValue(PropertyKeys.PKEY_Device_FriendlyName, value); device.Properties.Commit(); }
-            finally { Marshal.FreeCoTaskMem(value.pointerValue); }
-        }
-        using var freshEnumerator = new MMDeviceEnumerator();
-        using var fresh = freshEnumerator.GetDevice(endpointId);
-        if (!string.Equals(ReadProperty(fresh, PropertyKeys.PKEY_Device_FriendlyName) as string, name, StringComparison.Ordinal))
-            throw new IOException("Windows did not retain the endpoint name. The pending binding keeps its original name for recovery.");
+        cancellation.ThrowIfCancellationRequested();
+        if (NativeBindingPolicy.ValidateStored(binding) is { } error) throw new InvalidDataException(error);
+        // System labels are chosen by the user; unbinding never rewrites them.
+        return Task.CompletedTask;
     }
 
     internal static Task<T> OnMtaAsync<T>(Func<T> operation, CancellationToken cancellation)
@@ -136,19 +93,31 @@ public sealed class WindowsNativeBinding
         {
             cancellation.ThrowIfCancellationRequested();
             var name = ReadProperty(device, PropertyKeys.PKEY_Device_FriendlyName) as string ?? "Unknown";
-            var pinName = ReadProperty(device, PropertyKeys.PKEY_Device_DeviceDesc) as string ?? "";
+            var label = ReadProperty(device, PropertyKeys.PKEY_Device_DeviceDesc) as string;
+            var pinName = "";
             var instanceId = ReadProperty(device, PropertyKeys.PKEY_Device_InstanceId) as string ?? "";
             var controller = ReadProperty(device, PropertyKeys.PKEY_Device_ControllerDeviceId) as string ?? "";
             var adapter = FindAdapter(instanceId, controller, adapters);
-            if (adapter is null)
+            try
             {
-                try {
-                    var connectedId = device.DeviceTopology.GetConnector(0).ConnectedToDeviceId;
-                    using var connected = enumerator.GetDevice(connectedId);
-                    adapter = FindAdapter(ReadProperty(connected, PropertyKeys.PKEY_Device_InstanceId) as string ?? "", "", adapters);
+                if (device.State == DeviceState.Active && (adapter is null
+                    || adapter.HardwareIds.Contains(NativeBindingPolicy.HardwareId, StringComparer.OrdinalIgnoreCase))
+                    && device.DeviceTopology.ConnectorCount > 0)
+                {
+                    var connector = device.DeviceTopology.GetConnector(0);
+                    if (connector.IsConnected)
+                    {
+                        pinName = connector.ConnectedTo.Part.Name ?? "";
+                        if (adapter is null)
+                        {
+                            using var connected = enumerator.GetDevice(connector.ConnectedToDeviceId);
+                            adapter = FindAdapter(ReadProperty(connected, PropertyKeys.PKEY_Device_InstanceId) as string ?? "", "", adapters);
+                        }
+                    }
                 }
-                catch (COMException) { /* A disabled endpoint may have no active topology. PnP inventory still detects its adapter. */ }
             }
+            catch (Exception error) when (error is COMException or FileNotFoundException)
+            { /* An unavailable topology cannot qualify a pin; PnP still detects the adapter. */ }
             var format = (MixFormat: "", Channels: 0);
             if (ReadProperty(device, PropertyKeys.PKEY_AudioEngine_DeviceFormat) is byte[] blob)
                 try { format = NativeBindingPolicy.ReadMixFormat(blob); }
@@ -157,7 +126,7 @@ public sealed class WindowsNativeBinding
                 ?? adapter?.HardwareIds.FirstOrDefault() ?? "";
             endpoints.Add(new(device.ID, adapter?.Id ?? "", hardware, adapter?.Provider ?? "", adapter?.Version ?? "", adapter?.Hash ?? "",
                 pinName, name, format.MixFormat, format.Channels, device.DataFlow == DataFlow.Render ? AudioEndpointKind.Playback : AudioEndpointKind.Recording,
-                device.State == DeviceState.Active));
+                device.State == DeviceState.Active, label));
         }
         if (endpoints.Select(e => e.EndpointId).Distinct(StringComparer.OrdinalIgnoreCase).Count() != endpoints.Count)
             throw new InvalidDataException("The endpoint enumeration returned duplicate device identities.");
@@ -259,13 +228,6 @@ public sealed class WindowsNativeBinding
         using var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Cryptography", false);
         var machineId = key?.GetValue("MachineGuid") as string ?? throw new InvalidOperationException("The current machine identity is unavailable.");
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(machineId))).ToLowerInvariant();
-    }
-
-    private static void RequireAdministrator()
-    {
-        using var identity = WindowsIdentity.GetCurrent();
-        if (!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
-            throw new UnauthorizedAccessException("Run only the explicit endpoint naming maintenance command as administrator. The background agent stays unprivileged.");
     }
 
     [StructLayout(LayoutKind.Sequential)] private struct DeviceInfo { public uint Size; public Guid ClassGuid; public uint DevInst; public IntPtr Reserved; }
