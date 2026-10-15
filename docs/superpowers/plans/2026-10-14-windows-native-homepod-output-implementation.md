@@ -8,7 +8,7 @@
 
 **Tech Stack:** Windows x64、.NET 10、NAudio 2.2.1、Windows Core Audio / Task Scheduler、现有 Rust MSVC / WASAPI / NTP / ALAC；不增加运行时依赖。
 
-**Spec:** [Windows 原生 HomePod 输出设备设计规格](../specs/2026-10-14-windows-native-homepod-output-design.md)。状态：实施计划待用户审阅；未安装驱动、未修改产品代码。保留此前 Native 执行方式：主代理逐项实现，最后由独立审阅者检查整体。
+**Spec:** [Windows 原生 HomePod 输出设备设计规格](../specs/2026-10-14-windows-native-homepod-output-design.md)。状态：2026-10-15 用户继续，按既定 Native 方式进入实施；驱动尚未安装。保留此前 Native 执行方式：主代理逐项实现，最后由独立审阅者检查整体。
 
 ## Global Constraints
 
@@ -77,7 +77,7 @@ record NativeOutputSnapshot(long Generation, IReadOnlyList<string?> DefaultRende
 
 **Interfaces:** Produces `NativeBindingPolicy.CanClaim(EndpointIdentity, IReadOnlySet<string>): bool`、`MayRestoreName(string current, string assigned): bool`、`ValidateLive(NativeBinding, EndpointIdentity): string?`；`NativeBindingStore(string path).Load(): NativeBinding?` / `SaveAsync(NativeBinding, CancellationToken): Task`。平台 `WindowsNativeBinding.SnapshotAsync(CancellationToken): Task<IReadOnlyList<EndpointIdentity>>`、`BindAsync(string receiverId, string endpointId, string assignedName, CancellationToken): Task<NativeBinding>`、`RestoreAsync(NativeBinding, CancellationToken): Task`。预安装快照保存在同一用户数据目录；不接受命令行自报驱动身份替代实时核验。
 
-- [ ] **Step 1 — RED:** 添加以下行为测试；候选的 Provider=`VB-Audio Software`、HardwareId=`VBAudioVACWDM`、DriverVersion=`3.3.1.7`、SYS 哈希使用 Task 2 固定值，其余字段填本测试的明确值。
+- [x] **Step 1 — RED:** 添加以下行为测试；候选的 Provider=`VB-Audio Software`、HardwareId=`VBAudioVACWDM`、DriverVersion=`3.3.1.7`、SYS 哈希使用 Task 2 固定值，其余字段填本测试的明确值。
 
 ```csharp
 // PreexistingAndSixteenChannelEndpointsAreRejected
@@ -91,10 +91,10 @@ Assert.True(NativeBindingPolicy.MayRestoreName("HomePod – da", "HomePod – da
 Assert.NotNull(NativeBindingPolicy.ValidateLive(binding, candidate with { DriverSha256 = new string('0',64) }));
 ```
 
-- [ ] **Step 2 — Run RED:** `D test desktop/AirFlash.Tests --filter NativeBindingTests`。预期新类型尚未定义而失败；随后补充持久化取消/损坏 JSON/缺失字段不能产出可激活绑定的测试，以行为失败收敛。
-- [ ] **Step 3 — 实现最小边界：** 按现有 SettingsStore 原子替换方式持久化 `%APPDATA%\AppleHome\native-output.json`。枚举 Core Audio 所有端点状态，并用拓扑连接与 SetupAPI/ConfigManager 对应适配器、HardwareId、Provider、版本和加载 SYS 文件哈希；原始 pin/interface 描述与通道数共同排除 `CABLE In16Ch`，不能只靠 FriendlyName。安装前还查已有非 present 的同 HardwareId 适配器；存在未归本应用管理的实例即停止。本机默认输出和其他设备只读。
-- [ ] **Step 4 — 维护与恢复：** 先持久化未校准绑定及 OriginalName/AssignedName，再在明确的管理员维护入口写入端点友好名并 Commit、重新读取；失败恢复仍属本应用的改变。普通后台不写基本属性。不使用直接写 MMDevices 注册表或未文档化 PolicyConfig 补救。新增诊断命令 `--native-preflight-check --output <json>`（只读）和 `--native-bind --receiver-id <id> --endpoint-id <id>`（需要已核验的安装前快照）；`--native-unbind` 仅恢复名称/绑定，Task 6 补启动任务撤销。新增维护/校准命令失败写 JSON/日志并非零退出，不落入旧 MessageBox；脱敏导出中的 endpoint/adapter/session 身份，不导出凭据。
-- [ ] **Step 5 — GREEN / Commit:** 重跑上述测试及 `DiagnosticTextTests`，预期全部通过；只读检查输出完整设备事实且没有写入默认输出、静音或启动项。提交 `feat: add owned virtual endpoint binding and rollback`。
+- [x] **Step 2 — Run RED:** `D test AirFlash.Tests --filter NativeBindingTests`。预期新类型尚未定义而失败；随后补充持久化取消/损坏 JSON/缺失字段不能产出可激活绑定的测试，以行为失败收敛。
+- [x] **Step 3 — 实现最小边界：** 按现有 SettingsStore 原子替换方式持久化 `%APPDATA%\AppleHome\native-output.json`。枚举 Core Audio 所有端点状态，并用拓扑连接与 SetupAPI/ConfigManager 对应适配器、HardwareId、Provider、版本和加载 SYS 文件哈希；原始 pin/interface 描述与通道数共同排除 `CABLE In16Ch`，不能只靠 FriendlyName。安装前还查已有非 present 的同 HardwareId 适配器；存在未归本应用管理的实例即停止。本机默认输出和其他设备只读。
+- [x] **Step 4 — 维护与恢复：** 先持久化未校准绑定及 OriginalName/AssignedName，再在明确的管理员维护入口写入端点友好名并 Commit、重新读取；失败恢复仍属本应用的改变。普通后台不写基本属性。不使用直接写 MMDevices 注册表或未文档化 PolicyConfig 补救。新增诊断命令 `--native-preflight-check --output <json>`（只读）和 `--native-bind --receiver-id <id> --endpoint-id <id>`（需要已核验的安装前快照）；`--native-unbind` 仅恢复名称/绑定，Task 6 补启动任务撤销。新增维护/校准命令失败写 JSON/日志并非零退出，不落入旧 MessageBox；脱敏导出中的 endpoint/adapter/session 身份，不导出凭据。
+- [x] **Step 5 — GREEN / Commit:** 重跑上述测试及 `DiagnosticTextTests`，预期全部通过；只读检查输出完整设备事实且没有写入默认输出、静音或启动项。提交 `feat: add owned virtual endpoint binding and rollback`。
 
 ## Task 2: 独立驱动安装、命名持久性与音量校准门槛
 
@@ -112,7 +112,7 @@ Assert.Equal(0d, PcmVolumeMath.Gain(calibration, new(3,-96,0,false,Guid.Empty)))
 Assert.Throws<ArgumentException>(() => PcmVolumeMath.Classify(samples, "44100/2/float", driverHash, 0));
 ```
 
-- [ ] **Step 2 — Run RED:** `D test desktop/AirFlash.Tests --filter PcmVolumeCalibrationTests`，预期缺少实现或计算结果不符而失败。
+- [ ] **Step 2 — Run RED:** `D test AirFlash.Tests --filter PcmVolumeCalibrationTests`，预期缺少实现或计算结果不符而失败。
 - [ ] **Step 3 — 实现校准：** 用已有 NAudio 在绑定 render 端点发送峰值 ≤0.05 的短已知信号，只计算内存 RMS/peak。固定测试会话音量，采集最大 dB 与最大值−12 dB 的至少两组重复数据；已包含模型要求变化 −12±1 dB，未包含模型要求变化 0±0.5 dB，否则拒绝。若端点不支持两档则停止复核。再改变本测试会话音量至 0.5，要求其 PCM 振幅比 0.5±0.05；分别记录 mute/0、Scalar、Db、MixFormat、驱动哈希。沿用既有有界 NTP/ALAC probe 和实际远端音量回读确认参考 B（1–100），仍遵守 probe ≤5 秒 / WAV 峰值≤0.05 / gain≤0.1；需要用户听音确认，不能复制过往日志当本次 B。初值为 0 时先取得用户明确操作形成的可听参考，不能猜测。恢复且仅恢复本测试仍拥有的端点/测试会话设置，不自动设远端为 100，不录音落盘。
 - [ ] **Step 4 — GREEN:** 重跑 Task 2 测试，预期通过；诊断无有效 binding 时须退出非零且不选择物理端点。此时未通过下述实机门槛不得启用后台或声称原生音量可用。
 - [ ] **Step 5 — 独立安装门槛：** 先出示具体包与改动范围，保存 Task 1 安装前快照。用户单独运行官方 `VBCABLE_Setup_x64.exe` 并按原厂要求重启；AppleHome 不自动启动/嵌入该安装器。包 SHA256=`b950e39f01af1d04ea623c8f6d8eb9b6ea5c477c637295fabf20631c85116bfb`；x64 Win10 SYS SHA256=`f01344602472f1b527de5ee98f18987c03db48fea444e457d061e937f1d531d5`。复核原厂 setup Authenticode、Microsoft 目录签名及 `/kp /c` SYS 校验；不以已下载或已验签冒称安装成功。
@@ -168,7 +168,7 @@ await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => controller.SetNative
 Assert.Equal(expectedNativeGain, nextStartParameters.Number("gain"));
 ```
 
-- [ ] **Step 2 — Run RED:** `D test desktop/AirFlash.Tests --filter "NativeEngineHostTests|EngineJsonLineTests|SessionTests"`。预期新行为缺失而失败。
+- [ ] **Step 2 — Run RED:** `D test AirFlash.Tests --filter "NativeEngineHostTests|EngineJsonLineTests|SessionTests"`。预期新行为缺失而失败。
 - [ ] **Step 3 — 实现 Host：** 一生只开一个 stdout pump，调用原 65,536 字符有界读取；租约取消只取消自己的 Channel 等待，绝不取消基础 reader。按 session_id 分发，发送首条命令前登记通道；每租约通道容量 64，溢出/坏 JSON/EOF 明确 fault 所有租约及 Completion 并关闭本 Host，不能无界增长或在死 Host 上重建租约。控制请求用独立 session_id，沿用捕获初始化 3 秒及命令 ack 2 秒上限；hello 临时租约不结束 Host。首次需求先显式 BeginCaptureAsync；健康 Host 的网络重试若已 reset，租约 SendAsync(start) 先 await begin，幂等且不二次清首段，再补充 Task 3 capture key/gate，拒绝其他端点/采样率。stop ack 最多等 2 秒，已有 stop 不重复发送；确认停止后 reset 到新 epoch，失败关闭自有进程，不能让旧流和新流共享源。
 - [ ] **Step 4 — 实现原生增益：** SetNativeGainAsync 校验、保留最新值且按已有发送串行边界送出；Gain 选择原生覆盖或原有设置，禁止双乘。连接期间也保留更新，在开 capture gate 前 await 最新 gain 写入同一 stdin。旧 EQ、旧静音和现有 UI 的默认行为回归不变；新路径由 Task 5 使用 neutral EQ / MuteWhileStreaming=false，不改旧控制面板。
 - [ ] **Step 5 — GREEN / Commit:** 重跑本任务测试，增加迟到旧 session_id、64 条溢出、半行 EOF、超长行、disposal 与 reconnect 回归；预期通过且正常释放后下一次 lease 可正确开始，fatal 后拒绝 lease 并传播退出信号。提交 `feat: reuse armed engine with isolated stream leases`。
@@ -195,7 +195,7 @@ Assert.DoesNotContain(preMuteMarker, framesAfterUnmute);
 Assert.True(homePodRouteActiveAfterResume);
 ```
 
-- [ ] **Step 2 — Run RED:** `D test desktop/AirFlash.Tests --filter "NativeOutputControllerTests|DeviceVolumeTests"`，预期新协调器/行为缺失而失败。测试使用可控 TimeProvider，不 sleep 15 秒模拟逻辑。
+- [ ] **Step 2 — Run RED:** `D test AirFlash.Tests --filter "NativeOutputControllerTests|DeviceVolumeTests"`，预期新协调器/行为缺失而失败。测试使用可控 TimeProvider，不 sleep 15 秒模拟逻辑。
 - [ ] **Step 3 — MTA 监听：** 沿 AudioService 的专用 MTA 队列模式，保有 endpoint/session manager；先订阅 OnSessionCreated、准备实例持有列表，再访问 Sessions.Count 启用通知并枚举已有会话、注册状态/断开，最后发布初始快照。创建回调与初始枚举按 instance ID 去重，补 `SessionCreatedDuringInitialEnumerationIsRetained` 回归。COM 回调只排队，释放/网络操作均出回调。读取全部三角色、绑定端点上的活动外部会话及 Db/Scalar/Mute；50 ms 合并通知，但记录外部 active 短暂转换并启动 30 秒需求保持，不能合并掉短音。保留 session 实例对象到注销/Dispose。暂停留下端点的应用仍计实际需求，不谎称能区分手动单应用路由与应用暂未迁移。自己的三个身份不能算需求。依据：[NAudio 2.2.1 初始化源码](https://github.com/naudio/NAudio/blob/v2.2.1/NAudio.Wasapi/CoreAudioApi/AudioSessionManager.cs)、[微软 GetCount 通知要求](https://learn.microsoft.com/en-us/windows/win32/api/audiopolicy/nf-audiopolicy-iaudiosessionmanager2-registersessionnotification)。
 - [ ] **Step 4 — 路由协调：** 用单一容量 64 的事件队列/代际串行处理，满时明确失败而不静默丢用户意图；有效 binding 且任一默认角色选中或绑定端点有外部活动会话才运行。首次需求立即 BeginCaptureAsync，再查接收端/解析地址/StartAsync。默认选中保持就绪；仅单应用需求消失后 30 秒再停，覆盖至少 15 秒暂停。重复角色通知不重开；失效/删除立即取消，不改送物理端点。启动/端点或格式变化实时核验 Task 1/2，失配停止并要求维护。CoreAudio 的 IAudioService.MuteAsync 在此适配器中抛 invariant 错误、RestoreAsync 无 owned 状态直接完成，避免旧 journal 被日常路径调用。
 - [ ] **Step 5 — 音量协调：** 固定设置 endpoint、44100、2000、neutral EQ、MasterVolume=100、MuteWhileStreaming=false、StandbyEnabled=false、ForceReconnect=true、MaxReconnectAttempts=5；仅 Receiver.PrefersNtpAlac 为 true 的已验证 mini profile 可开始，固件/分组变化失配则停止待核验，不自动落入未验证 PTP；补 `UnsupportedReceiverProfileNeverStarts`。按 Task 2 Gain 唯一施加 Windows 主音量，应用混音器由 Windows 保留。volume own-context 不推进用户 Revision；connecting 更新排队。初始远端 R>0 保留 R；R=0 无更新用户意图则同步虚拟 mute、清旧暂存，设置 gain=0 后开 gate 正常消费，不在 15 秒静音期间持续 hold。用户后来正向 unmute 才暂关 gate、仅恢复运行时 LastNonZero 或校准 B，等待序列匹配/readback 后以最新 gain 开 gate；错误/无 B 不放行。post-master PCM 在 gate 关闭期间有音量变化必须清除旧档位帧，明确 mute 清除暂存，不能恢复后放出旧较大声音。Gate 初始关闭时仍处理设备音量/时钟事件。健康 Host 内仅网络失败由 SessionController 有界重连；Host fatal 传播给 Task 6 Agent，不在死实例上循环。
@@ -218,7 +218,7 @@ Assert.Equal("PT1M", taskRestartInterval);
 Assert.False(backgroundUsesPhysicalMuteRecovery);
 ```
 
-- [ ] **Step 2 — Run RED:** `D test desktop/AirFlash.Tests --filter NativeStartupTests`，预期新分派/任务逻辑缺失，失败。
+- [ ] **Step 2 — Run RED:** `D test AirFlash.Tests --filter NativeStartupTests`，预期新分派/任务逻辑缺失，失败。
 - [ ] **Step 3 — 入口与资源：** 在 new App() 前判定并分派原生模式；外层 catch 也根据已判定模式处理，所有原生入口失败日志/通知/非零退出，不能走旧 MessageBox。正常启动有有效 binding 则原生模式，无 binding 则一次性安装指引，不创建空面板；原面板仅 `--legacy-panel` / 显式 smoke/诊断。Agent 先 arm/等 capture_ready，再接受需求，记录就绪与冷启动空窗；复用 WindowsDiscovery/ReceiverCatalog，按 ReceiverId 订阅地址变化。健康 Host 的网络失败保持 Task 5 重试；Host.Completion fatal 时取消协调器、清理后返回 1，由计划任务最多重启 3 次，新 Agent 重新核验并 arm。取消/显式 stop 返回 0。SingleInstance 改为创建不持有线程所有权的 named Mutex，按 createdNew 判定并保留句柄，Dispose 仅关句柄、不 ReleaseMutex；保持旧身份和重载，验证异步跨线程退出。
 - [ ] **Step 4 — 系统通知：** 仅状态进入需处理错误时复用既有 Shell_NotifyIcon / AppIconService；独立错误通知在专用 STA 的隐藏 HwndSource/消息泵上短暂注册无菜单图标，显示后在 dismiss/hide/timeout 或最多 15 秒清理，健康状态无图标，不创建 App/资源字典/控制面板。沿用 TrayRegistration 所有权与有界失败日志，用户关闭通知/安静时间须尊重；API 失败留诊断，不改变系统设置。使用现有桌面框架，无新 NuGet 或 Toast 部署层。依据：[微软 Shell_NotifyIcon 行为与通知限制](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shell_notifyiconw)。
 - [ ] **Step 5 — 启动与迁移：** 先请用户退出旧已停止的面板，核验仅旧应用仍拥有的 mute journal 并一次恢复。`--native-enable` 将已构建程序放入 `%LOCALAPPDATA%\AppleHome\app\AppleHome.exe`，使用系统 Task Scheduler COM 注册当前 SID 的 `AppleHome.NativeOutput` 登录任务，限权/无密码/允许电池供电/不因电池切换停止/无执行时限/IgnoreNew。绑定及校准有效后立即运行自有任务一次，等待 Agent 通过 CurrentUserOnly 管道报告 capture_ready 才返回成功，无需再次登录；重入不覆盖运行中程序、不创建第二实例。管道 byte 3 查询 ready，响应仅 0/1，不包含设备身份，沿用 3 秒连接界限及 5 秒就绪等待。HKCU Run 仅移除与已知旧路径/参数完全匹配的 AppleHome 值。任务所有权比较 SID、路径和参数；用户修改保留。disable 先取消自有启动再通过管道优雅停止，避免自动重启；不按进程通用名称杀进程、不删除第三方驱动。
@@ -242,7 +242,7 @@ Assert.False(backgroundUsesPhysicalMuteRecovery);
 
 **Interfaces:** Produces `dist/native-output/AppleHome.exe`、GPL/NOTICE、源码归档、SHA256 与 manifest；安装只复制本应用并注册自有任务，VB-CABLE 仍作为独立第三方安装，保留原 `dist/AppleHome.exe` 基线。
 
-- [ ] **Step 1 — 完整回归：** `D test desktop/AirFlash.sln`、`R`、上述 Clippy、`uv run pytest`、`uv run ruff check .`；使用 `scripts/build-native.ps1 -Check` 构建。预期退出码 0，ignored 项及实际计数写报告；校准/实机检查不能由这些测试取代。
+- [ ] **Step 1 — 完整回归：** `D test AirFlash.sln`、`R`、上述 Clippy、`uv run pytest`、`uv run ruff check .`；使用 `scripts/build-native.ps1 -Check` 构建。预期退出码 0，ignored 项及实际计数写报告；校准/实机检查不能由这些测试取代。
 - [ ] **Step 2 — 生成溯源：** 保留 Task 7 已验收的实际候选 EXE，不无理由重编/覆盖运行中文件；使用项目既有 version 属性，不另编未来版本。固定代码提交生成源码 archive 和二进制 hash；manifest 将 code_commit / documentation_commit 分开，禁止残留引擎冒称新代码。若 Task 7 修复了代码，提交并重建到新目录、更新安装后重跑受影响验收，不能沿用旧 hash 证据；仅文档变化不用重跑完整 30 分钟。
 - [ ] **Step 3 — 检查实际包：** 对新 exe 运行现有 `--compat-check` / `--ui-smoke`（旧显式诊断仍须通过）与 `--native-check`；兼容静态审核对应实际 EXE SHA，并核对 Task 7 包/hash/安装 SHA。开发运行通过不能替代包运行，验收过且未变化的包不再重复长播。README 给独立原厂安装、一次绑定、Windows 原生选择、诊断/disable/unbind 和官方驱动卸载边界，附真实延迟、冷启动空窗和未验收矩阵。
 - [ ] **Step 4 — 整体审阅 / Commit：** 保留此前 Native 方法，由独立审阅者只读审查整组差异、Task 7 证据与源码/包一致性；主代理处理有效发现并重跑受影响检查。`git diff --check` 与干净状态核对后提交文档/溯源；仅本地提交，不推送、不合并、不发布、不删除工作树。验收缺项明确列出，不能把计划勾选代替实际完成。
@@ -253,4 +253,4 @@ Assert.False(backgroundUsesPhysicalMuteRecovery);
 
 主要依赖链为 1→2 实机门槛→3→4→5→6→7→8；门槛未通过不得启用后台或把新包替换日常入口。
 
-本轮只提交规格细化与实施计划；产品实现尚未开始。请用户审阅具体计划后，按保留的 Native 方法逐项执行。第一次外部状态改变为 Task 2 的独立原厂驱动安装及重启；执行前出示已固定包、安装前快照与恢复范围，遵守原厂独立安装许可，不重问已接受的路线选择。
+2026-10-15 用户在交接后继续，已按保留的 Native 方法进入执行。Task 1 的软件边界与本机只读检查已通过；驱动、名称持久性和实机校准仍待执行。第一次外部状态改变为 Task 2 的独立原厂驱动安装及重启；执行前出示已固定包、安装前快照与恢复范围，遵守原厂独立安装许可，不重问已接受的路线选择。

@@ -1,12 +1,13 @@
 using System.Runtime.InteropServices;
 using AirFlash.App.Services;
+using AirFlash.App.Verification;
 using AirFlash.Core;
 namespace AirFlash.App;
 
 internal static class Program
 {
     internal static bool IsDiagnostic(string[] args) => args.Any(a => a.EndsWith("-check", StringComparison.Ordinal)
-        || a is "--ui-smoke" or "--tray-smoke" or "--ui-perf" or "--discovery-perf");
+        || a is "--ui-smoke" or "--tray-smoke" or "--ui-perf" or "--discovery-perf") || NativeOutputCheck.IsCommand(args);
     [STAThread]
     public static int Main(string[] args)
     {
@@ -25,6 +26,11 @@ internal static class Program
             }
             AppPaths.Log($"Startup stage={stage} version={AppPaths.Version} os={Environment.OSVersion.Version} architecture={RuntimeInformation.ProcessArchitecture}");
             if (!WindowsCapabilities.Current.Supported) throw new PlatformNotSupportedException(WindowsCompatibility.Requirement);
+            if (NativeOutputCheck.IsCommand(args))
+            {
+                stage = "native-setup";
+                return NativeOutputCheck.RunAsync(args).GetAwaiter().GetResult();
+            }
             stage = "wpf-resources";
             var app = new App();
             app.InitializeComponent();

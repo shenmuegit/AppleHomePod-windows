@@ -6,7 +6,7 @@
 
 详细结果见 [兼容矩阵](docs/COMPATIBILITY.md)、[验证记录](docs/VALIDATION.md)。调研、已审阅规格和实施计划保存在 `docs/research/` 与 `docs/superpowers/`。
 
-用户已选择下一版的 Windows 原生输出设备方向：一次安装独立虚拟音频驱动，日常通过 Windows 选择 HomePod、调节音量与静音，后台自动发送。新的[设计规格](docs/superpowers/specs/2026-10-14-windows-native-homepod-output-design.md)及经共同工程审阅的[实施计划](docs/superpowers/plans/2026-10-14-windows-native-homepod-output-implementation.md)已经形成，实施计划待用户审阅。下面的便携包使用方式仍对应已交付的旧版面板，新的驱动和后台模式尚未安装或实现。
+用户已选择下一版的 Windows 原生输出设备方向：一次安装独立虚拟音频驱动，日常通过 Windows 选择 HomePod、调节音量与静音，后台自动发送。[设计规格](docs/superpowers/specs/2026-10-14-windows-native-homepod-output-design.md)及经共同工程审阅的[实施计划](docs/superpowers/plans/2026-10-14-windows-native-homepod-output-implementation.md)已进入执行，当前已实现绑定规则与本机端点诊断，实际驱动和无面板后台仍未启用，见[新路径验收记录](docs/validation/windows-native-homepod-output.md)。下面的便携包使用方式仍对应已交付的旧版面板。
 
 ## 使用测试版
 
