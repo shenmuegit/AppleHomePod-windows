@@ -74,3 +74,9 @@ pwsh -NoProfile -File scripts/test-native-output.ps1 -Executable desktop/AirFlas
 整组软件由独立上下文审阅，范围 `6ab8c22..66b3eb9`。两项 Important 发现均先复现失败再修复：接收端 IP 更新/网络租约更换时不再用旧 streaming/音量状态放行，新 gate 写入携带预期采集 epoch 并在同一串行边界拒绝旧 epoch；发现固件/型号/leader 信息未补齐时在原 2 秒上限内等待，已知不兼容固件或分组仍拒绝。修复还保护关门期间新音量的 PCM 不被开门时重复清除，并按会话事件发出时的用户 Revision 识别先后顺序。宿主/协调器定向 35 项和完整 .NET 366 项通过。审阅没有提出 Critical 或 Minor；硬件、实际任务/通知、首音/尾音/时钟漂移/长播、断网及其他环境均明确留在既有门槛内，不因此取得资格。
 
 完整 Rust 检查为 62 项通过、2 项原有 ignored（需要明确设备的 WASAPI 检查和 30 分钟 localhost soak）；Clippy 以 warnings-as-errors 通过。`scripts/build-native.ps1 -Check` 已从当前源码重新构建 release 引擎并验证静态 CRT/兼容审核；原生静态审核保留 144 个未确认导入项，退出 0 不代表 Windows 11 实机资格。Python 96 项通过，Ruff 通过。候选与对应源码/哈希将在后续记录中固定，尚未安装或启用。
+
+候选已从代码提交 `46a0275c996580ed18c62b39ab85f2388c9e1733` 固定生成，版本 `0.2.0+46a0275c996580ed18c62b39ab85f2388c9e1733`，自包含 x64 单文件位于 `dist/native-output/AppleHome.exe`，大小 176,925,185 字节。EXE SHA256 为 `8f19be37b281b30cec3539b9910e25d70d17c84095344d302bf1b0ba2f43e85a`；本次 release 引擎为 `2b03b0eb19ee4f2db5ee8910c681080f77af5eebe57951be4d9d39ca7f076208`。实际候选的 compat-check 启动了**仅 hello** 的内嵌引擎，确认 arm_capture 等新命令，提取文件哈希与本次 release 一致，未 arm 或播放。该包的 UI smoke 577 项、启动/schema/拒绝启用 2 项和原生只读检查 6 项均通过。报告分别在 `package-46a0275/`、`startup-5579bef0cc57410e92bef8e09f9d593e/`、`check-6823bdb53a8848938235829694f028fa/`。
+
+实际候选 EXE 的静态审核退出 0，记录对应 EXE 哈希及 447 个未确认导入；发布前 450 个 bundle 输入镜像的审核记录 1,555 个未确认导入。这些是静态边界，不是其他系统的运行证明。对应 GPL 源码 `AppleHome-source-46a0275.zip` 为 1,467,090 字节、235 个条目，SHA256 `3c729581b89a5d48a6dd55b2ef63283feef6f40c929924389f224b8abb7f426f`；已核对实现、锁文件和 GPL 全文，并排除运行目录、私有绑定与凭据。manifest 区分代码提交与后续文档提交，所有资格字段仍为 pending_hardware。
+
+保留的旧 `dist/AppleHome.exe` SHA256 重新核对为 `992c36249a4b91c014c71b78959ba82d561bb4f958c8eefed49998d995e44ca5`，没有被新候选覆盖。新候选未复制到日常安装位置，未注册任务，未启动真实采集或 HomePod 会话；仅 hello 检查生成了按哈希管理的自有引擎缓存。重启、系统命名持久性、PCM/听音参考、正向 enable/登录/通知及完整 30 分钟仍待实机窗口。断网仍暂缓，其他环境仍未验收。
