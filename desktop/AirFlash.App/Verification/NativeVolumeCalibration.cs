@@ -164,7 +164,8 @@ internal static class NativeVolumeCalibration
             async Task<VolumeSample> Measure(bool mayBeSilent=false)
             {
                 if (source.HasExited) throw new IOException("The bounded calibration source ended before measurements completed.");
-                await Task.Delay(100,token).ConfigureAwait(false);
+                // Let the virtual driver's buffered samples drain after changing Windows gain.
+                await Task.Delay(300,token).ConfigureAwait(false);
                 lock(sync) meter=new PcmMeter(format.BitsPerSample,ieee);
                 await Task.Delay(200,token).ConfigureAwait(false);
                 (double Rms,double Peak,long Samples) measured;
