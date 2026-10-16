@@ -1,6 +1,18 @@
 # Windows 原生 HomePod 输出验收记录
 
-日期：2026-10-15。依据 [原生输出规格](../superpowers/specs/2026-10-14-windows-native-homepod-output-design.md)与[实施计划](../superpowers/plans/2026-10-14-windows-native-homepod-output-implementation.md)。用户已在计划交接后继续，进入 Native inline 实现。
+初始日期：2026-10-15；最近更新：2026-10-16。依据 [原生输出规格](../superpowers/specs/2026-10-14-windows-native-homepod-output-design.md)与[实施计划](../superpowers/plans/2026-10-14-windows-native-homepod-output-implementation.md)。用户已在计划交接后继续，进入 Native inline 实现。
+
+## 2026-10-16 实机续验状态
+
+本机驱动重启已核验：Windows 10 19045，启动时间为本地 18:22:18，`reboot_verified=true`；普通端点 ID、适配器、3.3.1.7 版本和固定 SYS 哈希保持一致。用户随后通过 Windows 属性将普通播放端点命名为 `HomePod – da`，fresh read 读到该 EndpointLabel，原始 pin 仍为 `CABLE Input`，已刷新绑定。该命名发生在此次重启之后，不能据此声称名称已经跨重启保留；这一门槛仍须在后台启用前验证。
+
+首次正向 PCM 校准在应用混音器检查失败：测试会话已降到 0.5，最初窗口仍混有旧满档样本。数值诊断中基线 RMS 约 0.0282875，半档窗口为 0.0178001、peak 0.0400009；保持半档再取样得到 RMS 0.0141434、peak 0.0200005。修正仅将每档取样前的排空等待由 100 ms 改为 300 ms，保留五秒源上限、身份核验、严格单次增益判定与恢复规则。诊断仪表代码已移除。
+
+新增 `scripts/test-native-calibration-report.ps1` 直接检查实际报告的半档波形统计和取样窗口。它先拒绝含旧满档 peak 的报告，再通过修复后的真实七窗口报告。完整 .NET 366 项通过，构建无警告/错误。新候选 `f4625603abf66fc0b50e503e5d509a725b166fc6` 位于 `dist/native-output-f462560/AppleHome.exe`，176,925,185 字节，SHA256 `1ab5a71680541ac2f66361535691166909eb484aa5a6b66d0be19c866294b7c2`；原候选及旧面板包均保留。
+
+该实际候选通过 compat hello、577 项 UI smoke、5 项原生只读检查及 2 项启动 schema/未校准拒绝检查。正向校准退出 0：主音量不含于 PCM，应用半档 RMS 0.0141376 / peak 0.0200005，接收端当前参考音量 33。已播放五秒低峰值参考音，但仍等待用户确认实际听到，因此校准尚未保存。校准后的 fresh monitor 读到虚拟端点恢复为 dB 0 / scalar 1 / 未静音，默认输出没有改变，自有测试源、引擎和 agent 均已退出。没有安装日常应用或创建启动任务。
+
+本轮证据目录为 `artifacts/validation/native-output/post-reboot-20261016-0fd05b0a35e94c2ebbc1438179acfa59/` 和 `package-f462560/`，另有 `check-b7a92b9e5ad3445e9238194989ae229b/`、`startup-52343ef6ddce4610a9078638f60bb8ab/`。名称持久性、可听参考确认与保存、实际启用/登录/通知、原生控制听音和完整 30 分钟仍待验收；断网继续按用户要求暂缓。以下保留 2026-10-15 的分阶段历史记录，其中“尚未重启/未采集”等描述对应当时状态。
 
 ## 已实现和已验证
 

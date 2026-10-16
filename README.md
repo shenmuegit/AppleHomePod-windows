@@ -6,11 +6,11 @@
 
 详细结果见 [兼容矩阵](docs/COMPATIBILITY.md)、[验证记录](docs/VALIDATION.md)。调研、已审阅规格和实施计划保存在 `docs/research/` 与 `docs/superpowers/`。
 
-Windows 原生输出候选的软件实现已完成：日常通过 Windows 选择 HomePod、调节音量与静音，后台自动发送，常态不显示窗口或托盘菜单。独立驱动已安装且身份核验通过；当前用户暂时不能重启，系统命名持久性、PCM 校准、实际启用与听音验收仍待完成，候选尚未替换日常入口。详见[设计规格](docs/superpowers/specs/2026-10-14-windows-native-homepod-output-design.md)、[实施计划](docs/superpowers/plans/2026-10-14-windows-native-homepod-output-implementation.md)和[新路径验收记录](docs/validation/windows-native-homepod-output.md)。
+Windows 原生输出候选的软件实现已完成：日常通过 Windows 选择 HomePod、调节音量与静音，后台自动发送，常态不显示窗口或托盘菜单。2026-10-16 已核验驱动重启、实际身份和 Windows 系统命名，PCM/应用混音器正向测量通过；可听参考待用户确认并保存。名称是在此次重启后修改，跨重启持久性、实际启用与听音验收仍待完成，候选尚未替换日常入口。详见[设计规格](docs/superpowers/specs/2026-10-14-windows-native-homepod-output-design.md)、[实施计划](docs/superpowers/plans/2026-10-14-windows-native-homepod-output-implementation.md)和[新路径验收记录](docs/validation/windows-native-homepod-output.md)。
 
 ## Windows 原生输出候选
 
-候选放在 `dist/native-output/`，原 `dist/AppleHome.exe` 仍是已出声的旧面板基线。候选需要一次设置；未完成资格检查时会拒绝采集、校准或启用后台。
+最新校准修正候选放在 `dist/native-output-f462560/`，`dist/native-output/` 保留前一候选，原 `dist/AppleHome.exe` 仍是已出声的旧面板基线。候选需要一次设置；未完成资格检查时会拒绝采集、校准或启用后台。
 
 1. 单独从 [VB-Audio 官方网站](https://vb-audio.com/Cable/)取得并安装已核验的普通 VB-CABLE Pack45，按厂商要求重启。AppleHome 不分发、嵌入或自动运行驱动安装器；固定版本/哈希见新路径验收记录。已有其他虚拟设备不会被猜测占用。
 2. 首次在 Windows 的 `mmsys.cpl` →“播放”中，把普通 `CABLE Input (VB-Audio Virtual Cable)` 的属性名称设为 `HomePod – da`，核对重启后名称保留。不要选 16ch 或录音端点；之后的用户改名会保留。

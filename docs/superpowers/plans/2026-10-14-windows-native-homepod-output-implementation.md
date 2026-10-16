@@ -8,7 +8,7 @@
 
 **Tech Stack:** Windows x64、.NET 10、NAudio 2.2.1、Windows Core Audio / Task Scheduler、现有 Rust MSVC / WASAPI / NTP / ALAC；不增加运行时依赖。
 
-**Spec:** [Windows 原生 HomePod 输出设备设计规格](../specs/2026-10-14-windows-native-homepod-output-design.md)。状态：2026-10-15 按既定 Native 方式实施；驱动已由用户独立安装，用户暂时不能重启，命名持久性/PCM 校准仍待通过。Tasks 3–6 继续独立的软件实现与隔离测试，真实采集、后台启用与资格结论仍受 Task 2 门槛约束。保留此前 Native 执行方式：主代理逐项实现，最后由独立审阅者检查整体。
+**Spec:** [Windows 原生 HomePod 输出设备设计规格](../specs/2026-10-14-windows-native-homepod-output-design.md)。状态：2026-10-16 驱动重启已核验，用户已完成 Windows 系统命名，PCM 正向测量通过、参考音待用户确认并保存；名称是在这次重启后修改，跨重启持久性仍待验证。Tasks 1、3–6 软件、整体代码审阅与候选包已完成，后台启用与资格结论仍受 Task 2 门槛约束。保留此前 Native 执行方式：主代理逐项实现，最后由独立审阅者检查整体。
 
 ## Global Constraints
 
@@ -118,8 +118,10 @@ Assert.Throws<ArgumentException>(() => PcmVolumeMath.Classify(samples, "44100/2/
 - [x] **Step 2 — Run RED:** `D test AirFlash.Tests --filter PcmVolumeCalibrationTests`，预期缺少实现或计算结果不符而失败。
 - [ ] **Step 3 — 实现校准：** 用已有 NAudio 在绑定 render 端点发送峰值 ≤0.05 的短已知信号，只计算内存 RMS/peak。固定测试会话音量，采集最大 dB 与最大值−12 dB 的至少两组重复数据；已包含模型要求变化 −12±1 dB，未包含模型要求变化 0±0.5 dB，否则拒绝。若端点不支持两档则停止复核。再改变本测试会话音量至 0.5，要求其 PCM 振幅比 0.5±0.05；分别记录 mute/0、Scalar、Db、MixFormat、驱动哈希。沿用既有有界 NTP/ALAC probe 和实际远端音量回读确认参考 B（1–100），仍遵守 probe ≤5 秒 / WAV 峰值≤0.05 / gain≤0.1；需要用户听音确认，不能复制过往日志当本次 B。初值为 0 时先取得用户明确操作形成的可听参考，不能猜测。恢复且仅恢复本测试仍拥有的端点/测试会话设置，不自动设远端为 100，不录音落盘。
 - [x] **Step 4 — GREEN:** 重跑 Task 2 测试，预期通过；诊断无有效 binding 时须退出非零且不选择物理端点。此时未通过下述实机门槛不得启用后台或声称原生音量可用。
-- [ ] **Step 5 — 独立安装门槛：** 先出示具体包与改动范围，保存 Task 1 安装前快照。用户单独运行官方 `VBCABLE_Setup_x64.exe` 并按原厂要求重启；AppleHome 不自动启动/嵌入该安装器。包 SHA256=`b950e39f01af1d04ea623c8f6d8eb9b6ea5c477c637295fabf20631c85116bfb`；x64 Win10 SYS SHA256=`f01344602472f1b527de5ee98f18987c03db48fea444e457d061e937f1d531d5`。复核原厂 setup Authenticode、Microsoft 目录签名及 `/kp /c` SYS 校验；不以已下载或已验签冒称安装成功。
+- [x] **Step 5 — 独立安装门槛：** 先出示具体包与改动范围，保存 Task 1 安装前快照。用户单独运行官方 `VBCABLE_Setup_x64.exe` 并按原厂要求重启；AppleHome 不自动启动/嵌入该安装器。包 SHA256=`b950e39f01af1d04ea623c8f6d8eb9b6ea5c477c637295fabf20631c85116bfb`；x64 Win10 SYS SHA256=`f01344602472f1b527de5ee98f18987c03db48fea444e457d061e937f1d531d5`。复核原厂 setup Authenticode、Microsoft 目录签名及 `/kp /c` SYS 校验；不以已下载或已验签冒称安装成功。2026-10-16 已核验实际启动时间、端点和文件哈希一致，驱动重启门槛通过。
 - [ ] **Step 6 — 实机门槛 / Commit:** 已唯一识别新普通 CABLE Input；因管理员属性写入实测被拒绝，按规格更新改用一次 Windows 系统属性命名为 `HomePod – da`，应用只读取和绑定，保留用户名称。真实 pin 改从连接的适配器 Part.Name 读取，新增可变 EndpointLabel（可选字段兼容旧绑定），不以 DeviceDesc 或通道数猜身份。命名后按原厂重启，用 Windows 输出选择和 fresh read 验证持久性；执行校准并取得有效结果/B，核对其他端点与默认选择。未通过仍停在此处。相关软件修正与测试先保存，硬件门槛通过后才提交资格结论。
+
+2026-10-16 执行裁定：已核验驱动重启与当下系统名称，可以先独立执行有界 PCM/参考音校准；它不安装后台或改默认输出。跨重启名称持久性继续作为启用后台之前的门槛，不把今天重启后才设置的名称记作已通过。实测旧 100 ms 排空等待混入上一档 PCM，改为 300 ms 后在真实候选通过取样报告回归；校准保存仍等待听音确认。Task 2 不标完成，Task 7/8 的实际资格不提前。
 
 ## Task 3: Rust 常驻准备采集与有界首段暂存
 
