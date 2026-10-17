@@ -4,11 +4,11 @@
 
 **Goal:** 让本机 Windows 10 的用户只选择 `HomePod – da` 输出，并使用 Windows 音量、静音与应用混音器，自动将声音送到当前单只 HomePod mini。
 
-**Architecture:** 独立安装原厂 VB-CABLE；AppleHome 绑定其真实播放端点，以当前用户的无窗口后台运行。复用 NAudio、现有 Rust 发送器、JSONL v1 和 SessionController；Rust 常驻准备虚拟端点采集，按 Windows 路由需求建立网络会话。实际驱动身份、命名持久性和音量取样校准通过后，才启用登录后台。
+**Architecture:** 独立安装原厂 VB-CABLE；AppleHome 绑定其真实播放端点，以当前用户的无窗口后台运行。复用 NAudio、现有 Rust 发送器、JSONL v1 和 SessionController；Rust 常驻准备虚拟端点采集，按 Windows 路由需求建立网络会话。实际驱动身份、驱动重启、当前命名和音量校准通过后启用受控后台试听；名称跨重启持久性与真实登录启动一起验收。
 
 **Tech Stack:** Windows x64、.NET 10、NAudio 2.2.1、Windows Core Audio / Task Scheduler、现有 Rust MSVC / WASAPI / NTP / ALAC；不增加运行时依赖。
 
-**Spec:** [Windows 原生 HomePod 输出设备设计规格](../specs/2026-10-14-windows-native-homepod-output-design.md)。状态：2026-10-16 驱动重启已核验，用户已完成 Windows 系统命名，PCM 正向测量通过、参考音待用户确认并保存；名称是在这次重启后修改，跨重启持久性仍待验证。Tasks 1、3–6 软件、整体代码审阅与候选包已完成，后台启用与资格结论仍受 Task 2 门槛约束。保留此前 Native 执行方式：主代理逐项实现，最后由独立审阅者检查整体。
+**Spec:** [Windows 原生 HomePod 输出设备设计规格](../specs/2026-10-14-windows-native-homepod-output-design.md)。状态：2026-10-17 驱动重启与当前命名已核验，修正参考音强度后的实际候选已由用户确认出声，PCM/应用混音器测量通过、参考B=72已重新核验并保存。按下方最新裁定进入受控后台试听；跨重启名称、真实登录及完整原生操作资格仍待验证。Tasks 1、3–6 软件、整体代码审阅与候选包已完成，不把试听启用等同完整验收。保留此前 Native 执行方式；此次有界WAV增益修正由独立Rust工作者与主代理按文件职责并行完成。
 
 ## Global Constraints
 
@@ -125,6 +125,8 @@ Assert.Throws<ArgumentException>(() => PcmVolumeMath.Classify(samples, "44100/2/
 
 2026-10-17 执行裁定：用户明确要求放大测试声音；提高 HomePod 参考音量到72后的守候测试仍无声，独立参考发送器以五秒、5%峰值信号出声。当前应用把已限幅至4%的 WAV 再乘0.1，实际仅0.4%。将 WAV probe 的最大增益改为1并保留输入5%峰值、S16 stereo、固定采样率及五秒边界，因此实际输出仍不超过5%；应用的参考音采用gain1、实际4%。实采 finite loopback 的0.1增益上限不变，未改时钟、认证或媒体协议。该变化先做回归和新候选听音，不能仅因参考引擎出声就认定产品已通过。
 
+2026-10-17 试听裁定：实际新候选出声已由用户确认，当前驱动身份/安装后重启/端点名称/稳定ID/PCM校准及B回读均通过。绑定使用端点与适配器身份，显示名称不参与稳定认领；名称跨重启只影响本项显示持久性检查。将此检查与Task7真实登录启动合并，允许现有授权范围内的可撤销后台安装和受控试听，不再为了名称显示先要求第二次重启。此裁定替代此前“名称跨重启之前不得启用”的顺序；驱动重启、校准、所有权、认证和未验证型号限制不变。名称/登录/长播等缺项仍不得记为完整资格通过。
+
 ## Task 3: Rust 常驻准备采集与有界首段暂存
 
 **Files:** Modify `native/airflash-engine/src/live.rs`、`session.rs`、`main.rs`；Test live.rs 单元测试及新 `tests/armed_capture.rs`；Modify `native/airflash-engine/README.md`。不另造第二个发送器或 PCM 跨进程协议。
@@ -239,7 +241,7 @@ Assert.False(backgroundUsesPhysicalMuteRecovery);
 
 Task 6 软件完成后仍待在本任务验证：实际启用无需再次登录、真实登录/退出与限权任务、错误通知可见性/关闭通知的日志行为以及资源释放。用户暂不能重启时可先生成和审核候选包，不启用；该包仍是未取得实机资格的候选。
 
-- [ ] **Step 1 — 固定实际候选包：** 在 Task 6 代码提交上用既有 dotnet publish 自包含 win-x64 / 单文件 / 内嵌本次 Rust，输出 `artifacts/native-output-publish/`，复制为 `dist/native-output/AppleHome.exe` 并记录代码 commit、EXE/native hash；不运行会清空 dist 的 build.ps1。如开发后台在运行，先 disable 自有实例再更新到此候选包，Task 6 enable 后记录安装路径 SHA 与候选相等。驱动命名持久性、校准/B、认证均通过；用户暂停 iPhone，旧流退出。只在 Windows 选择 `HomePod – da`，用户明确反馈是否出声及物理扬声器有无先行副本，不能用发包替代听音。
+- [ ] **Step 1 — 固定实际候选包：** 在 Task 6 代码提交上用既有 dotnet publish 自包含 win-x64 / 单文件 / 内嵌本次 Rust，输出 `artifacts/native-output-publish/`，复制为独立候选并记录代码 commit、EXE/native hash；不运行会清空 dist 的 build.ps1。如开发后台在运行，先 disable 自有实例再更新到此候选包，Task 6 enable 后记录安装路径 SHA 与候选相等。驱动重启、当前命名、校准/B、认证均通过；用户切回 iPhone 输出，旧流退出。名称跨重启与真实登录另验，完整资格仍待全部项通过。只在 Windows 选择 `HomePod – da`，用户明确反馈是否出声及物理扬声器有无先行副本，不能用发包替代听音。
 - [ ] **Step 2 — 首段/切换：** 已 arm 且无网络会话时播放短已知音，验证首段完整；分别测首次认证和已缓存认证路径。快速切到扬声器再切回，记录可听尾音/启动延迟，确保不重放之前提示音。Windows 全部三角色和实际单应用输出场景分别检查；输出切换后仍留在虚拟端点的应用行为如实记录。
 - [ ] **Step 3 — 主/应用音量与静音：** 通过 Windows 控件实测三个 dB 档、应用混音器、滑到 0、静音键、恢复；连接中快速改档后验证最新值。HomePod 原值 0 的场景核验保持 0→Windows 明确恢复→回读 B→可听，全程不升到 100。记录可听静音尾音；若仅 digital gain=0 不能满足实际静音体验，判未通过，凭证据另审 remote mute/flush，不能直接声称立即静音。
 - [ ] **Step 4 — 暂停与持续播放：** 音乐暂停 ≥15 秒再恢复、静音 ≥15 秒再恢复。随后与用户约定真实 30 分钟连续音乐窗口，从用户确认播放后计时；每 60 秒仅记录自有 Agent/engine 的 CPU、RSS、handle、线程和协议状态，期间交流及时，结束请用户确认有无断续/异常。手动停止、用户不在场或观察不足必须记实际时长并保留待验收，不补写 30 分钟成功。

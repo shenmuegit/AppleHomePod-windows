@@ -2,6 +2,14 @@
 
 初始日期：2026-10-15；最近更新：2026-10-17。依据 [原生输出规格](../superpowers/specs/2026-10-14-windows-native-homepod-output-design.md)与[实施计划](../superpowers/plans/2026-10-14-windows-native-homepod-output-implementation.md)。用户已在计划交接后继续，进入 Native inline 实现。
 
+## 当前受控试听状态
+
+固定代码 `d2cf09ee9226098e73b9413108246d974df8032f` 已发布为自包含单文件候选 `dist/native-output-level-fix/AppleHome.exe`，176,925,185字节，SHA256 `c58d11377dc1f6495a62115a5931fdd59261c150612bf4e87e6bcaf06dc2656a`；内嵌引擎与本次构建的 `fe7e1a44dadf5e4708f92e4cf5fbfbc1553213a007826437ed4ea5ad92585b79` 一致。实际候选的compat hello通过。用户确认在场后，经三秒提示运行实际C#校准，用户明确确认听到新测试音；随后以同一实际回读B=72重新取样和复测并保存，`calibrated=true`。主音量不含于PCM，应用半档RMS约0.0141437，peak约0.0200005；七窗口报告三项检查通过。没有把独立参考发送器的出声当成产品通过。
+
+已将同一候选安装到当前用户本地应用目录并注册自己的登录任务。实际安装SHA与上述候选一致；系统任务为InteractiveToken/LeastPrivilege，动作`--native-agent`。`after-enable-check.json`报告`task_exists=true`、`task_owned=true`、`ready=true`、`normal_window_count=0`、`daily_tray_registered=false`；实际冷启动日志`capture_ready cold_start_ms=4753`。本机原有任务和目标安装EXE在这次启用前均不存在，没有覆盖已有用户程序。新后台与其引擎已运行，旧便携包文件保留。
+
+依最新实施裁定，驱动重启/当前命名/稳定ID/校准/认证已通过，允许可撤销的受控后台试听；显示名称跨重启持久性与下一次真实登录一起验收，尚未标通过。当前请求用户在Windows输出中选HomePod、先将Windows音量设到约30%再播放15–20秒；在用户确认前，Windows系统音乐播放、物理扬声器隔离、主/应用音量、静音恢复及完整30分钟仍待验收。首次资源快照仅为自有进程：Agent工作集约60.5MB、引擎约10.4MB；这不是长播稳定性证明。证据目录`artifacts/validation/native-output/package-d2cf09e/`。
+
 ## 2026-10-17 设备恢复与听音失败
 
 用户随后明确要求放大声音。第一次33→72的提高音量试验未被观察；之后经三秒提示直接重播，用户全程留意仍反馈无声。改用已固定的独立参考发送器，五秒 WAV 的输入峰值5%、gain1、volume_fraction0.375，用户立即确认听到间隔短音，程序正常停止并断开。此时不能把两个信号强度不同的结果直接认定为媒体协议故障。
