@@ -1,8 +1,10 @@
 # Native AirPlay engine
 
 Windows-only Rust sidecar; JSONL v1 on stdin/stdout. Diagnostics must not contain keys or PINs.
-Python UI commands use `start` (live WASAPI); finite tests use `probe` (<=5000ms, gain<=0.1,
-440Hz WAV peak<=0.05). EOF cancels all owned work. `stop` and gain changes apply only to the
+Python UI commands use `start` (live WASAPI, gain 0..1); finite tests use `probe` (<=5000ms).
+WAV probes accept gain 0..1 and require S16 stereo 44100/48000 Hz input, at most five seconds,
+with every input sample's absolute value <=1639 (about 5% peak). Finite loopback probes keep
+gain 0..0.1. `set_gain` uses the same source limit. EOF cancels all owned work. `stop` and gain changes apply only to the
 matching session. `pair` emits `pin_required`; `pair_pin` completes pairing, validates the
 accessory signature and writes version-1, user-bound DPAPI credentials. Old pyatv credentials
 are neither read nor changed.

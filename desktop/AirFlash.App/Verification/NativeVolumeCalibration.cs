@@ -240,7 +240,7 @@ internal static class NativeVolumeCalibration
             await using var engine=new ProcessEngineConnection(AppPaths.ExtractEngine(),AppPaths.Log);
             var session=Guid.NewGuid().ToString("N"); int? reference=null;
             await engine.SendAsync(session,"probe",new { peers=new[]{new { host=address.ToString(),port=selected.Port,codecs=new[]{1} }},
-                source="wav",wav_path=wav,duration_ms=5000,latency_ms=2000,gain=.1,sample_rate=44100,timing="ntp" },cancellation).ConfigureAwait(false);
+                source="wav",wav_path=wav,duration_ms=5000,latency_ms=2000,gain=1.0,sample_rate=44100,timing="ntp" },cancellation).ConfigureAwait(false);
             while (true)
             {
                 var item=await engine.ReadAsync(cancellation).ConfigureAwait(false) ?? throw new IOException("The reference probe exited before completion.");

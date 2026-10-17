@@ -78,6 +78,9 @@ fn default_timing() -> String {
     "ptp".into()
 }
 impl ProbeOptions {
+    pub fn probe_gain_limit(&self) -> f64 {
+        if self.source == "wav" { 1.0 } else { 0.1 }
+    }
     pub fn validate_start(&self) -> Result<()> {
         self.validate_capture_fields()?;
         ensure!(
@@ -126,8 +129,8 @@ impl ProbeOptions {
             "latency must be 0..2000 ms"
         );
         ensure!(
-            self.gain.is_finite() && (0.0..=0.1).contains(&self.gain),
-            "probe gain must be 0..0.1"
+            self.gain.is_finite() && (0.0..=self.probe_gain_limit() as f32).contains(&self.gain),
+            "probe gain must be 0..{}", self.probe_gain_limit()
         );
         ensure!(
             self.timing == "ptp" || self.timing == "ntp",
@@ -788,14 +791,33 @@ fn transport_metrics(members: &[Member], schedule: &MediaSchedule) -> Json {
 mod tests {
     use super::*;
     #[test]
+    fn finite_wav_full_gain_preserves_quiet_samples() {
+        for rate in [44100, 48000] {
+            let mut options: ProbeOptions = serde_json::from_value(json!({"peers":[{"host":"127.0.0.1"}],"duration_ms":5000,"latency_ms":200,"gain":1.0,"sample_rate":rate})).unwrap();
+            options.wav_path = std::env::temp_dir().join(format!("airflash-full-gain-{}.wav", Uuid::new_v4()));
+            let mut writer = hound::WavWriter::create(&options.wav_path, hound::WavSpec { channels:2, sample_rate:rate, bits_per_sample:16, sample_format:hound::SampleFormat::Int }).unwrap();
+            for sample in [1311i16, -1311, 1638, -1638, 1639, -1639] {
+                writer.write_sample(sample).unwrap();
+            }
+            writer.finalize().unwrap();
+            let validation = options.validate();
+            let samples = load_quiet_wav(&options);
+            std::fs::remove_file(&options.wav_path).unwrap();
+            validation.unwrap();
+            assert_eq!(samples.unwrap(), [1311, -1311, 1638, -1638, 1639, -1639]);
+        }
+    }
+    #[test]
     fn finite_wav_rejects_peak_above_existing_quiet_cap() {
-        let mut options: ProbeOptions = serde_json::from_value(json!({"peers":[{"host":"127.0.0.1"}],"duration_ms":5000,"latency_ms":200,"gain":0.1})).unwrap();
-        options.wav_path = std::env::temp_dir().join(format!("airflash-quiet-cap-{}.wav", Uuid::new_v4()));
-        let mut writer = hound::WavWriter::create(&options.wav_path, hound::WavSpec { channels:2, sample_rate:44100, bits_per_sample:16, sample_format:hound::SampleFormat::Int }).unwrap();
-        writer.write_sample(1640i16).unwrap(); writer.write_sample(0i16).unwrap(); writer.finalize().unwrap();
-        let result = load_quiet_wav(&options);
-        std::fs::remove_file(&options.wav_path).unwrap();
-        assert!(result.unwrap_err().to_string().contains("peak amplitude <= 0.05"));
+        let mut options: ProbeOptions = serde_json::from_value(json!({"peers":[{"host":"127.0.0.1"}],"duration_ms":5000,"latency_ms":200,"gain":1.0})).unwrap();
+        for sample in [1640i16, -1640, i16::MIN, i16::MAX] {
+            options.wav_path = std::env::temp_dir().join(format!("airflash-quiet-cap-{}.wav", Uuid::new_v4()));
+            let mut writer = hound::WavWriter::create(&options.wav_path, hound::WavSpec { channels:2, sample_rate:44100, bits_per_sample:16, sample_format:hound::SampleFormat::Int }).unwrap();
+            writer.write_sample(sample).unwrap(); writer.write_sample(0i16).unwrap(); writer.finalize().unwrap();
+            let result = load_quiet_wav(&options);
+            std::fs::remove_file(&options.wav_path).unwrap();
+            assert!(result.unwrap_err().to_string().contains("peak amplitude <= 0.05"));
+        }
     }
     #[test]
     fn unsafe_probe_rejected() {
@@ -824,15 +846,21 @@ mod tests {
         };
         assert!(o.validate().is_err());
         o.duration_ms = 5000;
+        for gain in [-0.01, 1.01, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            o.gain = gain;
+            assert!(o.validate().is_err());
+        }
         o.gain = 1.0;
-        assert!(o.validate().is_err());
-        o.gain = f32::NAN;
+        assert!(o.validate().is_ok());
+        o.source = "loopback".into();
         assert!(o.validate().is_err());
         o.gain = 0.1;
         assert!(o.validate().is_ok());
+        o.source = "wav".into();
         o.equalizer.enabled = true;
         assert!(o.validate().is_err());
         o.source = "loopback".into(); o.duration_ms = 0;
+        o.gain = 1.0;
         assert!(o.validate_start().is_ok());
         o.equalizer.preamp_db = f64::NAN;
         assert!(o.validate_start().is_err());

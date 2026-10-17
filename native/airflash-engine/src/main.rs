@@ -226,7 +226,7 @@ fn main() {
                 let worker_gain = gain.clone();
                 let volume = airflash_engine::volume::Control::default();
                 let worker_volume = volume.clone();
-                let gain_limit = if request.command == "probe" { 0.1 } else { 1.0 };
+                let gain_limit = if request.command == "probe" { options.probe_gain_limit() } else { 1.0 };
                 let rate = options.sample_rate;
                 let equalizer = airflash_engine::equalizer::Control::new(options.equalizer, rate).unwrap();
                 let worker_equalizer = equalizer.clone();
@@ -299,7 +299,7 @@ fn main() {
                         send(
                             &request.id,
                             &request.session_id,
-                            json!({"event":"error","message":"gain must be 0..1"}),
+                            json!({"event":"error","message":format!("gain must be 0..{}", r.gain_limit)}),
                         );
                     }
                 }

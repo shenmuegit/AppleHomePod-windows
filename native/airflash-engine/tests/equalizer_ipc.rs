@@ -63,3 +63,38 @@ fn malformed_equalizer_updates_are_nonfatal_and_probes_reject_eq() {
     );
     assert_eq!(events[5]["event"], "hello");
 }
+
+#[test]
+fn finite_wav_probe_accepts_full_gain_changes_without_audio() {
+    let missing_wav = std::env::temp_dir().join(format!("airflash-missing-{}.wav", uuid::Uuid::new_v4()));
+    assert!(!missing_wav.exists());
+    let mut engine = Command::new(env!("CARGO_BIN_EXE_airflash-engine"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut input = engine.stdin.take().unwrap();
+    for (id, command, params) in [
+        // A missing WAV fails before any transport or capture can start.
+        ("probe", "probe", json!({"peers":[{"host":"127.0.0.1"}],"wav_path":missing_wav,"duration_ms":100,"latency_ms":120,"gain":0.1})),
+        ("full", "set_gain", json!({"gain":1.0})),
+        ("too-high", "set_gain", json!({"gain":1.01})),
+        ("loopback", "probe", json!({"peers":[{"host":"127.0.0.1"}],"source":"loopback","duration_ms":100,"latency_ms":120,"gain":1.0})),
+    ] {
+        writeln!(input, "{}", json!({"version":1,"id":id,"session_id":"wav-gain","command":command,"params":params})).unwrap();
+    }
+    drop(input);
+    let events: Vec<Value> = BufReader::new(engine.stdout.take().unwrap())
+        .lines()
+        .map(|line| serde_json::from_str(&line.unwrap()).unwrap())
+        .collect();
+    assert!(engine.wait().unwrap().success());
+    let full = events.iter().find(|e| e["id"] == "full").unwrap();
+    assert_eq!(full["event"], "gain_changed");
+    assert_eq!(full["gain"], 1.0);
+    for id in ["too-high", "loopback"] {
+        assert_eq!(events.iter().find(|e| e["id"] == id).unwrap()["event"], "error");
+    }
+    assert!(events.iter().any(|e| e["id"] == "probe" && e["message"].as_str().is_some_and(|m| m.contains("open probe WAV"))));
+}
