@@ -1,6 +1,14 @@
 # Windows 原生 HomePod 输出验收记录
 
-初始日期：2026-10-15；最近更新：2026-10-16。依据 [原生输出规格](../superpowers/specs/2026-10-14-windows-native-homepod-output-design.md)与[实施计划](../superpowers/plans/2026-10-14-windows-native-homepod-output-implementation.md)。用户已在计划交接后继续，进入 Native inline 实现。
+初始日期：2026-10-15；最近更新：2026-10-17。依据 [原生输出规格](../superpowers/specs/2026-10-14-windows-native-homepod-output-design.md)与[实施计划](../superpowers/plans/2026-10-14-windows-native-homepod-output-implementation.md)。用户已在计划交接后继续，进入 Native inline 实现。
+
+## 2026-10-17 设备恢复与听音失败
+
+用户因没有注意前次测试而要求重播。首次重播在发现阶段超时，未发送 HomePod 参考音；用户随后恢复供电或网络。经过有界等待，重新发现同一只 `9efd9099abd6`，型号、27.0 固件、单只状态和地址均与原绑定一致。Windows 的虚拟端点、名称及驱动身份仍正常。
+
+固定 `f462560` 候选随后完成五秒 NTP/ALAC/2000 ms 参考测试，回读音量 33，PCM 报告三项检查通过；用户明确反馈仍然无声。此前可听的原生测试会重新应用回读的音量，故另做单变量对照：相同 .04 峰值、997 Hz、.1 增益、五秒与协议参数，只把当前回读的 33 原值应用一次。该写入得到确认，发送 627 个媒体包，媒体/同步错误为 0，反馈成功两次；用户仍反馈无声。因此未把此假设并入产品，也不把传输完成算作出声。
+
+历史可听测试回读为 72，当前为 33，音量差异尚未排除；已请求用户用 iPhone 网易云音乐在舒适音量确认扬声器当前可播，并在暂停或切回 iPhone 后继续 Windows 对照。等待期间不抢占手机播放。校准没有保存，后台未安装或启用，源码没有因上述未证实假设而改变；原交付 ZIP 和 manifest 仍保留其快照。最新证据在本地 `package-f462560/` 下的 `calibration-recovered-20261017-2246a0897462460c9a0db9b93f268473.json`、`reference-same-volume-20261017.json` 与各发现/清理报告中。
 
 ## 2026-10-16 实机续验状态
 
