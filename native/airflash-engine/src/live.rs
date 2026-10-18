@@ -128,7 +128,23 @@ impl CaptureQueue {
         ensure!(self.gate_open()?, "capture_gate_closed");
         Ok(self.frames.pop_front())
     }
+    fn trim_leading_silence(&mut self, target: usize) {
+        if self.overflow || !matches!(self.phase, Phase::Buffering { open: true }) { return; }
+        while self.frames.len() > target && self.frames.front().is_some_and(|f| f.left == 0.0 && f.right == 0.0) {
+            self.frames.pop_front();
+            self.dropped += 1;
+        }
+    }
+    fn resample_correction(&self, target: usize) -> f64 {
+        let limit = match self.phase {
+            Phase::Legacy => 0.0005,
+            Phase::Buffering { open: true } => 0.005,
+            _ => return 0.0,
+        };
+        ((target as f64 - self.len() as f64) / self.rate as f64 * 0.01).clamp(-limit, limit)
+    }
     fn discard_stale(&mut self, cutoff: u64, target: usize) {
+        if self.phase != Phase::Legacy { self.trim_leading_silence(target); return; }
         while self.frames.front().is_some_and(|f| f.qpc < cutoff) || self.frames.len() > target {
             self.frames.pop_front();
             self.dropped += 1;
@@ -260,6 +276,8 @@ impl Loopback {
             anyhow::bail!("capture stopped: {e}");
         }
         if !s.queue.gate_open()? { return Ok(None); }
+        let target = s.target;
+        s.queue.trim_leading_silence(target);
         let mut out = Vec::with_capacity(FRAMES * 4);
         let mut marker = None;
         let now = qpc_ns();
@@ -295,7 +313,7 @@ impl Loopback {
         }
         Ok(Some((out, marker)))
     }
-    /// Restore the capture queue to its normal target after a scheduler stall.
+    /// Reclaim stale legacy PCM or excess armed leading silence after a scheduler stall.
     pub fn discard_stale(&self) {
         let mut s = self.state.lock().unwrap();
         let cutoff = qpc_ns().saturating_sub(20_000_000);
@@ -391,6 +409,21 @@ fn find_device(enumerator: &IMMDeviceEnumerator, name: Option<&str>) -> Result<I
     Ok(unsafe { devices.Item(endpoint_index(name, &endpoints)? as u32) }?)
 }
 
+fn capture_resampler(rate: u32, stream_rate: u32) -> Result<SincFixedIn<f32>> {
+    Ok(SincFixedIn::<f32>::new(
+        stream_rate as f64 / rate as f64,
+        1.0 / 0.995 + f64::EPSILON, // Keep the reciprocal lower bound from rounding above 0.995.
+        SincInterpolationParameters {
+            sinc_len: 64,
+            f_cutoff: 0.9,
+            interpolation: SincInterpolationType::Cubic,
+            oversampling_factor: 128,
+            window: WindowFunction::BlackmanHarris2,
+        },
+        (rate / 100) as usize,
+        2,
+    )?)
+}
 fn capture(
     endpoint: Option<String>,
     stream_rate: u32,
@@ -464,19 +497,7 @@ fn capture(
     unsafe { CoTaskMemFree(Some(instance.0.cast())) };
     let session_instance_id = session_instance_id?;
     let chunk = (rate / 100) as usize;
-    let mut resampler = SincFixedIn::<f32>::new(
-        stream_rate as f64 / rate as f64,
-        1.001,
-        SincInterpolationParameters {
-            sinc_len: 64,
-            f_cutoff: 0.9,
-            interpolation: SincInterpolationType::Cubic,
-            oversampling_factor: 128,
-            window: WindowFunction::BlackmanHarris2,
-        },
-        chunk,
-        2,
-    )?;
+    let mut resampler = capture_resampler(rate, stream_rate)?;
     let mut inputs = [VecDeque::<f32>::new(), VecDeque::<f32>::new()];
     let mut input_times = VecDeque::new();
     let mut capture_epoch = state.lock().unwrap().queue.epoch();
@@ -565,13 +586,9 @@ fn capture(
                     .map(|q| q.drain(..chunk).collect())
                     .collect();
                 input_times.drain(..chunk);
-                let (have, target) = {
+                let correction = {
                     let s = state.lock().unwrap();
-                    (s.queue.len(), s.target)
-                };
-                // Preserve startup backlog; queue-target feedback is for the legacy path only.
-                let correction = if session_guid.is_some() { 0.0 } else {
-                    ((target as f64 - have as f64) / stream_rate as f64 * 0.01).clamp(-0.0005, 0.0005)
+                    s.queue.resample_correction(s.target)
                 };
                 resampler.set_resample_ratio_relative(1.0 + correction, true)?;
                 let output = resampler.process(&input, None)?;
@@ -662,6 +679,167 @@ mod tests {
             worker: None,
             equalizer_control,
         }
+    }
+    fn armed_source() -> Loopback {
+        let mut source = source();
+        source.capture_id = Some("266c0a08-eec2-4564-944b-53ca1a54e97f".into());
+        source.state.lock().unwrap().queue = CaptureQueue::armed(crate::rtp::RATE);
+        source.begin(1).unwrap();
+        source
+    }
+    #[test]
+    fn armed_packet_keeps_closed_preroll_then_trims_open_silence_to_target() {
+        let source = armed_source();
+        let count = crate::rtp::RATE as usize;
+        {
+            let mut s = source.state.lock().unwrap();
+            for i in 0..count { s.push_frame(Frame { left: 0.0, right: -0.0, qpc: i as u64 + 1 }); }
+        }
+        assert!(source.packet_if_open(1.0).unwrap().is_none());
+        {
+            let s = source.state.lock().unwrap();
+            assert_eq!(s.queue.len(), count);
+            assert_eq!(s.queue.dropped_frames(), 0);
+            assert_eq!(s.queue.frames.front().unwrap().qpc, 1);
+        }
+        source.set_gate(1, true, false).unwrap();
+        let (pcm, marker) = source.packet(1.0).unwrap();
+        assert!(pcm.iter().all(|b| *b == 0));
+        assert!(marker.is_none());
+        let s = source.state.lock().unwrap();
+        assert_eq!(s.queue.len(), TARGET - FRAMES);
+        assert_eq!(s.queue.dropped_frames(), (count - TARGET) as u64);
+        assert_eq!(s.queue.frames.front().unwrap().qpc, (count - TARGET + FRAMES + 1) as u64);
+    }
+    #[test]
+    fn armed_silence_trim_preserves_even_tiny_nonzero_and_the_other_channel() {
+        let source = armed_source();
+        let count = crate::rtp::RATE as usize;
+        {
+            let mut s = source.state.lock().unwrap();
+            for i in 0..count { s.push_frame(Frame { left: 0.0, right: 0.0, qpc: i as u64 + 1 }); }
+            s.push_frame(Frame { left: f32::MIN_POSITIVE, right: 0.0, qpc: count as u64 + 1 });
+            s.push_frame(Frame { left: 0.0, right: 0.02, qpc: count as u64 + 2 });
+            for i in 0..TARGET + FRAMES { s.push_frame(Frame { left: 0.0, right: 0.0, qpc: (count + i + 3) as u64 }); }
+        }
+        source.set_gate(1, true, false).unwrap();
+        let (pcm, marker) = source.packet(1.0).unwrap();
+        assert_eq!(&pcm[..8], &[0, 0, 0, 0, 0, 0, 2, 143]);
+        assert_eq!(marker, Some(count as u64 + 2));
+        assert_eq!(source.metrics().dropped_frames, count as u64);
+    }
+    #[test]
+    fn armed_recovery_and_packet_consumption_never_drop_nonzero_preroll() {
+        let source = armed_source();
+        {
+            let mut s = source.state.lock().unwrap();
+            for i in 0..8820 { s.push_frame(Frame { left: 0.01, right: -0.01, qpc: i + 1 }); }
+        }
+        source.discard_stale();
+        assert!(source.packet_if_open(1.0).unwrap().is_none());
+        assert_eq!(source.state.lock().unwrap().queue.len(), 8820);
+        source.set_gate(1, true, false).unwrap();
+        source.discard_stale();
+        let (pcm, marker) = source.packet(1.0).unwrap();
+        assert_eq!(&pcm[..4], &[1, 72, 254, 184]);
+        assert_eq!(marker, Some(1));
+        assert_eq!(source.state.lock().unwrap().queue.len(), 8820 - FRAMES);
+        assert_eq!(source.metrics().dropped_frames, 0);
+    }
+    #[test]
+    fn armed_reset_keeps_the_new_gate_closed_and_rejects_previous_timestamps() {
+        let source = armed_source();
+        source.state.lock().unwrap().push_frame(Frame { left: 0.02, right: 0.0, qpc: 1 });
+        source.set_gate(1, true, false).unwrap();
+        source.reset(1).unwrap();
+        let fresh = {
+            let mut s = source.state.lock().unwrap();
+            let cutoff = s.queue.min_qpc;
+            s.push_frame(Frame { left: 0.02, right: 0.0, qpc: cutoff - 1 });
+            s.push_frame(Frame { left: -0.03, right: 0.0, qpc: cutoff + 1 });
+            assert_eq!(s.queue.len(), 1);
+            cutoff + 1
+        };
+        assert_eq!(source.epoch(), 2);
+        assert!(source.set_gate(1, true, false).is_err());
+        source.begin(2).unwrap();
+        assert!(source.packet_if_open(1.0).unwrap().is_none());
+        source.set_gate(2, true, false).unwrap();
+        let (pcm, marker) = source.packet(1.0).unwrap();
+        assert_eq!(&pcm[..4], &[252, 41, 0, 0]);
+        assert_eq!(marker, Some(fresh));
+    }
+    #[test]
+    fn armed_feedback_is_neutral_until_open_and_bounds_both_directions() {
+        let mut queue = CaptureQueue::armed(crate::rtp::RATE);
+        assert_eq!(queue.resample_correction(TARGET), 0.0);
+        queue.begin(1).unwrap();
+        for i in 0..52920 { queue.push(Frame { left: 0.02, right: -0.02, qpc: i + 1 }); }
+        assert_eq!(queue.resample_correction(TARGET), 0.0);
+        queue.set_gate(1, true, false).unwrap();
+        assert_eq!(queue.resample_correction(TARGET), -0.005);
+        queue.set_gate(1, false, false).unwrap();
+        assert_eq!(queue.resample_correction(TARGET), 0.0);
+        queue.reset(1, 60000).unwrap();
+        assert_eq!(queue.resample_correction(TARGET), 0.0);
+        queue.begin(2).unwrap();
+        assert_eq!(queue.resample_correction(TARGET), 0.0);
+        queue.set_gate(2, true, false).unwrap();
+        assert!(queue.resample_correction(TARGET) > 0.0);
+        assert!(queue.resample_correction(TARGET) <= 0.005);
+        let mut legacy = CaptureQueue::legacy(crate::rtp::RATE);
+        assert!(legacy.resample_correction(TARGET) > 0.0);
+        for _ in 0..CAPACITY { legacy.push(Frame { left: 0.02, right: -0.02, qpc: 1 }); }
+        assert!(legacy.resample_correction(TARGET) < 0.0);
+        assert_eq!(legacy.resample_correction(0), -0.0005);
+    }
+    #[test]
+    fn armed_resampler_accepts_half_percent_and_changes_real_output_counts() {
+        for input_rate in [8000, 44100, 48000, 96000, 192000] {
+            let mut resampler = capture_resampler(input_rate, 44100).unwrap();
+            let input = vec![vec![0.02; (input_rate / 100) as usize]; 2];
+            resampler.set_resample_ratio_relative(0.995, true).unwrap();
+            let mut fewer = 0;
+            for _ in 0..100 { fewer += resampler.process(&input, None).unwrap()[0].len(); }
+            assert!((43600..44100).contains(&fewer), "input_rate={input_rate}, output={fewer}");
+            resampler.reset();
+            resampler.set_resample_ratio_relative(1.005, true).unwrap();
+            let mut more = 0;
+            for _ in 0..100 { more += resampler.process(&input, None).unwrap()[0].len(); }
+            assert!((44100..44400).contains(&more), "input_rate={input_rate}, output={more}");
+            println!("{input_rate}->44100: 1s input produced {fewer} frames at 0.995 and {more} at 1.005");
+        }
+    }
+    #[test]
+    fn armed_feedback_reduces_continuous_audio_backlog_without_queue_drops() {
+        let rate = crate::rtp::RATE;
+        let chunk = (rate / 100) as usize;
+        let initial = rate as usize * 12 / 10;
+        let mut queue = CaptureQueue::armed(rate);
+        queue.begin(1).unwrap();
+        for i in 0..initial { queue.push(Frame { left: 0.02, right: -0.02, qpc: i as u64 + 1 }); }
+        queue.set_gate(1, true, false).unwrap();
+        let mut resampler = capture_resampler(rate, rate).unwrap();
+        let input = vec![vec![0.02; chunk], vec![-0.02; chunk]];
+        let mut produced = 0;
+        let mut after_ten_seconds = 0;
+        for batch in 0..2000 {
+            let correction = queue.resample_correction(TARGET);
+            assert!((-0.005..=0.005).contains(&correction));
+            resampler.set_resample_ratio_relative(1.0 + correction, true).unwrap();
+            let output = resampler.process(&input, None).unwrap();
+            produced += output[0].len();
+            for (&left, &right) in output[0].iter().zip(&output[1]) { queue.push(Frame { left, right, qpc: (initial + batch * chunk) as u64 + 1 }); }
+            for _ in 0..chunk { queue.pop().unwrap().unwrap(); }
+            queue.check().unwrap();
+            if batch == 999 { after_ten_seconds = queue.len(); }
+        }
+        let reduction = initial - queue.len();
+        assert!((2000..2300).contains(&(initial - after_ten_seconds)));
+        assert!((4000..4500).contains(&reduction), "backlog only shrank by {reduction} frames");
+        assert_eq!(queue.len(), initial + produced - 2000 * chunk);
+        assert_eq!(queue.dropped_frames(), 0);
+        println!("1.2s nonzero backlog: {initial} -> {after_ten_seconds} at 10s -> {} at 20s, {produced} output frames, no queue drops", queue.len());
     }
     #[test]
     fn underrun_pads_silence_and_can_resume_audio() {

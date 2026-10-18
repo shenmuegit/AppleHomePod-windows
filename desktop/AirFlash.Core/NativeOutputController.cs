@@ -43,11 +43,13 @@ public sealed class NativeOutputController
     private NativeVolume? _volume;
     private SessionSnapshot? _stream;
     private Receiver? _receiver;
-    private long? _externalAt, _receiverWaitAt, _errorAt;
+    private long? _externalAt, _receiverWaitAt, _errorAt, _metricsAt;
     private long _routeEpoch, _connectRevision, _zeroRevision, _remoteObservedRevision;
     private ulong _streamCaptureEpoch;
     private int? _lastNonZero, _remoteActual, _restoreTarget;
     private long? _restoreSequence;
+    private long _deviceRevision = -1;
+    private double _devicePcmGain = 1;
     private double? _lastGain;
     private bool _active, _begun, _gateOpen, _clearPending, _externalActive;
     private int _run;
@@ -89,10 +91,13 @@ public sealed class NativeOutputController
                     if (stream.State == PlaybackState.Connecting && _stream?.State is not PlaybackState.Connecting)
                     {
                         if (_stream is not null) _connectRevision = update.UserRevision;
-                        _remoteActual = null; _restoreSequence = null; _restoreTarget = null; _gateOpen = false; _lastGain = null;
+                        _remoteActual = null; _restoreSequence = null; _restoreTarget = null; _gateOpen = false; _lastGain = null; _deviceRevision = -1; _metricsAt = null;
                     }
-                    if (stream.Metrics is { } metrics && _stream?.Metrics is null)
-                        _log?.Invoke("Native capture timing: " + System.Text.Json.JsonSerializer.Serialize(metrics));
+                    if (stream.Metrics is { } metrics && !ReferenceEquals(metrics, _stream?.Metrics)
+                        && (_metricsAt is null || _time.GetElapsedTime(_metricsAt.Value) >= TimeSpan.FromSeconds(15)))
+                    {
+                        _log?.Invoke("Native capture timing: " + System.Text.Json.JsonSerializer.Serialize(metrics)); _metricsAt = _time.GetTimestamp();
+                    }
                     _stream = stream;
                     _streamCaptureEpoch = update.CaptureEpoch;
                     _remoteObservedRevision = update.UserRevision;
@@ -131,6 +136,7 @@ public sealed class NativeOutputController
         if (_volume is not null && value.Revision < _volume.Revision) return;
         if (_volume is { } old && (old.Db != value.Db || old.Scalar != value.Scalar || old.Muted != value.Muted))
             _clearPending |= _binding.Calibration!.MasterInPcm || value.Muted || value.Scalar == 0;
+        if (!_binding.Calibration!.MasterInPcm && !value.Muted && value.Scalar > 0) _clearPending = false;
         _volume = value;
     }
     private AppSettings Settings() => new()
@@ -171,7 +177,7 @@ public sealed class NativeOutputController
                 if (_time.GetElapsedTime(_receiverWaitAt!.Value) >= TimeSpan.FromSeconds(2)) throw new IOException("The bound HomePod is unavailable; startup sound cannot be retained indefinitely.");
                 return;
             }
-            Interlocked.Increment(ref _routeEpoch); _active = true; _receiver = receiver; _stream = null; _remoteActual = null; _gateOpen = false; _lastGain = null;
+            Interlocked.Increment(ref _routeEpoch); _active = true; _receiver = receiver; _stream = null; _remoteActual = null; _gateOpen = false; _lastGain = null; _deviceRevision = -1; _metricsAt = null;
             _receiverWaitAt = null;
             await _session.SetNativeGainAsync(0).ConfigureAwait(false);
             await _session.StartAsync(receiver, Settings()).ConfigureAwait(false);
@@ -191,6 +197,7 @@ public sealed class NativeOutputController
     private async Task ApplyVolumeAsync(CancellationToken cancellation)
     {
         if (!IsCurrentStream()) return;
+        if (!_binding.Calibration!.MasterInPcm) { await ApplyDeviceVolumeAsync(cancellation).ConfigureAwait(false); return; }
         var volume = _volume!;
         if (_clearPending && !_gateOpen && !await GateAsync(false, true, cancellation).ConfigureAwait(false)) return;
         var remote = _stream!.DeviceVolume;
@@ -220,9 +227,7 @@ public sealed class NativeOutputController
             if (!IsCurrentStream()) return;
             var target = _lastNonZero ?? _binding.Calibration!.ResumeDeviceVolume;
             if (target is < 1 or > 100) throw new InvalidDataException("No measured nonzero reference volume is available.");
-            var write = _session.SetDeviceVolumeAsync(_binding.ReceiverId, target);
-            _restoreSequence = _session.Snapshot.DeviceVolume!.Sequence; _restoreTarget = target;
-            _ = write.ContinueWith(task => { if (task.IsFaulted) _events.Writer.TryComplete(task.Exception!.GetBaseException()); }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            RequestDeviceVolume(target);
             return;
         }
         if (actual == 0)
@@ -237,6 +242,55 @@ public sealed class NativeOutputController
             await GainAsync(0).ConfigureAwait(false); await GateAsync(true, changed || _clearPending, cancellation).ConfigureAwait(false); return;
         }
         await GainAsync(PcmVolumeMath.Gain(_binding.Calibration!, volume)).ConfigureAwait(false);
+        await GateAsync(true, _clearPending, cancellation).ConfigureAwait(false);
+    }
+    private void RequestDeviceVolume(int target)
+    {
+        var write = _session.SetDeviceVolumeAsync(_binding.ReceiverId, target);
+        _restoreSequence = _session.Snapshot.DeviceVolume!.Sequence; _restoreTarget = target;
+        _ = write.ContinueWith(task => { if (task.IsFaulted) _events.Writer.TryComplete(task.Exception!.GetBaseException()); }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+    }
+    private async Task ApplyDeviceVolumeAsync(CancellationToken cancellation)
+    {
+        var volume = _volume!;
+        var remote = _stream!.DeviceVolume;
+        if (remote?.Available != true || remote.Actual is not { } actual)
+        {
+            await GainAsync(0).ConfigureAwait(false); await GateAsync(false, false, cancellation).ConfigureAwait(false); return;
+        }
+        if (_remoteActual != actual && actual == 0) _zeroRevision = _remoteActual is null ? _connectRevision : _remoteObservedRevision;
+        _remoteActual = actual;
+        if (_restoreSequence is null && actual == 0 && !volume.Muted && volume.Scalar > 0
+            && volume.Revision <= _zeroRevision)
+        {
+            await _monitor.SetMutedAsync(true, OwnVolumeContext, cancellation).ConfigureAwait(false);
+            AcceptVolume(_monitor.Snapshot.Volume); volume = _volume!;
+        }
+        var mapped = PcmVolumeMath.DeviceControl(_binding.Calibration!, volume);
+        if (mapped.Volume != 0) _devicePcmGain = mapped.Gain;
+        var newer = volume.Revision > _deviceRevision;
+        if (_restoreSequence is { } sequence)
+        {
+            if (newer && mapped.Volume != _restoreTarget)
+            {
+                _deviceRevision = volume.Revision; RequestDeviceVolume(mapped.Volume); return;
+            }
+            if (newer) _deviceRevision = volume.Revision;
+            if (remote.Sequence != sequence || remote.Target is not null || remote.Status == "pending") return;
+            if (remote.Status != "confirmed" || actual != _restoreTarget)
+            {
+                await GainAsync(0).ConfigureAwait(false); await GateAsync(false, true, cancellation).ConfigureAwait(false);
+                throw new IOException("HomePod did not confirm the requested device volume.");
+            }
+            _restoreSequence = null; _restoreTarget = null;
+            newer = false;
+        }
+        if ((newer || mapped.Volume == 0) && actual != mapped.Volume)
+        {
+            _deviceRevision = volume.Revision; RequestDeviceVolume(mapped.Volume); return;
+        }
+        _deviceRevision = volume.Revision;
+        await GainAsync(_devicePcmGain).ConfigureAwait(false);
         await GateAsync(true, _clearPending, cancellation).ConfigureAwait(false);
     }
     private async Task GainAsync(double value)

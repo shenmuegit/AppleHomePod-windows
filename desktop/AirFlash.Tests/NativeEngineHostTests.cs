@@ -189,7 +189,7 @@ public sealed class NativeEngineHostTests
         private readonly FragmentReader _reader = new();
         public ConcurrentQueue<Sent> Commands { get; } = new();
         public bool HelloReplies = true, StopReplies = true;
-        public bool StreamReplies;
+        public bool StreamReplies, VolumeReplies;
         public int? InitialVolume;
         public TaskCompletionSource? StartHold;
         public bool Disposed;
@@ -213,6 +213,7 @@ public sealed class NativeEngineHostTests
                 case "reset_capture": Event(session, new { @event = "capture_reset", capture_id = p.Text("capture_id"), epoch = p.Integer("epoch") + 1 }); break;
                 case "set_capture_gate": Event(session, new { @event = "capture_gate", capture_id = p.Text("capture_id"), epoch = p.Integer("epoch"), open = p.Boolean("open") }); break;
                 case "hello" when HelloReplies: Event(session, new { @event = "hello" }); break;
+                case "set_device_volume" when VolumeReplies: Volume(session, (int)p.Integer("volume")!.Value, p.Integer("sequence")!.Value); break;
                 case "stop" when StopReplies: Event(session, new { @event = "stopped" }); break;
                 case "start":
                     if (StartHold is not null) await StartHold.Task.WaitAsync(cancellation);

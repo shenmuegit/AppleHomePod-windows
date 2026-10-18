@@ -5,6 +5,94 @@ namespace AirFlash.Tests;
 
 public sealed class NativeOutputControllerTests
 {
+    [Fact]
+    public async Task NativeMasterWritesReceiverWithoutRepeatingWindowsAttenuationInPcm()
+    {
+        await using var f = await Fixture.Create(initialVolume: 100, referenceVolume: 100);
+        f.Monitor.Select(true); f.Start();
+        await Until(() => f.Gates.Any(c => c.Params.Boolean("open") == true));
+        Assert.Contains(f.Wire.Commands, c => c.Command == "set_device_volume" && c.Params.Number("volume") == 60);
+        Assert.Equal(1, f.Wire.Commands.Last(c => c.Command == "set_gain").Params.Number("gain"));
+    }
+    [Fact]
+    public async Task NativeMuteAndUnmuteUseDeviceControlWhilePcmKeepsFlowing()
+    {
+        await using var f = await Fixture.Create(initialVolume: 100, referenceVolume: 100);
+        f.Monitor.Select(true); f.Start();
+        await Until(() => f.Gates.Any(c => c.Params.Boolean("open") == true));
+        f.Monitor.Volume(new(1, -12, .25, true, Guid.NewGuid()));
+        await Until(() => f.Session.Snapshot.DeviceVolume?.Actual == 0);
+        Assert.Equal(1, f.Wire.Commands.Last(c => c.Command == "set_gain").Params.Number("gain"));
+        Assert.Contains(f.Gates, c => c.Params.Boolean("open") == true && c.Params.Boolean("clear_pending") == true);
+        f.Time.Advance(TimeSpan.FromSeconds(15));
+        f.Monitor.Volume(new(2, -24, .1, false, Guid.NewGuid()));
+        await Until(() => f.Session.Snapshot.DeviceVolume?.Actual == 20);
+        Assert.Single(f.Starts); Assert.Equal(0, f.Monitor.PhysicalMuteCalls);
+        Assert.Equal(1, f.Wire.Commands.Last(c => c.Command == "set_gain").Params.Number("gain"));
+    }
+    [Theory]
+    [InlineData(-18, .125, false, 40)]
+    [InlineData(-6, .5, true, 0)]
+    [InlineData(-96, 0, false, 0)]
+    public async Task NewWindowsVolumeSupersedesPendingDeviceWriteWithoutWaitingForOldReadback(double db, double scalar, bool muted, int target)
+    {
+        await using var f = await Fixture.Create(initialVolume: 100, referenceVolume: 100);
+        f.Monitor.Select(true); f.Start();
+        await Until(() => f.Gates.Any(c => c.Params.Boolean("open") == true));
+        f.Wire.VolumeReplies = false;
+        f.Monitor.Volume(new(1, -6, .5, false, Guid.NewGuid()));
+        await Until(() => f.Wire.Commands.Any(c => c.Command == "set_device_volume" && c.Params.Number("volume") == 80));
+        var old = f.Wire.Commands.Last(c => c.Command == "set_device_volume");
+        f.Monitor.Volume(new(2, db, scalar, muted, Guid.NewGuid()));
+        await Until(() => f.Wire.Commands.Any(c => c.Command == "set_device_volume" && c.Params.Number("volume") == target));
+        var latest = f.Wire.Commands.Last(c => c.Command == "set_device_volume");
+        f.Wire.Volume(f.StreamId, 80, old.Params.Integer("sequence")!.Value);
+        await Task.Delay(20); Assert.Equal(target, f.Session.Snapshot.DeviceVolume!.Target);
+        f.Wire.Volume(f.StreamId, target, latest.Params.Integer("sequence")!.Value);
+        await Until(() => f.Session.Snapshot.DeviceVolume?.Target is null);
+        Assert.False(f.Run!.IsCompleted); Assert.Single(f.Starts);
+    }
+    [Fact]
+    public async Task UnconfirmedDeviceWriteStopsInsteadOfReleasingAudioAtTheOldLouderLevel()
+    {
+        await using var f = await Fixture.Create(initialVolume: 100, referenceVolume: 100);
+        f.Wire.VolumeReplies = false; f.Monitor.Select(true); f.Start();
+        await Until(() => f.Wire.Commands.Any(c => c.Command == "set_device_volume"));
+        var command = f.Wire.Commands.Last(c => c.Command == "set_device_volume");
+        f.Wire.Event(f.StreamId, new { @event = "device_volume", host = "127.0.0.1", volume = 100, sequence = command.Params.Integer("sequence")!.Value, status = "unconfirmed", available = true });
+        await Assert.ThrowsAsync<IOException>(() => f.Run!.WaitAsync(TimeSpan.FromSeconds(3)));
+        Assert.DoesNotContain(f.Gates, c => c.Params.Boolean("open") == true);
+        Assert.Equal(0, f.Wire.Commands.Last(c => c.Command == "set_gain").Params.Number("gain"));
+    }
+    [Fact]
+    public async Task ExternalZeroIsNotUndoneByAWindowsChangeObservedBeforeThatZero()
+    {
+        await using var f = await Fixture.Create(initialVolume: 100, referenceVolume: 100);
+        f.Monitor.Select(true); f.Start();
+        await Until(() => f.Gates.Any(c => c.Params.Boolean("open") == true));
+        var before = f.Wire.Commands.Count;
+        f.Monitor.SetLatestWithoutNotification(new(1, -6, .5, false, Guid.NewGuid()));
+        f.Wire.Volume(f.StreamId, 0, f.Session.Snapshot.DeviceVolume!.Sequence);
+        await Until(() => f.Monitor.Snapshot.Volume.Muted || f.Wire.Commands.Skip(before).Any(c => c.Command == "set_device_volume"));
+        Assert.True(f.Monitor.Snapshot.Volume.Muted);
+        Assert.DoesNotContain(f.Wire.Commands.Skip(before), c => c.Command == "set_device_volume" && c.Params.Number("volume") > 0);
+    }
+    [Fact]
+    public async Task CancelledMuteDoesNotClearNewFirstSoundWhenUnmuteReadbackOpensGate()
+    {
+        await using var f = await Fixture.Create(initialVolume: 100, referenceVolume: 100);
+        f.Wire.VolumeReplies = false; f.Monitor.Select(true); f.Start();
+        await Until(() => f.Wire.Commands.Any(c => c.Command == "set_device_volume"));
+        f.Monitor.Volume(new(1, -12, .25, true, Guid.NewGuid()));
+        await Until(() => f.Wire.Commands.Any(c => c.Command == "set_device_volume" && c.Params.Number("volume") == 0));
+        f.Monitor.Volume(new(2, -12, .25, false, Guid.NewGuid()));
+        await Until(() => f.Wire.Commands.Count(c => c.Command == "set_device_volume" && c.Params.Number("volume") == 60) == 2);
+        // Opening must retain any short sound captured after this unmute.
+        var current = f.Wire.Commands.Last(c => c.Command == "set_device_volume");
+        f.Wire.Volume(f.StreamId, 60, current.Params.Integer("sequence")!.Value);
+        await Until(() => f.Gates.Any(c => c.Params.Boolean("open") == true));
+        Assert.DoesNotContain(f.Gates, c => c.Params.Boolean("open") == true && c.Params.Boolean("clear_pending") == true);
+    }
     [Theory]
     [InlineData(0)]
     [InlineData(1)]
@@ -24,7 +112,8 @@ public sealed class NativeOutputControllerTests
         Assert.Equal("ntp", start.Text("timing")); Assert.Equal(500, start.Number("latency_ms"));
         Assert.Equal(500, f.Session.Snapshot.TargetLatency);
         Assert.Equal(44100, start.Number("sample_rate")); Assert.False(start.GetProperty("equalizer").GetProperty("enabled").GetBoolean());
-        Assert.DoesNotContain(f.Wire.Commands, c => c.Command is "set_equalizer" or "set_device_volume");
+        Assert.DoesNotContain(f.Wire.Commands, c => c.Command == "set_equalizer");
+        Assert.Contains(f.Wire.Commands, c => c.Command == "set_device_volume" && c.Params.Number("volume") == 1);
     }
     [Theory]
     [InlineData(0)]
@@ -92,33 +181,37 @@ public sealed class NativeOutputControllerTests
         f.Monitor.Publish(f.Monitor.Snapshot with { Sessions = snapshot }); f.Start();
         await Until(() => f.Starts.Count == 1);
     }
-    [Fact]
-    public async Task InitialRemoteZeroWithoutNewIntentMutesOnlyVirtualAndDrainsAtZero()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InitialRemoteZeroWithoutNewIntentMutesOnlyVirtualWithoutRaisingReceiver(bool masterInPcm)
     {
-        await using var f = await Fixture.Create(initialVolume: 0); f.Monitor.Select(true); f.Start();
+        await using var f = await Fixture.Create(initialVolume: 0, masterInPcm: masterInPcm); f.Monitor.Select(true); f.Start();
         await Until(() => f.Gates.Any(c => c.Params.Boolean("open") == true));
         Assert.True(f.Monitor.Snapshot.Volume.Muted); Assert.Equal(f.Controller.OwnVolumeContext, f.Monitor.Mutes.Last());
-        Assert.Equal(0, f.Wire.Commands.Last(c => c.Command == "set_gain").Params.Number("gain"));
-        Assert.Contains(f.Gates, c => c.Params.Boolean("clear_pending") == true);
+        Assert.Equal(masterInPcm ? 0 : 1, f.Wire.Commands.Last(c => c.Command == "set_gain").Params.Number("gain"));
+        Assert.Equal(0, f.Session.Snapshot.DeviceVolume!.Actual);
         Assert.DoesNotContain(f.Wire.Commands, c => c.Command == "set_device_volume");
         f.Time.Advance(TimeSpan.FromSeconds(15)); Assert.Single(f.Starts); Assert.Equal(0, f.Monitor.PhysicalMuteCalls);
     }
     [Fact]
     public async Task LatestUserRevisionWinsInitialRemoteZeroAndGateWaitsForMatchingReadback()
     {
-        await using var f = await Fixture.Create(initialVolume: null); f.Monitor.Select(true); f.Start();
+        await using var f = await Fixture.Create(initialVolume: null, referenceVolume: 100); f.Wire.VolumeReplies = false; f.Monitor.Select(true); f.Start();
         await Until(() => f.Session.Snapshot.State == PlaybackState.Streaming);
         f.Monitor.SetLatestWithoutNotification(new(1, -6, .5, false, Guid.NewGuid()));
         f.Wire.Volume(f.StreamId, 0, 0);
         await Until(() => f.Wire.Commands.Any(c => c.Command == "set_device_volume"));
         var restore = f.Wire.Commands.Last(c => c.Command == "set_device_volume");
-        Assert.Equal(38, restore.Params.Number("volume")); Assert.DoesNotContain(f.Gates, c => c.Params.Boolean("open") == true);
+        Assert.Equal(80, restore.Params.Number("volume")); Assert.DoesNotContain(f.Gates, c => c.Params.Boolean("open") == true);
         f.Monitor.Volume(new(2, -18, .125, false, Guid.NewGuid()));
-        f.Wire.Volume(f.StreamId, 38, 0); // Stale old read must not release PCM.
+        await Until(() => f.Wire.Commands.Any(c => c.Command == "set_device_volume" && c.Params.Number("volume") == 40));
+        var latest = f.Wire.Commands.Last(c => c.Command == "set_device_volume");
+        f.Wire.Volume(f.StreamId, 80, restore.Params.Integer("sequence")!.Value); // Stale old read must not release PCM.
         await Task.Delay(20); Assert.DoesNotContain(f.Gates, c => c.Params.Boolean("open") == true);
-        f.Wire.Volume(f.StreamId, 38, restore.Params.Integer("sequence")!.Value);
+        f.Wire.Volume(f.StreamId, 40, latest.Params.Integer("sequence")!.Value);
         await Until(() => f.Gates.Any(c => c.Params.Boolean("open") == true));
-        Assert.Equal(Math.Pow(10, -18d / 20), f.Wire.Commands.Last(c => c.Command == "set_gain").Params.Number("gain")!.Value, 8);
+        Assert.Equal(1, f.Wire.Commands.Last(c => c.Command == "set_gain").Params.Number("gain")!.Value, 8);
         Assert.DoesNotContain(f.Monitor.Mutes, context => context != f.Controller.OwnVolumeContext);
     }
     [Fact]
@@ -219,7 +312,7 @@ public sealed class NativeOutputControllerTests
         Assert.Single(f.Starts);
     }
     [Fact]
-    public async Task FirstCaptureTimingIsLoggedOncePerConnection()
+    public async Task CaptureTimingReportsInitialAndBoundedSteadySamples()
     {
         await using var f = await Fixture.Create(); f.Monitor.Select(true); f.Start();
         await Until(() => f.Gates.Any(c => c.Params.Boolean("open") == true));
@@ -235,6 +328,11 @@ public sealed class NativeOutputControllerTests
         await Until(() => f.Session.Snapshot.Metrics?.CaptureToSendP95 == 20);
         await f.FlushVolume();
         Assert.Single(f.Logs, s => s.StartsWith("Native capture timing: ", StringComparison.Ordinal));
+        f.Time.Advance(TimeSpan.FromSeconds(15));
+        f.Wire.Event(f.StreamId, new { @event = "capture_metrics", metrics = new { capture_to_send_p95_ms = 25, max_queue_age_ms = 1300, underrun_packets = 0, dropped_frames = 0, input_rate = 48000 } });
+        await Until(() => f.Session.Snapshot.Metrics?.CaptureToSendP95 == 25);
+        await f.FlushVolume();
+        Assert.Equal(2, f.Logs.Count(s => s.StartsWith("Native capture timing: ", StringComparison.Ordinal)));
     }
     [Fact]
     public async Task FullControllerQueueFailsInsteadOfSilentlyDroppingWindowsIntent()
@@ -258,17 +356,19 @@ public sealed class NativeOutputControllerTests
         public NativeEngineHost Host = null!;
         public SessionController Session = null!;
         public NativeOutputController Controller = null!;
+        private PcmVolumeCalibration Calibration = null!;
         public Receiver Receiver = new("receiver-1", "da", "127.0.0.1") { Model = "AudioAccessory5,1", SoftwareVersion = "27.0", IsLeader = true, Codecs = [1] };
         public Task? Run;
         public int Resolutions;
         public List<NativeEngineHostTests.Sent> Starts => Wire.Commands.Where(c => c.Command == "start").ToList();
         public List<NativeEngineHostTests.Sent> Gates => Wire.Commands.Where(c => c.Command == "set_capture_gate").ToList();
         public string StreamId => Starts.Last().Session;
-        public static async Task<Fixture> Create(int? initialVolume = 38, bool masterInPcm = false)
+        public static async Task<Fixture> Create(int? initialVolume = 38, bool masterInPcm = false, int referenceVolume = 38)
         {
-            var f = new Fixture(); f.Wire.InitialVolume = initialVolume;
+            var f = new Fixture(); f.Wire.InitialVolume = initialVolume; f.Wire.VolumeReplies = true;
             var binding = NativeEngineHostTests.Binding;
-            binding = binding with { Calibration = binding.Calibration! with { MasterInPcm = masterInPcm } };
+            binding = binding with { Calibration = binding.Calibration! with { MasterInPcm = masterInPcm, ResumeDeviceVolume = referenceVolume } };
+            f.Calibration = binding.Calibration!;
             f.Host = new(f.Wire, 42); await f.Host.ArmAsync(binding, default);
             f.Session = new(f.Host, f.Monitor);
             f.Controller = new(binding, f.Monitor, f.Host, f.Session, f.Time, f.Logs.Enqueue);
@@ -279,7 +379,8 @@ public sealed class NativeOutputControllerTests
         {
             var db = Monitor.Snapshot.Volume.Db - .1;
             Monitor.Volume(Monitor.Snapshot.Volume with { Revision = Monitor.Snapshot.Volume.Revision + 1, Db = db, Context = Guid.NewGuid() });
-            await Until(() => Wire.Commands.Any(c => c.Command == "set_gain" && Math.Abs(c.Params.Number("gain")!.Value - Math.Pow(10, db / 20)) < 1e-8));
+            var gain = Calibration.MasterInPcm ? 1 : PcmVolumeMath.DeviceControl(Calibration, Monitor.Snapshot.Volume).Gain;
+            await Until(() => Wire.Commands.Any(c => c.Command == "set_gain" && Math.Abs(c.Params.Number("gain")!.Value - gain) < 1e-8));
         }
         public async ValueTask DisposeAsync()
         {

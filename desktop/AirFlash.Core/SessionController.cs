@@ -131,7 +131,7 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
         PublishCurrent(epoch);
         try
         {
-            await Task.Delay(200, token).ConfigureAwait(false);
+            await Task.Delay(factory is NativeEngineHost ? 50 : 200, token).ConfigureAwait(false);
             await _serial.WaitAsync(token).ConfigureAwait(false);
             try
             {

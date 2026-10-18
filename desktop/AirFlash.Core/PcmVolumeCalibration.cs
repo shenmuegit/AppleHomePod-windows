@@ -9,6 +9,17 @@ public sealed record NativeVolume(long Revision, double Db, double Scalar, bool 
 
 public static class PcmVolumeMath
 {
+    public static (int Volume, double Gain) DeviceControl(PcmVolumeCalibration calibration, NativeVolume volume)
+    {
+        _ = Gain(calibration, volume);
+        if (calibration.MasterInPcm || calibration.ResumeDeviceVolume is < 1 or > 100)
+            throw new ArgumentException("Device control requires pre-master PCM and a calibrated nonzero reference.", nameof(calibration));
+        if (volume.Muted || volume.Scalar == 0) return (0, 1);
+        var db = calibration.ResumeDeviceVolume * .3 - 30 + Math.Min(0, volume.Db - calibration.MaxDb);
+        var target = Math.Clamp((int)Math.Ceiling((db + 30) / .3 - 1e-9), 1, calibration.ResumeDeviceVolume);
+        // shortcut: below the receiver floor, residual gain follows buffered PCM; wider device dB needs hardware verification.
+        return (target, Math.Clamp(Math.Pow(10, (db - (target * .3 - 30)) / 20), 0, 1));
+    }
     public static double Gain(PcmVolumeCalibration calibration, NativeVolume volume)
     {
         if (!double.IsFinite(volume.Db) || !double.IsFinite(calibration.MaxDb)

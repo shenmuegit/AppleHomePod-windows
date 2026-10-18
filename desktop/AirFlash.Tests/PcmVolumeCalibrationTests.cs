@@ -6,6 +6,29 @@ public sealed class PcmVolumeCalibrationTests
 {
     private const string DriverHash = "f01344602472f1b527de5ee98f18987c03db48fea444e457d061e937f1d531d5";
     private static PcmVolumeCalibration Calibration => new(false, "44100/2/32/3", DriverHash, 0, 38);
+    [Theory]
+    [InlineData(0, 72, 0)]
+    [InlineData(-12, 32, -12)]
+    [InlineData(-24, 1, -24)]
+    [InlineData(-60, 1, -60)]
+    [InlineData(6, 72, 0)]
+    public void DeviceAndResidualGainApplyWindowsDbOnceWithoutExceedingReference(double db, int device, double effectiveDb)
+    {
+        var mapped = PcmVolumeMath.DeviceControl(Calibration with { ResumeDeviceVolume = 72 }, new(1, db, .25, false, Guid.Empty));
+        Assert.Equal(device, mapped.Volume);
+        Assert.InRange(mapped.Gain, 0, 1);
+        Assert.Equal(effectiveDb, (mapped.Volume - 72) * .3 + 20 * Math.Log10(mapped.Gain), 8);
+    }
+    [Theory]
+    [InlineData(true, .25)]
+    [InlineData(false, 0)]
+    public void WindowsMuteOrZeroUsesTheDeviceMuteValue(bool muted, double scalar)
+        => Assert.Equal(0, PcmVolumeMath.DeviceControl(Calibration, new(1, -12, scalar, muted, Guid.Empty)).Volume);
+    [Theory]
+    [InlineData(double.NaN, .5)]
+    [InlineData(-12, 2)]
+    public void InvalidWindowsValuesCannotBecomeDeviceCommands(double db, double scalar)
+        => Assert.Throws<ArgumentOutOfRangeException>(() => PcmVolumeMath.DeviceControl(Calibration, new(1, db, scalar, false, Guid.Empty)));
     private static VolumeSample[] Samples(double lowRms) => [new(0,1,false,.02,.04), new(-12,.25,false,lowRms,lowRms*2),
         new(0,1,false,.02,.04), new(-12,.25,false,lowRms,lowRms*2)];
 
