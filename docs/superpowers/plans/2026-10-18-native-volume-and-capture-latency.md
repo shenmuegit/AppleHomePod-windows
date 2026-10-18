@@ -37,9 +37,9 @@
 ## Task 3: Candidate and actual trial
 
 - [x] Run one targeted fresh review for the combined control/queue changes; fix material findings with regression evidence.
-- [ ] Publish a new immutable candidate/source snapshot; preserve previous installed source and binaries. Run actual packaged compat/read-only checks.
-- [ ] Stop only the owned agent, install/enable the candidate with a verified rollback path; confirm installed hash, owned task, capture_ready and initial/steady timing numbers.
-- [ ] Ask for one concentrated Windows-music/volume/mute comparison. State measured software timing separately from user-estimated end-to-end latency. Do not declare 30-minute playback or video synchronization passed.
+- [x] Publish a new immutable candidate/source snapshot; preserve previous installed source and binaries. Run actual packaged compat/read-only checks.
+- [x] Stop only the owned agent, install/enable the candidate with a verified rollback path; confirm installed hash, owned task, capture_ready and initial/steady timing numbers.
+- [x] Ask for one concentrated Windows-music/volume/mute comparison. State measured software timing separately from user-estimated end-to-end latency. Do not declare 30-minute playback or video synchronization passed.
 
 ## Review focus
 
@@ -48,3 +48,5 @@ Latest target during pending readback; hardware zero versus our own mute; very l
 Software evidence: .NET 387 passed; Rust 71 passed / 2 original ignored; Clippy passed. Static CRT release and import audit passed with 144 unconfirmed imports retained. Fresh combined review found two Important ordering/clear-boundary cases; both watched RED then fixed in one pass. Hardware remains pending.
 
 Hardware startup finding: a8aed69 reached capture_ready but failed before first media packet because an asynchronous initial volume read required another poll and the fixed 1s pending interval exhausted the existing 2s preroll budget. Baseline restored. A five-second zero-signal device probe confirmed the delayed read; pending-only polling is now 100ms with a real localhost Worker/Connection RED→GREEN regression (131ms/118ms confirmations). Full Rust72 pass/2 original ignored, Clippy clean. Replacement candidate requires a forced initial-volume-change trial before playback acceptance.
+
+Actual replacement bbccbfc passed the forced device14→Windows-mapped39 initialization and emitted media/capture metrics beyond the former failure window. Capture→send first p95=25.35ms, later samples21–29ms. User reports a major improvement and approximately1second remaining total delay. This follow-up has actual user feedback; precise acoustic latency/video sync/full30minute stability and the parent plan's other hardware gates remain open.
