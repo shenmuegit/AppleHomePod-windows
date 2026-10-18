@@ -97,6 +97,7 @@ public sealed class NativeOutputController
                         && (_metricsAt is null || _time.GetElapsedTime(_metricsAt.Value) >= TimeSpan.FromSeconds(15)))
                     {
                         _log?.Invoke("Native capture timing: " + System.Text.Json.JsonSerializer.Serialize(metrics)); _metricsAt = _time.GetTimestamp();
+                        _log?.Invoke("Native transport timing: " + System.Text.Json.JsonSerializer.Serialize(stream.Diagnostics?.Transport));
                     }
                     _stream = stream;
                     _streamCaptureEpoch = update.CaptureEpoch;
@@ -142,7 +143,7 @@ public sealed class NativeOutputController
     private AppSettings Settings() => new()
     {
         CaptureMode = "endpoint", CaptureEndpoint = _binding.Endpoint.EndpointId, StreamSampleRate = "44100",
-        LatencyMode = "custom", CustomBufferMs = 500, Equalizer = new(), MasterVolume = 100,
+        LatencyMode = "custom", CustomBufferMs = 200, Equalizer = new(), MasterVolume = 100,
         MuteWhileStreaming = false, StandbyEnabled = false, AutoConnectOnDiscover = false, ForceReconnect = true, MaxReconnectAttempts = 5
     };
     private async Task ReconcileAsync(Func<string, Receiver?> resolve, CancellationToken cancellation)
