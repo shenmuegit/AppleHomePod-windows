@@ -10,7 +10,11 @@
 
 据此将日常 Native 目标改为 500 ms，并使 Native 的设置、连接签名、发送参数、日志和状态快照一致；旧面板的 NTP 2000 ms 兼容目标保留。armed capture 的首段保留规则没有改动，其启动积压仍可能叠加在接收端延迟之上。新候选的实际音乐、控制响应与首段仍须复验。
 
-固定代码 `d92d33f54306e2cc3b445f57c0fbc8ea29f338c1` 的自包含候选已安装，EXE SHA256 `1b1304d11e5193ebc33f47fd518f403308da7f0fc3a93c868274dfff8f656ad1`，与 `dist/native-output-d92d33f/AppleHome.exe` 一致。完整 .NET 368 项通过；实际包的 compat hello 与原生只读检查通过。自有任务存在、owned/ready=true，冷启动 4813 ms；实际日志 `Streaming started ... target latency 500 ms; reconnect attempts 0`。旧工作包与交付 ZIP 均保留，实际新参数下的音乐响应反馈仍待用户确认。
+固定代码 `d92d33f54306e2cc3b445f57c0fbc8ea29f338c1` 的自包含候选已安装，EXE SHA256 `1b1304d11e5193ebc33f47fd518f403308da7f0fc3a93c868274dfff8f656ad1`，与 `dist/native-output-d92d33f/AppleHome.exe` 一致。完整 .NET 368 项通过；实际包的 compat hello 与原生只读检查通过。自有任务存在、owned/ready=true，冷启动 4813 ms；实际日志 `Streaming started ... target latency 500 ms; reconnect attempts 0`。用户随后报告仍约 4 秒延迟，故低延迟体验没有通过。
+
+随后 `f6f472be21285e49a57493ab8b76e2aafdddfab4` 只增加每次连接首次采集指标日志，经失败回归及完整 .NET 369 项验证后安装。安装 SHA256 `a9e1ab74ebeb75b80f0a041fa4bdbe02829a8c11501d389d5aa190959bc18f68`；实际 compat/native 检查通过，owned/ready=true，冷启动 4920 ms，目标仍为 500 ms。首次指标为 capture→send p95 1190.20274 ms、max 1191.401637 ms、underrun/dropped=0；是本机首段积压证据，不能与用户的粗略四秒相减而宣布其余延迟来源。没有录制 PCM 或使用麦克风。全部旧候选与交付 ZIP 保留。
+
+按用户要求转入社区与原始源码调研，结论见[社区实现核对](../research/2026-10-18-homepod-windows-latency-community-review.md)与[协议时间基准核对](../research/2026-10-18-homepod-airplay-timing-primary-sources.md)。后续应分别处理主音量控制、启动积压和 AP2 时间锚点，不能继续以短音可听代替延迟验收。
 
 恢复测试时出现一次启动误报：五秒检查返回超时，而后台在 5018 ms 报告 capture_ready，随后只读检查 ready=true。就绪轮询预算改为有界 15 秒；六秒后就绪的行为回归先失败再通过，调用方取消继续保留。此处改变等待判定，不增加音频缓冲。
 
