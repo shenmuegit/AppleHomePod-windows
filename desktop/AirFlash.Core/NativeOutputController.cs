@@ -248,6 +248,7 @@ public sealed class NativeOutputController
     {
         var write = _session.SetDeviceVolumeAsync(_binding.ReceiverId, target);
         _restoreSequence = _session.Snapshot.DeviceVolume!.Sequence; _restoreTarget = target;
+        _log?.Invoke($"Native receiver volume requested: target={target}; sequence={_restoreSequence}");
         _ = write.ContinueWith(task => { if (task.IsFaulted) _events.Writer.TryComplete(task.Exception!.GetBaseException()); }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
     private async Task ApplyDeviceVolumeAsync(CancellationToken cancellation)

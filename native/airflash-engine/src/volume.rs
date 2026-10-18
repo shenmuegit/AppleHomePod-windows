@@ -141,7 +141,7 @@ impl Worker {
                     "status":status, "message":errors.join("; "),
                     "members":peers.iter().zip(&values).map(|((host,_,_),v)| json!({"host":host,"volume":v})).collect::<Vec<_>>()});
                 let _ = tx.try_send(event);
-                next = Instant::now() + Duration::from_secs(1);
+                next = Instant::now() + if status == "pending" { Duration::from_millis(100) } else { Duration::from_secs(1) };
             }
         })?;
         Ok(Self {
@@ -162,6 +162,62 @@ impl Drop for Worker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pending_readback_confirms_within_750ms_and_idle_polling_stays_slow() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let connection = Connection::connect(listener.local_addr().unwrap(), Cancellation::default()).unwrap();
+        let (socket, _) = listener.accept().unwrap();
+        let stop = Cancellation::default();
+        let done = stop.clone();
+        let server = thread::spawn(move || {
+            let mut connection = Connection::from_stream(socket, done.clone()).unwrap();
+            let mut volume = 15;
+            let mut delayed = None;
+            while !done.is_cancelled() {
+                let request = match connection.read_for(Duration::from_millis(20), None) {
+                    Ok(Some(request)) => request,
+                    Ok(None) => continue,
+                    Err(_) => break,
+                };
+                let mut body = Vec::new();
+                if request.first.starts_with("GET /info ") {
+                    let mut info = plist::Dictionary::new();
+                    info.insert("initialVolume".into(), plist::Value::Real(to_db(volume)));
+                    plist::Value::Dictionary(info).to_writer_binary(&mut body).unwrap();
+                    if let Some(next) = delayed.take() { volume = next; }
+                } else {
+                    assert!(request.first.starts_with("SET_PARAMETER "));
+                    let text = std::str::from_utf8(&request.body).unwrap();
+                    delayed = Some(from_db(text.trim().strip_prefix("volume: ").unwrap().parse().unwrap()).unwrap());
+                }
+                let mut response = format!("RTSP/1.0 200 OK\r\nCSeq: {}\r\nContent-Length: {}\r\n\r\n", request.headers["cseq"], body.len()).into_bytes();
+                response.extend(body);
+                if connection.write(&response).is_err() { break; }
+            }
+        });
+        let control = Control::default();
+        let worker = Worker::start(vec![("127.0.0.1".into(), "rtsp://127.0.0.1/volume".into(), Arc::new(Mutex::new(connection)))], control.clone()).unwrap();
+        let result = (|| -> Result<()> {
+            let initial = worker.events.recv_timeout(Duration::from_secs(2))?;
+            ensure!(initial["volume"] == 15 && initial["sequence"] == 0, "initial GET must report the unchanged receiver volume");
+            for (sequence, old, target) in [(1, 15, 14), (2, 14, 15)] {
+                let started = Instant::now();
+                control.set(Command { sequence, percent: target });
+                let pending = worker.events.recv_timeout(Duration::from_millis(250)).context("a new command must wake the idle worker promptly")?;
+                ensure!(pending["sequence"] == sequence && pending["volume"] == old && pending["status"] == "pending", "first GET after SET must still expose the old volume");
+                let remaining = Duration::from_millis(750).saturating_sub(started.elapsed());
+                let confirmed = worker.events.recv_timeout(remaining).context("the next GET must confirm the asynchronous write within 750ms")?;
+                ensure!(confirmed["sequence"] == sequence && confirmed["volume"] == target && confirmed["status"] == "confirmed", "a fresh GET must confirm the matching command");
+                println!("sequence {sequence}: stale GET then confirmed in {}ms", started.elapsed().as_millis());
+                ensure!(matches!(worker.events.recv_timeout(Duration::from_millis(250)), Err(mpsc::RecvTimeoutError::Timeout)), "settled polling must keep its one-second cadence");
+            }
+            Ok(())
+        })();
+        stop.cancel();
+        drop(worker);
+        server.join().unwrap();
+        result.unwrap();
+    }
     #[test]
     fn conversion_and_invalid_values() {
         for percent in 0..=100 {
