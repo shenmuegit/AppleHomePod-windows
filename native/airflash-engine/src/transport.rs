@@ -482,9 +482,15 @@ impl MediaTransport {
         health: &Health,
     ) -> Result<()> {
         health.check()?;
+        // Keep cached recovery available while the receiver's playout latency is unknown.
+        let deadline = if self.estimated {
+            (media_time + self.latency).max(now + Duration::from_secs(1))
+        } else {
+            media_time + self.latency
+        };
         let packet = self
             .packetizer
-            .packet_at(pcm, first, now, media_time + self.latency)?;
+            .packet_at(pcm, first, now, deadline)?;
         self.observe_send(self.audio.send(&packet).map(|_| ()), now, health)
     }
     // One failed datagram is media loss, not evidence of a dead RTSP session.
@@ -680,5 +686,71 @@ mod schedule_tests {
         assert_eq!(skipped, due / FRAMES as u64);
         assert_eq!(s.frames, skipped * FRAMES as u64);
         assert_eq!(s.skipped_packets, skipped);
+    }
+}
+
+#[cfg(test)]
+mod media_tests {
+    use super::*;
+
+    fn sent_media(estimated: bool) -> (MediaTransport, UdpSocket, Vec<u8>, Instant) {
+        let audio_peer = UdpSocket::bind("127.0.0.1:0").unwrap();
+        audio_peer.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+        let control_peer = UdpSocket::bind("127.0.0.1:0").unwrap();
+        control_peer.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+        let audio = UdpSocket::bind("127.0.0.1:0").unwrap();
+        audio.connect(audio_peer.local_addr().unwrap()).unwrap();
+        let mut media = MediaTransport::new(
+            Packetizer::new([7; 32], 42, 1000, 3), audio,
+            UdpSocket::bind("127.0.0.1:0").unwrap(), control_peer.local_addr().unwrap(),
+        ).unwrap();
+        media.configure_latency(Duration::from_millis(100), estimated);
+        let sent = Instant::now();
+        media.send(&vec![0; crate::rtp::PCM_BYTES], true, sent, sent, &Health::default()).unwrap();
+        let mut packet = [0; 2048];
+        let length = audio_peer.recv(&mut packet).unwrap();
+        assert!(sent.elapsed() < Duration::from_millis(100), "initial media must not wait for the recovery window");
+        assert_eq!(media.metrics.packets_sent, 1);
+        (media, control_peer, packet[..length].to_vec(), sent)
+    }
+
+    fn request(media: &mut MediaTransport, peer: &UdpSocket) {
+        let processed = |m: &MediaMetrics| m.retransmits_sent + m.retransmit_expired + m.retransmit_missing + m.retransmit_send_errors;
+        let before = processed(&media.metrics);
+        peer.send_to(&[0x80, 0xd5, 0, 1, 0, 42, 0, 1], media.control.local_addr().unwrap()).unwrap();
+        let until = Instant::now() + Duration::from_millis(100);
+        while processed(&media.metrics) == before {
+            media.service_retransmits();
+            assert!(Instant::now() < until, "localhost retransmit request was not serviced");
+            if processed(&media.metrics) == before { thread::sleep(Duration::from_millis(1)); }
+        }
+    }
+
+    #[test]
+    fn estimated_latency_keeps_original_ciphertext_available_within_history() {
+        let (mut media, peer, original, sent) = sent_media(true);
+        for age in [300, 500] {
+            thread::sleep(Duration::from_millis(age).saturating_sub(sent.elapsed()));
+            request(&mut media, &peer);
+            let mut reply = [0; 2048];
+            let length = peer.recv(&mut reply).unwrap();
+            assert_eq!(&reply[..4], &[0x80, 0xd6, 0, 42]);
+            assert_eq!(&reply[4..length], original);
+        }
+        assert_eq!(media.metrics.retransmits_sent, 2);
+        thread::sleep(Duration::from_millis(1100).saturating_sub(sent.elapsed()));
+        request(&mut media, &peer);
+        assert!(peer.recv(&mut [0; 2048]).is_err());
+        assert_eq!(media.metrics.retransmit_expired, 1);
+    }
+
+    #[test]
+    fn confirmed_latency_still_rejects_retransmits_past_its_deadline() {
+        let (mut media, peer, _, sent) = sent_media(false);
+        thread::sleep(Duration::from_millis(300).saturating_sub(sent.elapsed()));
+        request(&mut media, &peer);
+        assert!(peer.recv(&mut [0; 2048]).is_err());
+        assert_eq!(media.metrics.retransmit_expired, 1);
+        assert_eq!(media.metrics.retransmits_sent, 0);
     }
 }
