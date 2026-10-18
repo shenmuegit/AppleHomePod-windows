@@ -91,6 +91,8 @@ public sealed class NativeOutputController
                         if (_stream is not null) _connectRevision = update.UserRevision;
                         _remoteActual = null; _restoreSequence = null; _restoreTarget = null; _gateOpen = false; _lastGain = null;
                     }
+                    if (stream.Metrics is { } metrics && _stream?.Metrics is null)
+                        _log?.Invoke("Native capture timing: " + System.Text.Json.JsonSerializer.Serialize(metrics));
                     _stream = stream;
                     _streamCaptureEpoch = update.CaptureEpoch;
                     _remoteObservedRevision = update.UserRevision;

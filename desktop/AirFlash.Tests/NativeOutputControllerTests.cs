@@ -219,6 +219,24 @@ public sealed class NativeOutputControllerTests
         Assert.Single(f.Starts);
     }
     [Fact]
+    public async Task FirstCaptureTimingIsLoggedOncePerConnection()
+    {
+        await using var f = await Fixture.Create(); f.Monitor.Select(true); f.Start();
+        await Until(() => f.Gates.Any(c => c.Params.Boolean("open") == true));
+        f.Wire.Event(f.StreamId, new { @event = "capture_metrics", metrics = new { capture_to_send_p95_ms = 1250, max_queue_age_ms = 1300, underrun_packets = 0, dropped_frames = 0, input_rate = 48000 } });
+        await Until(() => f.Session.Snapshot.Metrics is not null);
+        await f.FlushVolume();
+        var entry = Assert.Single(f.Logs, s => s.StartsWith("Native capture timing: ", StringComparison.Ordinal));
+        using var document = System.Text.Json.JsonDocument.Parse(entry["Native capture timing: ".Length..]);
+        var timing = document.RootElement;
+        Assert.Equal(1250, timing.GetProperty("CaptureToSendP95").GetDouble());
+        Assert.Equal(1300, timing.GetProperty("MaxQueueAge").GetDouble());
+        f.Wire.Event(f.StreamId, new { @event = "capture_metrics", metrics = new { capture_to_send_p95_ms = 20, max_queue_age_ms = 1300, underrun_packets = 0, dropped_frames = 0, input_rate = 48000 } });
+        await Until(() => f.Session.Snapshot.Metrics?.CaptureToSendP95 == 20);
+        await f.FlushVolume();
+        Assert.Single(f.Logs, s => s.StartsWith("Native capture timing: ", StringComparison.Ordinal));
+    }
+    [Fact]
     public async Task FullControllerQueueFailsInsteadOfSilentlyDroppingWindowsIntent()
     {
         await using var f = await Fixture.Create(); f.Start();
@@ -234,6 +252,7 @@ public sealed class NativeOutputControllerTests
     {
         public readonly NativeEngineHostTests.WireConnection Wire = new() { StreamReplies = true };
         public readonly Monitor Monitor = new();
+        public readonly ConcurrentQueue<string> Logs = new();
         public readonly ManualTime Time = new();
         public readonly CancellationTokenSource Stop = new();
         public NativeEngineHost Host = null!;
@@ -252,7 +271,7 @@ public sealed class NativeOutputControllerTests
             binding = binding with { Calibration = binding.Calibration! with { MasterInPcm = masterInPcm } };
             f.Host = new(f.Wire, 42); await f.Host.ArmAsync(binding, default);
             f.Session = new(f.Host, f.Monitor);
-            f.Controller = new(binding, f.Monitor, f.Host, f.Session, f.Time);
+            f.Controller = new(binding, f.Monitor, f.Host, f.Session, f.Time, f.Logs.Enqueue);
             return f;
         }
         public void Start() => Run = Controller.RunAsync(_ => { Interlocked.Increment(ref Resolutions); return Receiver; }, Stop.Token);
