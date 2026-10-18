@@ -176,7 +176,8 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
     public SessionSnapshot Snapshot { get { lock (_sync) return _snapshot; } }
     public event Action<SessionSnapshot>? Changed;
     public bool Muted => _muted;
-    private string Signature(Receiver receiver, AppSettings settings) => $"{receiver.TransportKey}|{receiver.PrefersNtpAlac}|{settings.EffectiveEndpoint}|{settings.Latency(receiver)}|{settings.StreamSampleRate}";
+    private int Latency(Receiver receiver, AppSettings settings) => factory is NativeEngineHost ? settings.Latency(receiver.Id) : settings.Latency(receiver);
+    private string Signature(Receiver receiver, AppSettings settings) => $"{receiver.TransportKey}|{receiver.PrefersNtpAlac}|{settings.EffectiveEndpoint}|{Latency(receiver, settings)}|{settings.StreamSampleRate}";
     public async Task StartAsync(Receiver receiver, AppSettings settings)
     {
         if (!receiver.Complete) throw new InvalidOperationException(L.Get("Both stereo pair members must be online."));
@@ -325,7 +326,7 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
                     await _equalizerWriter.WaitAsync(cancellation).ConfigureAwait(false);
                     try
                     {
-                        await connection.SendAsync(session, "start", new { peers, source = "loopback", duration_ms = 0, latency_ms = settings.Latency(receiver), gain = Gain(receiver), timing = receiver.PrefersNtpAlac ? "ntp" : "ptp", capture_endpoint = settings.EffectiveEndpoint, sample_rate = int.Parse(settings.StreamSampleRate), equalizer = EffectiveEqualizer().WireParameters() }, cancellation).ConfigureAwait(false);
+                        await connection.SendAsync(session, "start", new { peers, source = "loopback", duration_ms = 0, latency_ms = Latency(receiver, settings), gain = Gain(receiver), timing = receiver.PrefersNtpAlac ? "ntp" : "ptp", capture_endpoint = settings.EffectiveEndpoint, sample_rate = int.Parse(settings.StreamSampleRate), equalizer = EffectiveEqualizer().WireParameters() }, cancellation).ConfigureAwait(false);
                         lock (_sync) { if (epoch == _generation && ReferenceEquals(_connection, connection)) _equalizerReady = factory is not NativeEngineHost; }
                     }
                     finally { _equalizerWriter.Release(); }
@@ -347,7 +348,7 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
                         if (kind == "streaming")
                         {
                             startedAt = Stopwatch.GetTimestamp();
-                            log?.Invoke($"Streaming started: {receiver.Id}; target latency {settings.Latency(receiver)} ms; reconnect attempts {attempts}");
+                            log?.Invoke($"Streaming started: {receiver.Id}; target latency {Latency(receiver, settings)} ms; reconnect attempts {attempts}");
                             Publish(epoch, PlaybackState.Streaming, _localMuteWarning);
                         }
                         else if (kind == "device_volume" && startedAt != 0 && item.Text("host") == volumeHost)
@@ -520,7 +521,7 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
         lock (_sync)
         {
             if (epoch != _generation) return;
-            snapshot = new(state, _receiver, message, metrics ?? _snapshot.Metrics, _receiver is null ? 0 : _settings.Latency(_receiver), _diagnostics, int.TryParse(_settings.StreamSampleRate, out var streamRate) ? streamRate : 0, _deviceVolume);
+            snapshot = new(state, _receiver, message, metrics ?? _snapshot.Metrics, _receiver is null ? 0 : Latency(_receiver, _settings), _diagnostics, int.TryParse(_settings.StreamSampleRate, out var streamRate) ? streamRate : 0, _deviceVolume);
             _snapshot = snapshot;
         }
         Changed?.Invoke(snapshot);

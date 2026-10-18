@@ -48,12 +48,12 @@ public static class NativeStartupPolicy
     {
         if (await ready(cancellation).ConfigureAwait(false)) return;
         await start().ConfigureAwait(false);
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation); timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation); timeout.CancelAfter(TimeSpan.FromSeconds(15));
         try
         {
             while (!await ready(timeout.Token).ConfigureAwait(false)) await Task.Delay(100, timeout.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (!cancellation.IsCancellationRequested) { throw new TimeoutException("Native output did not report capture_ready within five seconds."); }
+        catch (OperationCanceledException) when (!cancellation.IsCancellationRequested) { throw new TimeoutException("Native output did not report capture_ready within fifteen seconds."); }
     }
     public static async Task<int> RunHeadlessAsync(Func<CancellationToken, Task> run, Func<Exception, Task> report, CancellationToken cancellation)
     {

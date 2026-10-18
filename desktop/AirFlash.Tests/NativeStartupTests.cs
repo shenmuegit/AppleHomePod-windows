@@ -85,6 +85,32 @@ public sealed class NativeStartupTests
         finally { if (agent is not null) await agent.DisposeAsync(); }
     }
     [Fact]
+    public async Task CaptureReadyAfterFiveSecondsCompletesWithoutRestartingAgent()
+    {
+        var startup = new System.Diagnostics.Stopwatch(); var starts = 0;
+        Task<bool> Ready(CancellationToken cancellation)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            return Task.FromResult(startup.IsRunning && startup.Elapsed >= TimeSpan.FromSeconds(6));
+        }
+        Task Start() { starts++; startup.Restart(); return Task.CompletedTask; }
+        await NativeStartupPolicy.EnsureRunningAsync(Ready, Start, default);
+        Assert.Equal(1, starts);
+    }
+    [Fact]
+    public async Task CallerCancellationDuringStartupDoesNotBecomeTimeoutOrRestartAgent()
+    {
+        using var cancellation = new CancellationTokenSource(); var starts = 0;
+        Task<bool> Ready(CancellationToken token)
+        {
+            if (starts == 0) return Task.FromResult(false);
+            cancellation.Cancel(); return Task.FromCanceled<bool>(token);
+        }
+        Task Start() { starts++; return Task.CompletedTask; }
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => NativeStartupPolicy.EnsureRunningAsync(Ready, Start, cancellation.Token));
+        Assert.Equal(1, starts);
+    }
+    [Fact]
     public async Task SingleInstanceCanDisposeAfterThreadSwitchAndReplyToReadyAndStop()
     {
         var suffix = "native-pipe-test-" + Guid.NewGuid().ToString("N");
