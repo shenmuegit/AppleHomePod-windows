@@ -94,13 +94,13 @@ public sealed class NativeOutputControllerTests
         Assert.DoesNotContain(f.Gates, c => c.Params.Boolean("open") == true && c.Params.Boolean("clear_pending") == true);
     }
     [Theory]
-    [InlineData(0)]
-    [InlineData(1)]
-    [InlineData(2)]
-    [InlineData(3)]
-    public async Task AnyRenderRoleOrExternalSessionStartsOneRoute(int demand)
+    [InlineData(0, 75)]
+    [InlineData(1, 125)]
+    [InlineData(2, 350)]
+    [InlineData(3, 500)]
+    public async Task AnyRenderRoleOrExternalSessionStartsOneRoute(int demand, int bufferMs)
     {
-        await using var f = await Fixture.Create();
+        await using var f = await Fixture.Create(bufferMs: bufferMs);
         var ids = new string?[] { null, "other", null };
         if (demand < 3) ids[demand] = "endpoint-1";
         f.Monitor.Publish(f.Monitor.Snapshot with { DefaultRenderIds = ids, Sessions = demand == 3 ? [new("endpoint-1", "external", 12345, true)] : [] });
@@ -109,8 +109,8 @@ public sealed class NativeOutputControllerTests
         await f.FlushVolume();
         Assert.Single(f.Starts); Assert.Equal(0, f.Monitor.PhysicalMuteCalls);
         var start = f.Starts.Single().Params;
-        Assert.Equal("ntp", start.Text("timing")); Assert.Equal(System.Text.Json.JsonValueKind.Null, start.GetProperty("latency_ms").ValueKind);
-        Assert.Equal(System.Text.Json.JsonValueKind.Null, System.Text.Json.JsonSerializer.SerializeToElement(f.Session.Snapshot.TargetLatency).ValueKind);
+        Assert.Equal("ntp", start.Text("timing")); Assert.Equal(bufferMs, start.Number("latency_ms"));
+        Assert.Equal(bufferMs, f.Session.Snapshot.TargetLatency);
         Assert.Equal(44100, start.Number("sample_rate")); Assert.False(start.GetProperty("equalizer").GetProperty("enabled").GetBoolean());
         Assert.DoesNotContain(f.Wire.Commands, c => c.Command == "set_equalizer");
         Assert.Contains(f.Wire.Commands, c => c.Command == "set_device_volume" && c.Params.Number("volume") == 1);
@@ -363,11 +363,14 @@ public sealed class NativeOutputControllerTests
         public List<NativeEngineHostTests.Sent> Starts => Wire.Commands.Where(c => c.Command == "start").ToList();
         public List<NativeEngineHostTests.Sent> Gates => Wire.Commands.Where(c => c.Command == "set_capture_gate").ToList();
         public string StreamId => Starts.Last().Session;
-        public static async Task<Fixture> Create(int? initialVolume = 38, bool masterInPcm = false, int referenceVolume = 38)
+        public static async Task<Fixture> Create(int? initialVolume = 38, bool masterInPcm = false, int referenceVolume = 38, int? bufferMs = 100)
         {
             var f = new Fixture(); f.Wire.InitialVolume = initialVolume; f.Wire.VolumeReplies = true;
             var binding = NativeEngineHostTests.Binding;
             binding = binding with { Calibration = binding.Calibration! with { MasterInPcm = masterInPcm, ResumeDeviceVolume = referenceVolume } };
+            var document = System.Text.Json.JsonSerializer.SerializeToNode(binding, AppSettings.JsonOptions)!.AsObject();
+            document["verified_buffer_ms"] = bufferMs;
+            binding = System.Text.Json.JsonSerializer.Deserialize<NativeBinding>(document, AppSettings.JsonOptions)!;
             f.Calibration = binding.Calibration!;
             f.Host = new(f.Wire, 42); await f.Host.ArmAsync(binding, default);
             f.Session = new(f.Host, f.Monitor);

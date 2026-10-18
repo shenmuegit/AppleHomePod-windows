@@ -58,6 +58,8 @@ pub struct ProbeOptions {
     pub duration_ms: u32,
     #[serde(default)]
     pub latency_ms: Option<u32>,
+    #[serde(default)]
+    pub latency_max_ms: Option<u32>,
     pub gain: f32,
     #[serde(default)]
     pub equalizer: crate::equalizer::Settings,
@@ -130,6 +132,7 @@ impl ProbeOptions {
             "latency must be 0..2000 ms"
         );
         ensure!(self.latency_ms.is_some() || self.timing == "ntp", "PTP requires an explicit latency");
+        ensure!(self.latency_max_ms.is_none_or(|max| max <= 2000 && self.latency_ms.is_some_and(|min| min <= max)), "latency maximum requires a valid minimum and must be within 0..2000 ms");
         ensure!(
             self.gain.is_finite() && (0.0..=self.probe_gain_limit() as f32).contains(&self.gain),
             "probe gain must be 0..{}", self.probe_gain_limit()
@@ -183,7 +186,8 @@ fn audio_stream(options: &ProbeOptions, control_port: u16, key: &[u8], ssrc: u32
     ];
     if let Some(ms) = options.latency_ms {
         let samples = u64::from(ms) * u64::from(options.sample_rate) / 1000;
-        fields.extend([("latencyMin", number(samples)), ("latencyMax", number(samples))]);
+        let maximum = u64::from(options.latency_max_ms.unwrap_or(ms)) * u64::from(options.sample_rate) / 1000;
+        fields.extend([("latencyMin", number(samples)), ("latencyMax", number(maximum))]);
     }
     dictionary(fields)
 }
@@ -834,6 +838,23 @@ mod tests {
         }
     }
     #[test]
+    fn explicit_latency_window_has_independent_bounds() {
+        let base = json!({"peers":[{"host":"127.0.0.1"}],"duration_ms":5000,"gain":1.0,"timing":"ntp","latency_ms":50,"latency_max_ms":100});
+        let parsed = serde_json::from_value::<ProbeOptions>(base.clone());
+        assert!(parsed.is_ok(), "explicit range must be accepted: {parsed:?}");
+        let options = parsed.unwrap();
+        options.validate().unwrap();
+        let stream = audio_stream(&options, 1234, &[7; 32], 42, true);
+        let fields = stream.as_dictionary().unwrap();
+        assert_eq!(fields["latencyMin"].as_unsigned_integer(), Some(2205));
+        assert_eq!(fields["latencyMax"].as_unsigned_integer(), Some(4410));
+        for (minimum, maximum) in [(Json::Null, json!(100)), (json!(100), json!(50)), (json!(50), json!(2001))] {
+            let mut invalid = base.clone(); invalid["latency_ms"] = minimum; invalid["latency_max_ms"] = maximum;
+            let invalid: ProbeOptions = serde_json::from_value(invalid).unwrap();
+            assert!(invalid.validate().is_err());
+        }
+    }
+    #[test]
     fn finite_wav_full_gain_preserves_quiet_samples() {
         for rate in [44100, 48000] {
             let mut options: ProbeOptions = serde_json::from_value(json!({"peers":[{"host":"127.0.0.1"}],"duration_ms":5000,"latency_ms":200,"gain":1.0,"sample_rate":rate})).unwrap();
@@ -879,6 +900,7 @@ mod tests {
             await_volume_gate: None,
             duration_ms: 5001,
             latency_ms: Some(200),
+            latency_max_ms: None,
             gain: 0.1,
             equalizer: crate::equalizer::Settings::default(),
             sample_rate: 44100,

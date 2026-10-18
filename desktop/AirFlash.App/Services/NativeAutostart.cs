@@ -16,7 +16,7 @@ internal static class NativeAutostart
     internal static async Task<NativeBinding> ReadQualifiedBindingAsync(CancellationToken cancellation)
     {
         var binding = await NativeVolumeCalibration.ReadBoundAsync(cancellation).ConfigureAwait(false);
-        if (binding.Calibration is null) throw new InvalidDataException("Finish the measured Windows volume and audible reference calibration before enabling native output.");
+        if (NativeBindingPolicy.PlaybackQualification(binding) is { } invalid) throw new InvalidDataException(invalid);
         if (!WindowsNativeBinding.RebootedSincePreinstall()) throw new InvalidOperationException("The independent driver's required reboot has not been verified.");
         return binding;
     }

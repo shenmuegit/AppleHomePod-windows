@@ -176,7 +176,7 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
     public SessionSnapshot Snapshot { get { lock (_sync) return _snapshot; } }
     public event Action<SessionSnapshot>? Changed;
     public bool Muted => _muted;
-    private int? Latency(Receiver receiver, AppSettings settings) => factory is NativeEngineHost ? null : settings.Latency(receiver);
+    private int? Latency(Receiver receiver, AppSettings settings) => factory is NativeEngineHost ? settings.Latency(receiver.Id) : settings.Latency(receiver);
     private string Signature(Receiver receiver, AppSettings settings) => $"{receiver.TransportKey}|{receiver.PrefersNtpAlac}|{settings.EffectiveEndpoint}|{Latency(receiver, settings)}|{settings.StreamSampleRate}";
     public async Task StartAsync(Receiver receiver, AppSettings settings)
     {

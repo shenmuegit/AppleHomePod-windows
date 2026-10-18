@@ -57,8 +57,7 @@ public sealed class NativeOutputController
     public NativeOutputController(NativeBinding binding, INativeOutputMonitor monitor, NativeEngineHost host, SessionController session,
         TimeProvider? timeProvider = null, Action<string>? log = null)
     {
-        if (NativeBindingPolicy.ValidateStored(binding) is { } invalid) throw new InvalidDataException(invalid);
-        if (binding.Calibration is null) throw new InvalidDataException("Native output requires measured calibration.");
+        if (NativeBindingPolicy.PlaybackQualification(binding) is { } invalid) throw new InvalidDataException(invalid);
         _binding = binding; _monitor = monitor; _host = host; _session = session; _time = timeProvider ?? TimeProvider.System; _log = log;
     }
     private void Enqueue(Update value)
@@ -143,7 +142,7 @@ public sealed class NativeOutputController
     private AppSettings Settings() => new()
     {
         CaptureMode = "endpoint", CaptureEndpoint = _binding.Endpoint.EndpointId, StreamSampleRate = "44100",
-        Equalizer = new(), MasterVolume = 100,
+        LatencyMode = "custom", CustomBufferMs = _binding.VerifiedBufferMs!.Value, Equalizer = new(), MasterVolume = 100,
         MuteWhileStreaming = false, StandbyEnabled = false, AutoConnectOnDiscover = false, ForceReconnect = true, MaxReconnectAttempts = 5
     };
     private async Task ReconcileAsync(Func<string, Receiver?> resolve, CancellationToken cancellation)

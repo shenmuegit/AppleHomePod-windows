@@ -26,6 +26,49 @@ public sealed class NativeBindingTests
     private static NativeBinding Binding => new(1, "receiver-1", Candidate, Candidate.FriendlyName, "HomePod – da",
         new(false, Candidate.MixFormat, Candidate.DriverSha256, 0, 38));
 
+    [Fact]
+    public void LegacyBindingDoesNotInventAVerifiedBuffer()
+    {
+        var json = System.Text.Json.JsonSerializer.SerializeToNode(Binding, AppSettings.JsonOptions)!.AsObject();
+        json.Remove("verified_buffer_ms");
+        var loaded = System.Text.Json.JsonSerializer.Deserialize<NativeBinding>(json, AppSettings.JsonOptions)!;
+        Assert.Null(loaded.VerifiedBufferMs); Assert.Null(NativeBindingPolicy.ValidateStored(loaded));
+        Assert.NotNull(NativeBindingPolicy.PlaybackQualification(loaded));
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(2001)]
+    public void InvalidDeviceBufferCannotQualify(int bufferMs)
+    {
+        var binding = Binding with { VerifiedBufferMs = bufferMs };
+        Assert.NotNull(NativeBindingPolicy.ValidateStored(binding));
+        Assert.NotNull(NativeBindingPolicy.PlaybackQualification(binding));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(75)]
+    [InlineData(500)]
+    [InlineData(2000)]
+    public void VerifiedBufferRoundTripsWithItsBinding(int bufferMs)
+    {
+        var binding = Binding with { VerifiedBufferMs = bufferMs };
+        var loaded = System.Text.Json.JsonSerializer.Deserialize<NativeBinding>(System.Text.Json.JsonSerializer.Serialize(binding, AppSettings.JsonOptions), AppSettings.JsonOptions)!;
+        Assert.Equal(bufferMs, loaded.VerifiedBufferMs); Assert.Null(NativeBindingPolicy.PlaybackQualification(loaded));
+        Assert.NotNull(NativeBindingPolicy.PlaybackQualification(loaded with { Calibration = null }));
+    }
+
+    [Fact]
+    public void RebindingPreservesTimingOnlyWhileVolumeCalibrationStillMatches()
+    {
+        var previous = Binding with { VerifiedBufferMs = 125 };
+        var same = NativeBindingPolicy.PrepareBinding(Candidate, previous.ReceiverId, previous.AssignedName, previous, new HashSet<string>());
+        Assert.Equal(125, same.VerifiedBufferMs);
+        var changed = NativeBindingPolicy.PrepareBinding(Candidate with { MixFormat = "48000/2/32/3" }, previous.ReceiverId, previous.AssignedName, previous, new HashSet<string>());
+        Assert.Null(changed.Calibration); Assert.Null(changed.VerifiedBufferMs);
+    }
+
     [Theory]
     [InlineData("192.0.2.1:7000")]
     [InlineData("auto-endpoint:192.0.2.1:7000")]

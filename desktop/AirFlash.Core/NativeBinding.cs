@@ -7,7 +7,7 @@ public sealed record EndpointIdentity(string EndpointId, string AdapterInstanceI
     string FriendlyName, string MixFormat, int Channels, AudioEndpointKind Kind, bool Active, string? EndpointLabel = null);
 
 public sealed record NativeBinding(int SchemaVersion, string ReceiverId, EndpointIdentity Endpoint,
-    string OriginalName, string AssignedName, PcmVolumeCalibration? Calibration);
+    string OriginalName, string AssignedName, PcmVolumeCalibration? Calibration, int? VerifiedBufferMs = null);
 
 public static class NativeBindingPolicy
 {
@@ -61,7 +61,8 @@ public static class NativeBindingPolicy
             throw new InvalidOperationException("First name this output in Windows sound device properties. Application property writes are not supported.");
         var name = desired ? requestedName : candidate.EndpointLabel ?? candidate.FriendlyName;
         var calibration = previous?.Endpoint.MixFormat == candidate.MixFormat ? previous.Calibration : null;
-        var binding = new NativeBinding(1, receiverId, candidate, previous?.OriginalName ?? candidate.FriendlyName, name, calibration);
+        var binding = new NativeBinding(1, receiverId, candidate, previous?.OriginalName ?? candidate.FriendlyName, name, calibration,
+            calibration is null ? null : previous?.VerifiedBufferMs);
         if (ValidateStored(binding) is { } error) throw new ArgumentException(error);
         return binding;
     }
@@ -76,8 +77,13 @@ public static class NativeBindingPolicy
             || !Same(calibration.DriverSha256, binding.Endpoint.DriverSha256)
             || calibration.MixFormat != binding.Endpoint.MixFormat))
             return "The native output calibration does not match its driver or format.";
+        if (binding.VerifiedBufferMs is < 0 or > 2000) return "The verified device buffer must be within 0..2000 ms.";
         return null;
     }
+
+    public static string? PlaybackQualification(NativeBinding binding) => ValidateStored(binding)
+        ?? (binding.Calibration is null ? "Finish the measured Windows volume and audible reference calibration before enabling native output."
+            : binding.VerifiedBufferMs is null ? "This receiver needs an audible timing reference before native output can be enabled." : null);
 
     public static string? ValidateLive(NativeBinding binding, EndpointIdentity live)
     {
