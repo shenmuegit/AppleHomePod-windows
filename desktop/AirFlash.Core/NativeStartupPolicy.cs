@@ -7,8 +7,8 @@ public sealed record NativeTaskReceipt(int SchemaVersion, string Sid, string Exe
 public static class NativeStartupPolicy
 {
     public const string Arguments = "--native-agent";
-    public static bool IsHeadless(string[] args) => args.Any(a => a.StartsWith("--native-", StringComparison.Ordinal)) || !args.Contains("--legacy-panel") && !args.Any(a => a is "--ui-smoke" or "--tray-smoke" or "--ui-perf" or "--discovery-perf"
-        or "--compat-check" or "--self-check" or "--stability-check" or "--discovery-check" or "--audio-check" or "--update-check");
+    public static bool IsHeadless(string[] args) => args.Any(a => a.StartsWith("--native-", StringComparison.Ordinal))
+        || args.Contains("--startup") && !args.Contains("--legacy-panel");
     public static bool OwnsLegacyRun(string? value, string knownExecutable) => value == $"\"{knownExecutable}\" --startup";
     public static bool RebootedAfter(DateTimeOffset preinstall, DateTimeOffset boot) => boot > preinstall;
     public static string TaskXml(string sid, string executable)

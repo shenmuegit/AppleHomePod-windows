@@ -50,6 +50,19 @@ internal static class NativeAutostart
         return !instance.IsOwner && await instance.QueryReadyAsync(cancellation).ConfigureAwait(false);
     }
     internal static Task InstallAsync(string executable, CancellationToken cancellation) => InstallCoreAsync(Path.GetFullPath(executable), cancellation);
+    internal static async Task InstallForSetupAsync(string published, CancellationToken cancellation)
+    {
+        cancellation.ThrowIfCancellationRequested();
+        var source = Path.GetFullPath(published); var target = InstalledExecutable;
+        using var installed = File.Exists(target) ? File.OpenRead(target) : null;
+        if (installed is not null)
+        {
+            if (!NativeStartupPolicy.OwnsInstalledBinary(ReadReceipt(), Sid, target, Hash(target)))
+                throw new InvalidOperationException("The installed application was changed or has no matching ownership proof; setup preserved it.");
+            source = target;
+        }
+        await InstallCoreAsync(source, cancellation).ConfigureAwait(false);
+    }
     private static async Task InstallCoreAsync(string source, CancellationToken cancellation)
     {
         _ = await ReadQualifiedBindingAsync(cancellation).ConfigureAwait(false);

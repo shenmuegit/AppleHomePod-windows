@@ -392,6 +392,99 @@ mod protocol_tests {
         respond(c, &request, &tlv_encode(&[(6, &[4]), (4, &proof)]));
         key
     }
+    #[test]
+    fn handshake_only_reads_validated_volume_without_record_media_or_volume_writes() {
+        use crate::session::{ProbeOptions, probe};
+        use serde_json::json;
+        use std::{net::UdpSocket, sync::{Arc, Mutex, atomic::AtomicU32}};
+
+        for (reported, expected) in [
+            (Some(plist::Value::Real(-21.6)), Some(28)),
+            (Some(plist::Value::Real(-144.0)), Some(0)),
+            (None, None),
+            (Some(plist::Value::String("28".into())), None),
+            (Some(plist::Value::Real(1.0)), None),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            let events_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let event_port = events_listener.local_addr().unwrap().port();
+            let audio = UdpSocket::bind("127.0.0.1:0").unwrap();
+            let control = UdpSocket::bind("127.0.0.1:0").unwrap();
+            let data_port = audio.local_addr().unwrap().port();
+            let control_port = control.local_addr().unwrap().port();
+            let server = thread::spawn(move || {
+                let (socket, _) = listener.accept().unwrap();
+                let mut c = Connection::from_stream(socket, Cancellation::default()).unwrap();
+                let request = c.read().unwrap();
+                assert!(request.first.starts_with("GET /info "));
+                let mut body = Vec::new();
+                plist::Value::Dictionary(plist::Dictionary::new()).to_writer_binary(&mut body).unwrap();
+                respond(&mut c, &request, &body);
+                let key = server_srp(&mut c, "3939");
+                c.encrypt(derive(&key, "Control-Salt", "Control-Read-Encryption-Key"),
+                    derive(&key, "Control-Salt", "Control-Write-Encryption-Key"));
+                let request = c.read().unwrap();
+                assert!(request.first.starts_with("SETUP "));
+                let mut body = Vec::new();
+                plist::Value::Dictionary([("eventPort".to_owned(), plist::Value::Integer(event_port.into()))].into_iter().collect())
+                    .to_writer_binary(&mut body).unwrap();
+                respond(&mut c, &request, &body);
+                let (_events, _) = events_listener.accept().unwrap();
+                let request = c.read().unwrap();
+                assert!(request.first.starts_with("SETUP "));
+                let stream = plist::Value::Dictionary([
+                    ("dataPort".to_owned(), plist::Value::Integer(data_port.into())),
+                    ("controlPort".to_owned(), plist::Value::Integer(control_port.into())),
+                ].into_iter().collect());
+                let mut body = Vec::new();
+                plist::Value::Dictionary([("streams".to_owned(), plist::Value::Array(vec![stream]))].into_iter().collect())
+                    .to_writer_binary(&mut body).unwrap();
+                respond(&mut c, &request, &body);
+                let mut volume_reads = 0;
+                loop {
+                    let request = c.read().unwrap();
+                    if request.first.starts_with("TEARDOWN ") {
+                        respond(&mut c, &request, &[]);
+                        break;
+                    }
+                    assert!(request.first.starts_with("GET /info "), "handshake-only must not send RECORD, FLUSH or SET_PARAMETER: {}", request.first);
+                    volume_reads += 1;
+                    let mut info = plist::Dictionary::new();
+                    if let Some(value) = reported.clone() { info.insert("initialVolume".into(), value); }
+                    let mut body = Vec::new();
+                    plist::Value::Dictionary(info).to_writer_binary(&mut body).unwrap();
+                    respond(&mut c, &request, &body);
+                }
+                volume_reads
+            });
+            let emitted = Mutex::new(Vec::new());
+            let options: ProbeOptions = serde_json::from_value(json!({"peers":[{"host":"127.0.0.1","port":addr.port()}],
+                "source":"loopback", "capture_endpoint":"must-not-open-a-capture-device", "duration_ms":5000,
+                "gain":0.0, "timing":"ntp", "handshake_only":true})).unwrap();
+            probe(options, Cancellation::default(), Arc::new(AtomicU32::new(0.0f32.to_bits())),
+                |event| emitted.lock().unwrap().push(event)).unwrap();
+            let volume_reads = server.join().unwrap();
+            let emitted = emitted.into_inner().unwrap();
+            let snapshot = emitted.iter().find(|event| event["event"] == "device_volume")
+                .expect("silent handshake must read the current receiver volume");
+            assert_eq!(volume_reads, 1);
+            assert_eq!(snapshot["host"], "127.0.0.1");
+            assert_eq!(snapshot["sequence"], 0);
+            assert_eq!(snapshot["volume"], json!(expected));
+            assert_eq!(snapshot["available"], expected.is_some());
+            assert_eq!(snapshot["status"], if expected.is_some() { "confirmed" } else { "unsynced" });
+            assert_eq!(snapshot["members"], json!([{"host":"127.0.0.1","volume":expected}]));
+            assert_eq!(snapshot["message"].as_str().unwrap().is_empty(), expected.is_some());
+            assert_eq!(emitted.last().unwrap()["event"], "handshake_complete");
+            assert_eq!(emitted.last().unwrap()["audio_sent"], false);
+            assert!(!emitted.iter().any(|event| event["event"] == "streaming" || event["event"] == "media_packet_sent"));
+            for socket in [audio, control] {
+                socket.set_nonblocking(true).unwrap();
+                assert_eq!(socket.recv_from(&mut [0; 2048]).unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+            }
+        }
+    }
     fn pair_server(c: &mut Connection, corrupt: bool) {
         let key = server_srp(c, "1234");
         let request = c.read().unwrap();

@@ -8,10 +8,16 @@ namespace AirFlash.Tests;
 [SupportedOSPlatform("windows")]
 public sealed class NativeStartupTests
 {
+    [Theory]
+    [InlineData("")]
+    [InlineData("--setup")]
+    [InlineData("--setup-smoke")]
+    public void InteractiveLaunchReachesFirstRunSetup(string argument)
+        => Assert.False(NativeStartupPolicy.IsHeadless(argument.Length == 0 ? [] : [argument]));
     private const string Sid = "S-1-5-21-100-200-300-1001";
     private const string Exe = @"C:\Users\Test\AppData\Local\AppleHome\app\AppleHome.exe";
     [Theory]
-    [InlineData("")]
+    [InlineData("--startup")]
     [InlineData("--native-agent")]
     [InlineData("--native-enable")]
     [InlineData("--native-disable")]
@@ -165,5 +171,16 @@ public sealed class NativeStartupTests
         var installedAfter = new DateTimeOffset(2026,10,15,0,0,0,TimeSpan.Zero);
         Assert.False(NativeStartupPolicy.RebootedAfter(installedAfter, installedAfter - TimeSpan.FromDays(1)));
         Assert.True(NativeStartupPolicy.RebootedAfter(installedAfter, installedAfter + TimeSpan.FromMinutes(1)));
+    }
+    [Theory]
+    [InlineData("sid")]
+    [InlineData("path")]
+    public void SetupCannotReuseABinaryRecordedForAnotherUserOrInstalledPath(string changed)
+    {
+        var hash = new string('a', 64);
+        var receipt = NativeStartupPolicy.Receipt(NativeStartupPolicy.TaskXml(Sid, Exe), Sid, Exe, hash);
+        Assert.False(NativeStartupPolicy.OwnsInstalledBinary(receipt,
+            changed == "sid" ? "S-1-5-21-999" : Sid,
+            changed == "path" ? @"C:\Other\AppleHome.exe" : Exe, hash));
     }
 }

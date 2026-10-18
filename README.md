@@ -2,25 +2,25 @@
 
 面向 Windows 10/11 x64 的原生 HomePod 音频发送项目，采用 .NET 后台、Rust 音频引擎和 GPLv3+ 开源许可，保留 WPF 诊断界面，基于 Ding-Kyoma 的 [AirFlash](https://github.com/Ding-Kyoma/AirFlash)。
 
-**当前为可用测试版：Windows 10 Pro 22H2（19045）到单只 HomePod mini 27.0 的系统音乐播放、手动停止和本机声音恢复已由用户实机确认。** 当前使用 2 秒目标缓冲；声学延迟与视频同步未测量。Windows 11、其他型号、其他固件和立体声对均待实机验证。
+**当前为测试候选：Windows 10 Pro 22H2（19045）到单只 HomePod mini 27.0 的正常音乐、五分钟持续播放、音量、暂停和静音恢复已由用户实机确认。** 缓冲按设备记录和接收端回包自动处理，不要求用户填写时间参数；当前设备沿用自己的已验证记录。Windows 11、其他型号、其他固件和立体声对均待实机验证。
 
 详细结果见 [兼容矩阵](docs/COMPATIBILITY.md)、[验证记录](docs/VALIDATION.md)。调研、已审阅规格和实施计划保存在 `docs/research/` 与 `docs/superpowers/`。
 
-Windows 原生输出候选的软件实现已完成：日常通过 Windows 选择 HomePod、调节音量与静音，后台自动发送，常态不显示窗口或托盘菜单。2026-10-17 修正校准音幅度后，实际候选已由用户确认出声，PCM/应用混音器和参考音量校准已保存；无窗口后台已安装、启动并确认采集就绪。当前进入 Windows 原生输出的受控试听，完整音乐/音量/静音/长播、名称跨重启及真实登录验收仍待完成。详见[设计规格](docs/superpowers/specs/2026-10-14-windows-native-homepod-output-design.md)、[实施计划](docs/superpowers/plans/2026-10-14-windows-native-homepod-output-implementation.md)和[新路径验收记录](docs/validation/windows-native-homepod-output.md)。
+双击发布包中的 `AppleHome.exe` 打开[首次安装与连接向导](docs/first-run.md)：按引导独立安装官方驱动、完成必要的重启和系统命名、选择 HomePod，并用正常音乐确认。日常通过 Windows 选择 HomePod、调节音量与静音，后台自动发送，不显示日常窗口或托盘。完整30分钟、名称跨重启及真实登录验收仍待完成。最新结果见[原生输出验收记录](docs/validation/windows-native-homepod-output.md)。
 
 ## Windows 原生输出候选
 
-最新校准信号修正候选放在 `dist/native-output-level-fix/`，代码提交为 `d2cf09e`；`dist/native-output-f462560/` 与 `dist/native-output/` 保留前两份候选，原 `dist/AppleHome.exe` 仍是已出声的旧面板基线。候选需要一次设置；未完成驱动身份、重启、当前命名或校准检查时会拒绝启用后台。
+首次设置请使用带向导的新候选包并先打开应用，按界面步骤继续。旧的 `dist/native-output-level-fix/` 等目录只保留作历史回退，不作为最新安装入口。未完成驱动身份、重启、命名或校准检查时，应用会明确停止设置。
 
-1. 单独从 [VB-Audio 官方网站](https://vb-audio.com/Cable/)取得并安装已核验的普通 VB-CABLE Pack45，按厂商要求重启。AppleHome 不分发、嵌入或自动运行驱动安装器；固定版本/哈希见新路径验收记录。已有其他虚拟设备不会被猜测占用。
-2. 首次在 Windows 的 `mmsys.cpl` →“播放”中，把普通 `CABLE Input (VB-Audio Virtual Cable)` 的属性名称设为 `HomePod – da`，核对重启后名称保留。不要选 16ch 或录音端点；之后的用户改名会保留。
-3. 通过维护流程完成稳定接收端身份绑定、PCM 增益位置校准、应用混音器检查与可听非零参考确认。仅成功发包不构成听音确认，不自动把 HomePod 音量设置为 100%。
-4. 驱动身份、安装后重启、当前命名与校准通过并退出旧面板后，从候选运行 `AppleHome.exe --native-enable`。它仅安装本应用到 `%LOCALAPPDATA%\AppleHome\app\`，注册当前用户的限权登录任务，立即运行并等待采集就绪，无需再次登录。本机已在受控试听中执行并核验安装哈希、任务所有权及ready状态；名称跨重启与真实登录一起另验，未据此声称完整资格。
-5. 日常在 Windows 音频输出中选择 HomePod，用 Windows 音量、静音和应用混音器控制。切回其他输出后，在虚拟端点仍有播放需求的应用会继续使用它；单应用暂停保留 30 秒。后台不改物理输出静音或其他应用的路由。
+1. 在向导中打开 [VB-Audio 官方页面](https://vb-audio.com/Cable/)，独立安装普通 VB-CABLE Pack45 并按厂商要求重启。驱动不嵌入本应用。
+2. 重启后打开向导，选择 HomePod；如需命名，向导会打开 Windows 声音设置并提供输出名称，不要求使用命令行。
+3. 向导只在虚拟端点内做本地采样校验，接收端参考通过无媒体握手读取；真正出声确认使用正常音乐。
+4. 在 Windows 选择该输出并播放音乐，明确确认听到后才保存校准和启用登录后台。已有可用安装在重新连接时复用原程序，向导不自动升级二进制。
+5. 日常用 Windows 输出、音量、静音和应用混音器；无需打开向导。后台不改物理输出静音或其他应用的路由。
 
-首轮原生模式仅允许自动发现的单只 HomePod mini `AudioAccessory5,1 / 27.0`，采用 NTP/ALAC、44100 Hz 和 2000 ms 目标缓冲。首段暂存还会产生额外启动延迟；端到端延迟、视频同步、可听静音/切换尾音、真实 30 分钟稳定性、登录及错误通知仍待实测。Windows 11、其他型号/固件和立体声对不具备资格结论。断网测试已暂缓。
+首轮原生模式仅允许自动发现的单只 HomePod mini `AudioAccessory5,1 / 27.0`，采用已验证的 NTP/ALAC 路径。目标值按每设备记录或协商回包选择，不能当作总声学延迟。新机器的完整首次安装、真实30分钟、登录及名称跨重启继续保留待验收状态；断网测试暂缓。
 
-原生候选的无参数入口运行后台；旧面板仅以 `--legacy-panel` 或显式诊断进入。发生需要处理的错误时短暂使用系统通知，遵循系统通知限制，健康后台无日常托盘。当前用户任务名为 `AppleHome.NativeOutput.<SID>`，不保存密码、不创建系统服务，失败最多重启 3 次，间隔 1 分钟。用户修改过的任务或安装 EXE 会被保留。
+无参数入口打开首次设置或当前状态；登录任务使用明确的无窗口后台入口，旧面板保留为 `--legacy-panel`。健康后台无日常托盘，不保存密码、不创建系统服务；用户修改过的任务或安装 EXE 会被保留。以下命令仅供维护，普通用户使用向导即可。
 
 只读检查和撤销：
 

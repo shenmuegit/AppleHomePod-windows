@@ -67,6 +67,18 @@ public partial class App : Application
             if (args.Args.Contains("--ui-smoke")) { Shutdown(await UiSmoke.RunAsync(args.Args)); return; }
             if (args.Args.Contains("--tray-smoke")) { Shutdown(await UiSmoke.RunAsync(args.Args)); return; }
             if (args.Args.Contains("--ui-perf")) { Shutdown(await UiPerf.RunAsync(args.Args)); return; }
+            if (args.Args.Contains("--setup-smoke")) { Shutdown(await NativeSetupSmoke.RunAsync(args.Args)); return; }
+            if (!args.Args.Contains("--legacy-panel"))
+            {
+                _instance = new("Setup");
+                if (!_instance.IsOwner) { await _instance.NotifyExistingAsync(); await _instance.DisposeAsync(); _instance = null; Shutdown(); return; }
+                var setup = new NativeSetupWindow(new NativeSetupFlow(new NativeSetupPlatform()));
+                MainWindow = setup;
+                _instance.Listen(() => Dispatcher.BeginInvoke(() => { if (setup.WindowState == WindowState.Minimized) setup.WindowState = WindowState.Normal; setup.Activate(); }));
+                setup.Closed += (_, _) => Quit(); setup.Show();
+                AppPaths.Log("First-run setup window opened; no daily tray or legacy panel.");
+                return;
+            }
             _instance = new();
             if (!_instance.IsOwner) { await _instance.NotifyExistingAsync(); await _instance.DisposeAsync(); _instance = null; Shutdown(); return; }
             _theme = new();

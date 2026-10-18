@@ -627,6 +627,22 @@ pub fn probe_with_capture(
         );
     }
     if options.handshake_only {
+        let mut values = Vec::new();
+        let mut errors = Vec::new();
+        for member in &members {
+            cancel.check()?;
+            match crate::volume::read(&mut member.conn.lock().unwrap()) {
+                Ok(value) => values.push(Some(value)),
+                Err(error) => {
+                    values.push(None);
+                    errors.push(format!("{}: {error:#}", member.peer.host));
+                }
+            }
+        }
+        emit(json!({"event":"device_volume", "host":members[0].peer.host, "sequence":0,
+            "volume":values[0], "available":values.iter().all(Option::is_some),
+            "status":if errors.is_empty() { "confirmed" } else { "unsynced" }, "message":errors.join("; "),
+            "members":members.iter().zip(&values).map(|(member, value)| json!({"host":member.peer.host,"volume":value})).collect::<Vec<_>>()}));
         emit(
             json!({"event":"handshake_complete","members":members.len(),"audio_sent":false,"qualified":false}),
         );

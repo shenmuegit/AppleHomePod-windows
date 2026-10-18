@@ -50,6 +50,21 @@ internal static class NativeVolumeCalibration
         return new(calibration, measured.Samples, measured.SessionHalf, measured.Mute, measured.Zero, measured.CaptureSampleCounts, measured.CaptureFormat);
     }
 
+    internal static async Task<Proposal> MeasureForSetupAsync(NativeBinding binding, Receiver receiver, CancellationToken cancellation)
+    {
+        NativeSetupReferenceProbe.ValidateReceiver(binding, receiver);
+        // The wizard holds native maintenance, so the local virtual-endpoint signal cannot enter the sender.
+        var measured = await WindowsNativeBinding.OnMtaAsync(
+            () => CaptureAsync(binding, cancellation).GetAwaiter().GetResult(), cancellation).ConfigureAwait(false);
+        var addresses = await Dns.GetHostAddressesAsync(receiver.Address, cancellation).ConfigureAwait(false);
+        var address = addresses.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork)
+            ?? throw new IOException("The selected receiver has no current IPv4 address.");
+        await using var engine = new ProcessEngineConnection(AppPaths.ExtractEngine(), AppPaths.Log);
+        var reference = await NativeSetupReferenceProbe.ReadAsync(engine, binding, receiver, address.ToString(), cancellation).ConfigureAwait(false);
+        var calibration = PcmVolumeMath.Classify(measured.Samples, binding.Endpoint.MixFormat, binding.Endpoint.DriverSha256, reference);
+        return new(calibration, measured.Samples, measured.SessionHalf, measured.Mute, measured.Zero, measured.CaptureSampleCounts, measured.CaptureFormat);
+    }
+
     internal static async Task<int> RunSourceAsync(string[] args)
     {
         try

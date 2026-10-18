@@ -7,7 +7,7 @@ namespace AirFlash.App;
 internal static class Program
 {
     internal static bool IsDiagnostic(string[] args) => args.Any(a => a.EndsWith("-check", StringComparison.Ordinal)
-        || a is "--ui-smoke" or "--tray-smoke" or "--ui-perf" or "--discovery-perf")
+        || a is "--ui-smoke" or "--tray-smoke" or "--ui-perf" or "--discovery-perf" or "--setup-smoke")
         || NativeOutputCheck.IsCommand(args) || NativeVolumeCalibration.IsSourceCommand(args);
     [STAThread]
     public static int Main(string[] args)

@@ -43,7 +43,7 @@ pub fn from_db(db: f64) -> Result<u8> {
         ((db + 30.0) / 0.3).round() as u8
     })
 }
-fn read(connection: &mut Connection) -> Result<u8> {
+pub(crate) fn read(connection: &mut Connection) -> Result<u8> {
     let info = connection.request("GET", "/info", &[], &[])?.plist()?;
     let value = info
         .as_dictionary()
