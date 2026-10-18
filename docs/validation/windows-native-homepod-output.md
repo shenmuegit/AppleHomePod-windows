@@ -1,6 +1,14 @@
 # Windows 原生 HomePod 输出验收记录
 
-初始日期：2026-10-15；最近更新：2026-10-17。依据 [原生输出规格](../superpowers/specs/2026-10-14-windows-native-homepod-output-design.md)与[实施计划](../superpowers/plans/2026-10-14-windows-native-homepod-output-implementation.md)。用户已在计划交接后继续，进入 Native inline 实现。
+初始日期：2026-10-15；最近更新：2026-10-18。依据 [原生输出规格](../superpowers/specs/2026-10-14-windows-native-homepod-output-design.md)与[实施计划](../superpowers/plans/2026-10-14-windows-native-homepod-output-implementation.md)。用户已在计划交接后继续，进入 Native inline 实现。
+
+## 2026-10-18 Windows 原生音乐与声音隔离通过
+
+用户已确认：在 Windows 输出中选择 `HomePod – da` 后，HomePod 正常播放 Windows 音乐，电脑扬声器没有先行声音。此项为当前已安装候选的实际系统音频听音确认，区别于此前的合成参考音；短播时长没有独立计量，不能计作30分钟验收。
+
+本轮重新核验安装EXE SHA仍为 `c58d11377dc1f6495a62115a5931fdd59261c150612bf4e87e6bcaf06dc2656a`，任务存在且属于本应用、`ready=true`、绑定有效；Agent25928与引擎22508仍运行。默认Console/Multimedia角色均为绑定虚拟端点，实际Windows音量读数约25%（−20.99dB，未静音）。系统启动时间仍为10月16日，因此没有把这次检查算作名称跨重启或登录启动验收，也不能据进程继续存在推断音乐持续播放。
+
+已请求用户用Windows控件验证音量调低/调高、拉到0后恢复，以及静音至少15秒后恢复；该结果仍待反馈。应用混音器、暂停恢复、持续30分钟、切回物理输出及实际登录/通知仍按后续场景验收，断网继续暂缓。证据目录 `artifacts/validation/native-output/acceptance-20261018/`；旧交付ZIP及manifest保持其生成时快照，后续验收记录单独追加。
 
 ## 当前受控试听状态
 
