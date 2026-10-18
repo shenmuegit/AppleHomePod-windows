@@ -397,6 +397,7 @@ impl Drop for FeedbackWorker {
 #[derive(Default, Clone, Serialize)]
 pub struct MediaMetrics {
     pub packets_sent: u64,
+    pub nonzero_pcm_packets_sent: u64,
     pub media_send_errors: u64,
     pub sync_send_errors: u64,
     pub control_receive_errors: u64,
@@ -416,7 +417,7 @@ pub struct MediaTransport {
     control: UdpSocket,
     remote: SocketAddr,
     pending: VecDeque<(u16, SocketAddr)>,
-    latency: Duration,
+    latency: Option<Duration>,
     estimated: bool,
     last_success: Instant,
     send_warning: bool,
@@ -437,14 +438,14 @@ impl MediaTransport {
             control,
             remote,
             pending: VecDeque::new(),
-            latency: Duration::from_millis(150),
+            latency: None,
             estimated: true,
             last_success: Instant::now(),
             send_warning: false,
         })
     }
     pub fn configure_latency(&mut self, latency: Duration, estimated: bool) {
-        self.latency = latency;
+        self.latency = Some(latency);
         self.estimated = estimated;
         self.packetizer.configure_latency(latency);
     }
@@ -462,7 +463,7 @@ impl MediaTransport {
     }
     pub fn metrics(&self) -> Value {
         let mut v = serde_json::to_value(&self.metrics).unwrap();
-        v["receiver_latency_ms"] = json!(self.latency.as_secs_f64() * 1000.0);
+        v["receiver_latency_ms"] = json!(self.latency.map(|latency| latency.as_secs_f64() * 1000.0));
         v["receiver_latency_estimated"] = json!(self.estimated);
         v["retransmit_pending"] = json!(self.pending.len());
         v
@@ -482,10 +483,15 @@ impl MediaTransport {
         health: &Health,
     ) -> Result<()> {
         health.check()?;
+        let deadline = self.latency.map_or(now + Duration::from_secs(1), |latency| media_time + latency);
         let packet = self
             .packetizer
-            .packet_at(pcm, first, now, media_time + self.latency)?;
-        self.observe_send(self.audio.send(&packet).map(|_| ()), now, health)
+            .packet_at(pcm, first, now, deadline)?;
+        let result = self.audio.send(&packet).map(|_| ());
+        if result.is_ok() && pcm.iter().any(|sample| *sample != 0) {
+            self.metrics.nonzero_pcm_packets_sent += 1;
+        }
+        self.observe_send(result, now, health)
     }
     // One failed datagram is media loss, not evidence of a dead RTSP session.
     pub fn observe_send(

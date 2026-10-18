@@ -6,7 +6,7 @@ namespace AirFlash.Core;
 
 public enum PlaybackState { Idle, Connecting, Streaming, Standby, Pairing, Error }
 public sealed record StreamMetrics(double? CaptureToSendP95 = null, double? MaxQueueAge = null, long? Underruns = null, long? DroppedFrames = null, int? InputRate = null);
-public sealed record SessionSnapshot(PlaybackState State, Receiver? Receiver = null, string Message = "", StreamMetrics? Metrics = null, int TargetLatency = 0, PlaybackDiagnostics? Diagnostics = null, int StreamRate = 0, DeviceVolumeState? DeviceVolume = null)
+public sealed record SessionSnapshot(PlaybackState State, Receiver? Receiver = null, string Message = "", StreamMetrics? Metrics = null, int? TargetLatency = null, PlaybackDiagnostics? Diagnostics = null, int StreamRate = 0, DeviceVolumeState? DeviceVolume = null)
 {
     public bool IsActive => State is PlaybackState.Connecting or PlaybackState.Streaming or PlaybackState.Standby or PlaybackState.Pairing;
 }
@@ -176,7 +176,7 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
     public SessionSnapshot Snapshot { get { lock (_sync) return _snapshot; } }
     public event Action<SessionSnapshot>? Changed;
     public bool Muted => _muted;
-    private int Latency(Receiver receiver, AppSettings settings) => factory is NativeEngineHost ? settings.Latency(receiver.Id) : settings.Latency(receiver);
+    private int? Latency(Receiver receiver, AppSettings settings) => factory is NativeEngineHost ? null : settings.Latency(receiver);
     private string Signature(Receiver receiver, AppSettings settings) => $"{receiver.TransportKey}|{receiver.PrefersNtpAlac}|{settings.EffectiveEndpoint}|{Latency(receiver, settings)}|{settings.StreamSampleRate}";
     public async Task StartAsync(Receiver receiver, AppSettings settings)
     {
@@ -348,7 +348,8 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
                         if (kind == "streaming")
                         {
                             startedAt = Stopwatch.GetTimestamp();
-                            log?.Invoke($"Streaming started: {receiver.Id}; target latency {Latency(receiver, settings)} ms; reconnect attempts {attempts}");
+                            var target = Latency(receiver, settings) is { } ms ? $"target latency {ms} ms" : "receiver-default latency (not measured)";
+                            log?.Invoke($"Streaming started: {receiver.Id}; {target}; reconnect attempts {attempts}");
                             Publish(epoch, PlaybackState.Streaming, _localMuteWarning);
                         }
                         else if (kind == "device_volume" && startedAt != 0 && item.Text("host") == volumeHost)
@@ -521,7 +522,7 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
         lock (_sync)
         {
             if (epoch != _generation) return;
-            snapshot = new(state, _receiver, message, metrics ?? _snapshot.Metrics, _receiver is null ? 0 : Latency(_receiver, _settings), _diagnostics, int.TryParse(_settings.StreamSampleRate, out var streamRate) ? streamRate : 0, _deviceVolume);
+            snapshot = new(state, _receiver, message, metrics ?? _snapshot.Metrics, _receiver is null ? null : Latency(_receiver, _settings), _diagnostics, int.TryParse(_settings.StreamSampleRate, out var streamRate) ? streamRate : 0, _deviceVolume);
             _snapshot = snapshot;
         }
         Changed?.Invoke(snapshot);

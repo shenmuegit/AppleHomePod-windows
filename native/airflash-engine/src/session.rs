@@ -56,7 +56,8 @@ pub struct ProbeOptions {
     #[serde(default)]
     pub await_volume_gate: Option<bool>,
     pub duration_ms: u32,
-    pub latency_ms: u32,
+    #[serde(default)]
+    pub latency_ms: Option<u32>,
     pub gain: f32,
     #[serde(default)]
     pub equalizer: crate::equalizer::Settings,
@@ -125,9 +126,10 @@ impl ProbeOptions {
             "probe duration must be 1..5000 ms"
         );
         ensure!(
-            (0..=2000).contains(&self.latency_ms),
+            self.latency_ms.is_none_or(|ms| ms <= 2000),
             "latency must be 0..2000 ms"
         );
+        ensure!(self.latency_ms.is_some() || self.timing == "ntp", "PTP requires an explicit latency");
         ensure!(
             self.gain.is_finite() && (0.0..=self.probe_gain_limit() as f32).contains(&self.gain),
             "probe gain must be 0..{}", self.probe_gain_limit()
@@ -164,6 +166,26 @@ fn string(s: impl Into<String>) -> Value {
 }
 fn number(n: u64) -> Value {
     Value::Integer(n.into())
+}
+fn audio_stream(options: &ProbeOptions, control_port: u16, key: &[u8], ssrc: u32, alac: bool) -> Value {
+    let mut fields = vec![
+        ("audioFormat", number(crate::rtp::audio_format(alac, options.sample_rate))),
+        ("audioMode", string("default")),
+        ("controlPort", number(control_port as u64)),
+        ("ct", number(if alac { 2 } else { 1 })),
+        ("isMedia", Value::Boolean(true)),
+        ("shk", Value::Data(key.to_vec())),
+        ("spf", number(FRAMES as u64)),
+        ("sr", number(options.sample_rate as u64)),
+        ("type", number(96)),
+        ("supportsDynamicStreamID", Value::Boolean(false)),
+        ("streamConnectionID", number(ssrc as u64)),
+    ];
+    if let Some(ms) = options.latency_ms {
+        let samples = u64::from(ms) * u64::from(options.sample_rate) / 1000;
+        fields.extend([("latencyMin", number(samples)), ("latencyMax", number(samples))]);
+    }
+    dictionary(fields)
 }
 fn get_port(value: &Value, key: &str) -> Result<u16> {
     let p = value
@@ -359,22 +381,7 @@ impl Member {
                 &Value::Array(peers),
             )?;
         }
-        let latency = (options.latency_ms as u64 * rate as u64) / 1000;
-        let stream = dictionary(vec![
-            ("audioFormat", number(crate::rtp::audio_format(use_alac, rate))),
-            ("audioMode", string("default")),
-            ("controlPort", number(member.media.control_port()? as u64)),
-            ("ct", number(if use_alac { 2 } else { 1 })),
-            ("isMedia", Value::Boolean(true)),
-            ("latencyMin", number(latency)),
-            ("latencyMax", number(latency)),
-            ("shk", Value::Data(audio_key.to_vec())),
-            ("spf", number(FRAMES as u64)),
-            ("sr", number(rate as u64)),
-            ("type", number(96)),
-            ("supportsDynamicStreamID", Value::Boolean(false)),
-            ("streamConnectionID", number(ssrc as u64)),
-        ]);
+        let stream = audio_stream(options, member.media.control_port()?, &audio_key, ssrc, use_alac);
         emit(
             json!({"event":"phase","host":peer.host,"phase":"setup_audio","requested_latency_ms":options.latency_ms}),
         );
@@ -407,12 +414,11 @@ impl Member {
         let effective_latency = receiver_latency
             .filter(|v| *v > 0 && *v <= rate as u64 * 10)
             .map(|samples| Duration::from_nanos(samples * 1_000_000_000 / rate as u64));
-        member.media.configure_latency(
-            effective_latency.unwrap_or(Duration::from_millis(u64::from(options.latency_ms))),
-            effective_latency.is_none(),
-        );
+        if let Some(latency) = effective_latency.or_else(|| options.latency_ms.map(|ms| Duration::from_millis(u64::from(ms)))) {
+            member.media.configure_latency(latency, effective_latency.is_none());
+        }
         emit(
-            json!({"event":"negotiated","host":peer.host,"data_port":data_port,"codec":if use_alac{"alac"}else{"pcm"},"sample_rate":rate,"control_port":member.remote_control,"requested_latency_ms":options.latency_ms,"receiver_latency_min_samples":stream.as_dictionary().and_then(|d|d.get("latencyMin")).and_then(Value::as_unsigned_integer),"measured_latency_ms":null}),
+            json!({"event":"negotiated","host":peer.host,"data_port":data_port,"codec":if use_alac{"alac"}else{"pcm"},"sample_rate":rate,"control_port":member.remote_control,"requested_latency_ms":options.latency_ms,"receiver_latency_min_samples":receiver_latency,"receiver_latency_max_samples":stream.as_dictionary().and_then(|d|d.get("latencyMax")).and_then(Value::as_unsigned_integer),"arrival_to_render_latency_ms":stream.as_dictionary().and_then(|d|d.get("arrivalToRenderLatencyMs")).and_then(Value::as_unsigned_integer),"measured_latency_ms":null}),
         );
         Ok(member)
     }
@@ -633,7 +639,7 @@ pub fn probe_with_capture(
     }
     let start = Instant::now();
     let duration = Duration::from_millis(options.duration_ms as u64);
-    let latency = options.latency_ms * rate / 1000;
+    let latency = options.latency_ms.unwrap_or(0) * rate / 1000;
     let mut schedule = MediaSchedule::new(start, rate);
     let mut packets = 0u64;
     let mut first_send_reported = false;
@@ -791,6 +797,43 @@ fn transport_metrics(members: &[Member], schedule: &MediaSchedule) -> Json {
 mod tests {
     use super::*;
     #[test]
+    fn ntp_without_requested_latency_uses_receiver_defaults() {
+        for explicit_null in [false, true] {
+            let mut params = json!({"peers":[{"host":"127.0.0.1"}],"duration_ms":5000,"gain":1.0,"timing":"ntp"});
+            if explicit_null { params["latency_ms"] = Json::Null; }
+            let parsed = serde_json::from_value::<ProbeOptions>(params);
+            assert!(parsed.is_ok(), "NTP must allow omitted or null latency: {parsed:?}");
+            let mut options = parsed.unwrap();
+            assert!(options.validate().is_ok());
+            options.timing = "ptp".into();
+            assert!(options.validate().is_err(), "PTP still needs its explicit sync offset");
+        }
+    }
+    #[test]
+    fn serialized_setup_omits_defaults_but_preserves_explicit_zero_and_targets() {
+        for rate in [44100u32, 48000] {
+            for requested in [None, Some(0u32), Some(50), Some(100)] {
+                let options: ProbeOptions = serde_json::from_value(json!({"peers":[{"host":"127.0.0.1"}],"duration_ms":5000,"gain":1.0,"timing":"ntp","sample_rate":rate,"latency_ms":requested})).unwrap();
+                options.validate().unwrap();
+                let stream = audio_stream(&options, 1234, &[7; 32], 42, true);
+                let mut encoded = Vec::new();
+                stream.to_writer_binary(&mut encoded).unwrap();
+                let decoded = Value::from_reader(std::io::Cursor::new(encoded)).unwrap();
+                let fields = decoded.as_dictionary().unwrap();
+                assert_eq!(fields["type"].as_unsigned_integer(), Some(96));
+                assert_eq!(fields["spf"].as_unsigned_integer(), Some(FRAMES as u64));
+                assert_eq!(fields["sr"].as_unsigned_integer(), Some(u64::from(rate)));
+                for key in ["latencyMin", "latencyMax"] {
+                    if let Some(ms) = requested {
+                        assert_eq!(fields[key].as_unsigned_integer(), Some(u64::from(ms) * u64::from(rate) / 1000));
+                    } else {
+                        assert!(!fields.contains_key(key), "default must omit {key}, not send zero");
+                    }
+                }
+            }
+        }
+    }
+    #[test]
     fn finite_wav_full_gain_preserves_quiet_samples() {
         for rate in [44100, 48000] {
             let mut options: ProbeOptions = serde_json::from_value(json!({"peers":[{"host":"127.0.0.1"}],"duration_ms":5000,"latency_ms":200,"gain":1.0,"sample_rate":rate})).unwrap();
@@ -835,7 +878,7 @@ mod tests {
             capture_epoch: None,
             await_volume_gate: None,
             duration_ms: 5001,
-            latency_ms: 200,
+            latency_ms: Some(200),
             gain: 0.1,
             equalizer: crate::equalizer::Settings::default(),
             sample_rate: 44100,
@@ -866,7 +909,7 @@ mod tests {
         assert!(o.validate_start().is_err());
         o.equalizer = crate::equalizer::Settings::default();
         o.source = "wav".into(); o.duration_ms = 5000;
-        o.latency_ms = 0;
+        o.latency_ms = Some(0);
         assert!(o.validate().is_ok());
         o.sample_rate = 48000;
         assert!(o.validate().is_ok());

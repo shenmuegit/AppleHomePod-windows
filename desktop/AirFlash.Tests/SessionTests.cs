@@ -414,12 +414,15 @@ public sealed class SessionTests
         process.Emit("capture_metrics", metrics: new { underrun_packets = 2, input_rate = 48000, last_audio_qpc_ns = 10 });
         process.EmitData(new { @event = "warning", code = "feedback_delayed", host = "a", channel = "feedback", message = "slow", recovered = false });
         process.EmitData(new { @event = "warning", code = "media_send_delayed", host = "b", channel = "media", message = "busy", recovered = false });
-        process.EmitData(new { @event = "transport_metrics", session_uptime_ms = 1234, sender_late_recoveries = 3, members = new object[] { new { host = "a", media = new { retransmits_sent = 4 }, health = new { feedback_delayed = true, feedback_rtt_ms = 42 } }, new { host = "b" } } });
+        process.EmitData(new { @event = "transport_metrics", session_uptime_ms = 1234, sender_late_recoveries = 3, members = new object[] { new { host = "a", media = new { retransmits_sent = 4, nonzero_pcm_packets_sent = 3, receiver_latency_ms = (double?)null, receiver_latency_estimated = true }, health = new { feedback_delayed = true, feedback_rtt_ms = 42 } }, new { host = "b" } } });
         await Until(() => controller.Snapshot.Diagnostics?.Transport is not null);
         Assert.Equal(1, factory.OpenCount); Assert.True(audio.Muted); Assert.Equal(PlaybackState.Streaming, controller.Snapshot.State);
         Assert.Equal(2, controller.Snapshot.Metrics!.Underruns); Assert.Null(controller.Snapshot.Metrics.DroppedFrames);
         Assert.Equal(2, controller.Snapshot.Diagnostics!.Warnings!.Count);
         var transport = controller.Snapshot.Diagnostics.Transport!; Assert.Equal(3, transport.SenderLateRecoveries); Assert.Equal(4, transport.Members[0].RetransmitsSent); Assert.Null(transport.Members[1].RetransmitsSent);
+        var member = System.Text.Json.JsonSerializer.SerializeToElement(transport.Members[0]);
+        Assert.True(member.TryGetProperty("NonzeroPcmPacketsSent", out var nonzero)); Assert.Equal(3, nonzero.GetInt64());
+        Assert.Null(transport.Members[0].ReceiverLatencyMs); Assert.True(transport.Members[0].ReceiverLatencyEstimated);
         process.EmitData(new { @event = "warning", code = "feedback_recovered", host = "a", channel = "feedback", message = "ok", recovered = true });
         await Until(() => controller.Snapshot.Diagnostics?.Warnings?.Count == 1);
         Assert.Equal("b", controller.Snapshot.Diagnostics!.Warnings![0].Host); Assert.True(audio.Muted);

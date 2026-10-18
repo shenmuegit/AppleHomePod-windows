@@ -477,3 +477,93 @@ fn requested_packets_arrive_as_original_ciphertext_out_of_order_and_across_wrap(
     }
     assert_eq!(m.packetizer.seq,next_seq); assert_eq!(m.metrics.retransmits_sent,4);
 }
+
+fn request_cached(media: &mut MediaTransport, peer: &UdpSocket, sequence: u16) {
+    let processed = |m: &MediaMetrics| m.retransmits_sent + m.retransmit_expired + m.retransmit_missing + m.retransmit_send_errors;
+    let before = processed(&media.metrics);
+    let [hi, lo] = sequence.to_be_bytes();
+    peer.send_to(&[0x80, 0xd5, 0, 1, hi, lo, 0, 1], std::net::SocketAddr::from(([127, 0, 0, 1], media.control_port().unwrap()))).unwrap();
+    until(|| { media.service_retransmits(); processed(&media.metrics) > before });
+}
+
+#[test]
+fn media_transport_unknown_latency_is_null_and_configured_values_remain_explicit() {
+    let (mut media, _, _) = media();
+    assert!(media.metrics()["receiver_latency_ms"].is_null());
+    assert_eq!(media.metrics()["receiver_latency_estimated"], true);
+    for estimated in [true, false] {
+        media.configure_latency(Duration::from_millis(100), estimated);
+        assert_eq!(media.metrics()["receiver_latency_ms"], 100.0);
+        assert_eq!(media.metrics()["receiver_latency_estimated"], estimated);
+    }
+    media.configure_latency(Duration::ZERO, true);
+    assert_eq!(media.metrics()["receiver_latency_ms"], 0.0);
+}
+
+#[test]
+fn media_transport_unknown_latency_recovers_cached_ciphertext_by_sent_age() {
+    let (mut media, audio, control) = media();
+    audio.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+    control.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+    let sent = Instant::now();
+    media.send(&vec![0; PCM_BYTES], true, sent, sent - Duration::from_secs(2), &Health::default()).unwrap();
+    let mut bytes = [0; 2048];
+    let length = audio.recv(&mut bytes).unwrap();
+    assert!(sent.elapsed() < Duration::from_millis(100), "unknown latency must not delay initial media");
+    let original = bytes[..length].to_vec();
+    let sequence = u16::from_be_bytes([bytes[2], bytes[3]]);
+    for age in [300, 500] {
+        thread::sleep(Duration::from_millis(age).saturating_sub(sent.elapsed()));
+        request_cached(&mut media, &control, sequence);
+        let length = control.recv(&mut bytes).unwrap();
+        assert_eq!(&bytes[..2], &[0x80, 0xd6]);
+        assert_eq!(&bytes[4..length], original);
+    }
+    assert_eq!(media.metrics.retransmits_sent, 2);
+    thread::sleep(Duration::from_millis(1100).saturating_sub(sent.elapsed()));
+    request_cached(&mut media, &control, sequence);
+    assert!(control.recv(&mut bytes).is_err());
+    assert_eq!(media.metrics.retransmit_expired, 1);
+}
+
+#[test]
+fn media_transport_explicit_100ms_deadline_is_not_extended() {
+    for estimated in [true, false] {
+        let (mut media, audio, control) = media();
+        media.configure_latency(Duration::from_millis(100), estimated);
+        audio.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+        control.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+        let sent = Instant::now();
+        media.send(&vec![0; PCM_BYTES], true, sent, sent, &Health::default()).unwrap();
+        let mut bytes = [0; 2048];
+        audio.recv(&mut bytes).unwrap();
+        thread::sleep(Duration::from_millis(300).saturating_sub(sent.elapsed()));
+        request_cached(&mut media, &control, u16::from_be_bytes([bytes[2], bytes[3]]));
+        assert!(control.recv(&mut bytes).is_err());
+        assert_eq!(media.metrics.retransmit_expired, 1);
+        assert_eq!(media.metrics.retransmits_sent, 0);
+    }
+}
+
+#[test]
+fn media_transport_counts_only_successful_nonzero_pcm_sends() {
+    let (mut media, audio, _) = media();
+    audio.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+    let mut pcm = vec![0; PCM_BYTES];
+    pcm[3] = 1;
+    media.send(&pcm, true, Instant::now(), Instant::now(), &Health::default()).unwrap();
+    audio.recv(&mut [0; 2048]).unwrap();
+    assert_eq!(media.metrics()["nonzero_pcm_packets_sent"], 1);
+    pcm.fill(0);
+    media.send(&pcm, false, Instant::now(), Instant::now(), &Health::default()).unwrap();
+    audio.recv(&mut [0; 2048]).unwrap();
+    assert_eq!(media.metrics.packets_sent, 2);
+    assert_eq!(media.metrics()["nonzero_pcm_packets_sent"], 1);
+    let mut failed = MediaTransport::new(Packetizer::new([8; 32], 1, 0, 1),
+        UdpSocket::bind("127.0.0.1:0").unwrap(), UdpSocket::bind("127.0.0.1:0").unwrap(), audio.local_addr().unwrap()).unwrap();
+    pcm[0] = 1;
+    failed.send(&pcm, true, Instant::now(), Instant::now(), &Health::default()).unwrap();
+    assert_eq!(failed.metrics.media_send_errors, 1);
+    assert_eq!(failed.metrics.packets_sent, 0);
+    assert_eq!(failed.metrics()["nonzero_pcm_packets_sent"], 0);
+}

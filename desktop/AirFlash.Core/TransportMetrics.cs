@@ -4,7 +4,7 @@ namespace AirFlash.Core;
 public sealed record MemberTransportMetrics(string Host, long? PacketsSent, long? SendErrors, long? SyncErrors,
     long? RetransmitRequests, long? RetransmitsSent, long? RetransmitMissing, long? RetransmitExpired,
     long? RetransmitQueueDrops, long? RetransmitSendErrors, double? FeedbackRttMs, long? FeedbackFailures,
-    bool? FeedbackDelayed, long? EventMessages, double? ReceiverLatencyMs, bool? ReceiverLatencyEstimated)
+    bool? FeedbackDelayed, long? EventMessages, double? ReceiverLatencyMs, bool? ReceiverLatencyEstimated, long? NonzeroPcmPacketsSent = null)
 {
     public static MemberTransportMetrics Parse(JsonElement member)
     {
@@ -13,7 +13,7 @@ public sealed record MemberTransportMetrics(string Host, long? PacketsSent, long
         return new(member.Text("host", "—"), media.Integer("packets_sent"), media.Integer("media_send_errors"), media.Integer("sync_send_errors"),
             media.Integer("retransmit_requests"), media.Integer("retransmits_sent"), media.Integer("retransmit_missing"), media.Integer("retransmit_expired"),
             media.Integer("retransmit_queue_drops"), media.Integer("retransmit_send_errors"), health.Number("feedback_rtt_ms"), health.Integer("feedback_failures"),
-            health.Boolean("feedback_delayed"), health.Integer("event_messages"), media.Number("receiver_latency_ms"), media.Boolean("receiver_latency_estimated"));
+            health.Boolean("feedback_delayed"), health.Integer("event_messages"), media.Number("receiver_latency_ms"), media.Boolean("receiver_latency_estimated"), media.Integer("nonzero_pcm_packets_sent"));
     }
 }
 public sealed record TransportMetrics(double? SessionUptimeMs, long? SenderLateRecoveries, long? SkippedPackets, double? MaxSendLatenessUs, IReadOnlyList<MemberTransportMetrics> Members)
