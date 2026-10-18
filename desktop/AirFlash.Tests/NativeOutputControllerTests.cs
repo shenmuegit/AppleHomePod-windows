@@ -109,8 +109,8 @@ public sealed class NativeOutputControllerTests
         await f.FlushVolume();
         Assert.Single(f.Starts); Assert.Equal(0, f.Monitor.PhysicalMuteCalls);
         var start = f.Starts.Single().Params;
-        Assert.Equal("ntp", start.Text("timing")); Assert.Equal(50, start.Number("latency_ms"));
-        Assert.Equal(50, f.Session.Snapshot.TargetLatency);
+        Assert.Equal("ntp", start.Text("timing")); Assert.Equal(100, start.Number("latency_ms"));
+        Assert.Equal(100, f.Session.Snapshot.TargetLatency);
         Assert.Equal(44100, start.Number("sample_rate")); Assert.False(start.GetProperty("equalizer").GetProperty("enabled").GetBoolean());
         Assert.DoesNotContain(f.Wire.Commands, c => c.Command == "set_equalizer");
         Assert.Contains(f.Wire.Commands, c => c.Command == "set_device_volume" && c.Params.Number("volume") == 1);

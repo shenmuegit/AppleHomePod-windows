@@ -143,7 +143,7 @@ public sealed class NativeOutputController
     private AppSettings Settings() => new()
     {
         CaptureMode = "endpoint", CaptureEndpoint = _binding.Endpoint.EndpointId, StreamSampleRate = "44100",
-        LatencyMode = "custom", CustomBufferMs = 50, Equalizer = new(), MasterVolume = 100,
+        LatencyMode = "custom", CustomBufferMs = 100, Equalizer = new(), MasterVolume = 100,
         MuteWhileStreaming = false, StandbyEnabled = false, AutoConnectOnDiscover = false, ForceReconnect = true, MaxReconnectAttempts = 5
     };
     private async Task ReconcileAsync(Func<string, Receiver?> resolve, CancellationToken cancellation)
