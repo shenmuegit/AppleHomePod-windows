@@ -14,7 +14,9 @@
 
 ## Steps
 
-- [ ] Establish the flash/tone baseline on the current installed candidate.
+- [x] Establish the flash/tone baseline on the current installed candidate.
 - [ ] Update the existing wire/snapshot test to200, observe RED, change the single Native target, and pass the full.NET suite. Log existing transport diagnostics at the existing15s sampling cadence.
 - [ ] Publish an isolated200ms candidate, verify exact embedded engine/compatibility, and activate only after the baseline response. Require media/capture readiness beyond the former startup failure window, with rollback tobbccbfc.
 - [ ] Repeat the same AV page, record perceived skew and transport counters, choose the stable improved target or revert, preserve exact source and candidate provenance. Leave precise acoustic measurement,30-minute qualification and disconnect unclaimed.
+
+Observed:500ms baseline firstsound at page1.8s vs scheduled1.0s;200ms firstsound at1.3s, approximate skew0.8→0.3s. Native200 f3e2225 installed/hash eae101d523e25c2b61893fcbf35d8feb2cbff5efc57f5de52e2e86104ae5b6f1; capturep95~24ms. Directed follow-up100ms is now prepared as another single-target experiment with the same unchanged B623 engine.200ms transport after166s had29 retransmit requests,8 expired,0missing/send/syncerrors. Investigate conservative recovery deadline separately; do not conflate it with rendering delay or alter the measured A/B packages silently.
