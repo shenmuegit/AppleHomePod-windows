@@ -34,4 +34,11 @@ public sealed class NativeBindingStore(string path)
         }
         finally { if (File.Exists(temp)) File.Delete(temp); }
     }
+
+    // The caller holds endpoint maintenance and created this temporary record.
+    public bool DiscardUnconfirmed(NativeBinding expected)
+    {
+        if (expected.Calibration is not null || Load() != expected) return false;
+        File.Delete(path); return true;
+    }
 }

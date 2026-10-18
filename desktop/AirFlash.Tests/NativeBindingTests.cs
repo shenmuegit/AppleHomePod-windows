@@ -5,6 +5,32 @@ namespace AirFlash.Tests;
 
 public sealed class NativeBindingTests
 {
+    [Theory]
+    [InlineData("unchanged")]
+    [InlineData("calibrated")]
+    [InlineData("renamed")]
+    [InlineData("other-receiver")]
+    public async Task CancelledSetupDiscardsOnlyItsUnchangedUnconfirmedRecord(string state)
+    {
+        var path = Path.Combine(Path.GetTempPath(), "applehome-preview-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            var store = new NativeBindingStore(path);
+            var expected = Binding with { Calibration = null };
+            var current = state switch {
+                "calibrated" => Binding,
+                "renamed" => expected with { AssignedName = "User name" },
+                "other-receiver" => expected with { ReceiverId = "receiver-2" },
+                _ => expected
+            };
+            await store.SaveAsync(current, default);
+            var before = await File.ReadAllBytesAsync(path);
+            Assert.Equal(state == "unchanged", store.DiscardUnconfirmed(expected));
+            if (state == "unchanged") Assert.Null(store.Load());
+            else Assert.Equal(before, await File.ReadAllBytesAsync(path));
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
     [Fact]
     public void MixFormatIncludesAllBytesUsedByTheAudioEngine()
     {

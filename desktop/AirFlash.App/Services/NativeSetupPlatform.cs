@@ -16,7 +16,7 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
     private CancellationTokenSource? _previewLifetime;
     private Task? _previewWork;
     private NativeBinding? _baseline, _provisional;
-    private bool _resumeAgent, _usingExistingAgent, _completed, _cleanupFailed;
+    private bool _resumeAgent, _usingExistingAgent, _completed, _cleanupFailed, _newBinding;
 
     public async Task<NativeSetupInspection> InspectAsync(CancellationToken cancellation)
     {
@@ -103,6 +103,7 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
             _maintenance = NativeVolumeCalibration.AcquireMaintenance();
             _baseline = inspection.Binding ?? await _windows.BindAsync(current.Id, inspection.Endpoint.EndpointId,
                 NativeSetupFlow.OutputName(current), cancellation).ConfigureAwait(false);
+            _newBinding = inspection.Binding is null;
             _provisional = _baseline;
             if (_baseline.Calibration is null)
             {
@@ -159,7 +160,7 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
         try
         {
             await NativeAutostart.InstallForSetupAsync(executable, cancellation).ConfigureAwait(false);
-            _completed = true; _resumeAgent = false; _usingExistingAgent = false;
+            _completed = true; _resumeAgent = false; _usingExistingAgent = false; _newBinding = false;
         }
         catch
         {
@@ -170,8 +171,8 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
 
     public async Task StopPreviewAsync(CancellationToken cancellation)
     {
-        await ClosePreviewResourcesAsync().ConfigureAwait(false);
-        _baseline = _provisional = null; _usingExistingAgent = false;
+        await ClosePreviewResourcesAsync(discardUnconfirmed: true).ConfigureAwait(false);
+        _baseline = _provisional = null; _usingExistingAgent = false; _newBinding = false;
         await ResumeAgentAsync().ConfigureAwait(false);
     }
 
@@ -203,7 +204,7 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
         _resumeAgent = false;
     }
 
-    private async Task ClosePreviewResourcesAsync()
+    private async Task ClosePreviewResourcesAsync(bool discardUnconfirmed = false)
     {
         var errors = new List<Exception>();
         if (_previewLifetime is not null) await _previewLifetime.CancelAsync().ConfigureAwait(false);
@@ -217,6 +218,11 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
         if (_host is not null) await Cleanup(async () => await _host.DisposeAsync().ConfigureAwait(false)).ConfigureAwait(false);
         if (_monitor is not null) await Cleanup(async () => await _monitor.DisposeAsync().ConfigureAwait(false)).ConfigureAwait(false);
         _previewLifetime?.Dispose(); _previewLifetime = null; _previewWork = null; _session = null; _host = null; _monitor = null;
+        if (errors.Count == 0 && discardUnconfirmed && _newBinding && _baseline is { Calibration: null } temporary)
+        {
+            try { _store.DiscardUnconfirmed(temporary); }
+            catch (Exception error) { errors.Add(error); }
+        }
         _maintenance?.Dispose(); _maintenance = null;
         _cleanupFailed |= errors.Count > 0;
         if (!_cleanupFailed && _legacyGuard is not null)
