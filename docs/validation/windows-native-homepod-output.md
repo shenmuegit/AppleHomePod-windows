@@ -2,6 +2,22 @@
 
 初始日期：2026-10-15；最近更新：2026-10-18。依据 [原生输出规格](../superpowers/specs/2026-10-14-windows-native-homepod-output-design.md)与[实施计划](../superpowers/plans/2026-10-14-windows-native-homepod-output-implementation.md)。用户已在计划交接后继续，进入 Native inline 实现。
 
+## 2026-10-18 Music Assistant 风格协商与实际应用
+
+当前实际安装代码 `5a48ade0bfdb2b8248e63ca91288077bbf1bf943`，EXE 176,964,609字节，SHA256 `ec2be1a3989f356ce86e921f436ae220e96b0a789f6a7fd45270401cac8fbf3b`；运行中内嵌引擎 `0f40dd4d732561081d31a1aadbe39e6ac14953cfd3ece61ced9768fb25b4251e` 与本次静态CRT构建一致。旧b3990dd可用包、源ZIP与原始EXE保持，作为回退。
+
+Native按设备参考和新SETUP回包协商，规则见[实现与来源](../research/2026-10-18-ma-native-latency-negotiation.md)。没有参考时先请求250..2000ms范围；设备给合法边界就据此选择，否则候选250ms，再以该候选做一次实际固定请求。2秒是首次范围容量上界，不是新的播放默认或预填充。已有参考不被新候选覆写，设备身份、采样率、连接代次隔离。首次参考音量校准确认也不再自动保存2000ms的日常缓冲。
+
+独立审查指出 `selected_ms` 不能直接当作已应用值。已补齐最多一次有界重新设置：完整停止并释放首轮lease，保持采集门关闭，用选出的固定值实际SETUP，校验新回包；`applied_ms`有效后才发布目标与streaming、进入音量/采集门放行。原人工参考单独保留，第二轮不兼容明确失败，不继续搜索；普通网络重试重新从首轮协商开始。
+
+本机更新后21:08:57 capture_ready，冷启动5092ms；21:08:58真实诊断为 `Policy=negotiate, PreferredMs=100, OfferedMinMs=100, OfferedMaxMs=100, SelectedMs=100, AppliedMs=100, Source=verified_reference`，接收端最小/最大仍为null，`ArrivalToRenderMs=70`仅作信息。更新日志只出现一次协商，随后target100、reconnect0。该100来自当前设备已有听音记录，不能写成所有设备统一下限或本次测得100ms总延迟。没有按70再加补偿。
+
+实际新安装的自有任务owned/ready/can_enable=true，normal_window_count=0、daily_tray_registered=false；私有binding逐字节哈希保持，verified_buffer_ms仍100。只读monitor确认绑定有效，Windows Console/Multimedia仍选普通HomePod虚拟端点。初期最近窗口capture→send p95约22–26ms，最大队列年龄32.8ms；45秒传输窗口SendErrors/SyncErrors/FeedbackFailures均0。当前外部音乐会话没有活动、非零PCM发送数为0，所以这些状态仅证明后台协商、静音采集与传输在运行，不证明新的音乐听音或端到端时延通过。没有播放任何测试音、录音、保存PCM或物理断网，也没有改变Windows日常控件。
+
+组合软件验证：完整.NET459项、Rust93项通过，Rust2项原有忽略；Clippy全目标warnings denied通过。localhost真实RTSP二进制plist两轮收发验证先范围、后固定候选；真实UDP验证重传密文、未知最大值时的一秒有界恢复历史、最大值期限与旧固定0/100行为。该历史窗口不增加正常发送等待。实际包compat检查、能力声明和包内引擎哈希通过；未确认导入仍为144 native / 1555 bundle / 447 EXE，不能据此认定Windows11及其他环境通过。
+
+证据目录 `artifacts/validation/native-output/ma-negotiation-20261018/`。本轮按用户要求不重复短音、不请求新听音结论；此前b399普通音乐、c197视频主观通过仍保留其版本归属。新包声学延迟与完整30分钟、真实登录/名称跨重启、其他设备/系统继续未取得资格；断网测试仍明确暂缓。
+
 ## 2026-10-18 缓冲按设备保存，社区语义与回包核对
 
 实际安装代码 `b3990dd5d55d1b5996786d7fe1ca91279f9e45d5`，EXE SHA256 `e9cd3f1a7dcde4597fbeabe90e44539ba89a1bf3a4ff8f446b7eb83925b994fe`；引擎 `283e327b074723a32a0ef0e003f23eb50cd0523e8a7b3015ad4175dcc7f5eb40`。用户在连续Windows音乐请求后明确回复“正常播放，声音连续”。此包从当前ReceiverId对应binding的 `verified_buffer_ms=100` 读取请求值，不在Native代码统一写100；其他设备不自动复制该值。既有Windows输出、音量、静音入口保留，无日常面板/托盘。此前视频基本同步的反馈来自c19753a；新包只复核了正常音乐，没有重新做精确音画计量。
