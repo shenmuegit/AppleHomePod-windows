@@ -2,6 +2,18 @@
 
 初始日期：2026-10-15；最近更新：2026-10-18。依据 [原生输出规格](../superpowers/specs/2026-10-14-windows-native-homepod-output-design.md)与[实施计划](../superpowers/plans/2026-10-14-windows-native-homepod-output-implementation.md)。用户已在计划交接后继续，进入 Native inline 实现。
 
+## 2026-10-18 正常音乐五分钟、暂停与主音量静音恢复通过
+
+实际安装仍为代码 `5a48ade0bfdb2b8248e63ca91288077bbf1bf943`，EXE SHA256 `ec2be1a3989f356ce86e921f436ae220e96b0a789f6a7fd45270401cac8fbf3b`。用户确认正常歌曲已从mini出声后，从本地21:20:15记录到21:26:36，共381.35秒，达到五分钟目标；这段观察在计划内暂停之前结束。未播放合成短音。随后完成Windows主音量54%→40%→54%、暂停后恢复、主静音15.023秒后恢复。中途用户按Esc终止过Computer Use，恢复播放在下一轮fresh SMTC读回Playing且音乐会话活动后确认；未把命令被接受当成恢复播放已验证。
+
+音量使用Windows SndVol原生滑块，暂停/恢复使用已有网易云会话的Windows SystemMediaTransportControls。静音按钮自动化因窗口几何不可用未触发，随后直接通过Windows Core Audio操作同一已绑定播放端点的主静音状态；独立native-monitor回读muted=true，15.023秒后muted=false，主音量scalar保持0.54。该验证覆盖原生端点主静音及应用通知/恢复路径，不宣称UI自动化的鼠标点击本身通过。没有操作AppleHome自定义面板。
+
+用户在最后一次静音取消后集中确认：“全部正常，音乐连续，音量和暂停／静音恢复都正常”。据此将当前Windows10/单只HomePod mini/27.0的五分钟正常音乐、音量、暂停恢复和主静音恢复记为实机通过。最后fresh状态仍为音乐Playing、会话活动、Windows54%且未静音，任务owned/ready=true、无日常窗口/托盘；agent81220与engine116864不变，私有binding逐字节哈希保持，设备参考仍100ms。本轮没有产品代码、安装包、驱动或配置变更。
+
+连续段日志有26组采集/传输样本，首末覆盖377.14秒，非零PCM发送累计增加46324包；媒体发送、同步、反馈、重传发送/队列错误增量均0，未重连，未跳过发送包。capture→send的最近窗口p95为25.62–36.24ms，日志最大队列年龄37.83ms，均非声学延迟。累计underflow填零增加104包、数字静音回收增加17659帧，不能等同网络丢包或自动认定可听断续；实际听感依据上述用户确认。
+
+结构化证据与断言在 `artifacts/validation/native-output/music-five-minutes-20261018/acceptance-summary.json`，原始日志只保存计数/状态，不含PCM或麦克风录音。旧交付ZIP保留其生成时验收快照，以本记录作为后续实机结果。完整30分钟、视频精确时延、实际登录/名称跨重启、Windows11及其他型号/固件/立体声尚未取得资格；断网继续按用户要求暂缓。
+
 ## 2026-10-18 Music Assistant 风格协商与实际应用
 
 当前实际安装代码 `5a48ade0bfdb2b8248e63ca91288077bbf1bf943`，EXE 176,964,609字节，SHA256 `ec2be1a3989f356ce86e921f436ae220e96b0a789f6a7fd45270401cac8fbf3b`；运行中内嵌引擎 `0f40dd4d732561081d31a1aadbe39e6ac14953cfd3ece61ced9768fb25b4251e` 与本次静态CRT构建一致。旧b3990dd可用包、源ZIP与原始EXE保持，作为回退。
