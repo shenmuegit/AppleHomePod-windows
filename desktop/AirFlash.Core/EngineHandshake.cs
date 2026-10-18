@@ -15,6 +15,8 @@ public static class EngineHandshake
                 ?? throw new IOException(connection is ProcessEngineConnection process ? process.FailureDescription : L.Get("The engine did not return hello."));
             if (hello.Text("event") != "hello" || hello.Number("version") != 1)
                 throw new IOException(L.Get("Incompatible engine protocol version."));
+            if (factory is NativeEngineHost && hello.Boolean("latency_negotiation") != true)
+                throw new IOException("The packaged engine does not support native latency negotiation.");
             return hello;
         }
         catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)

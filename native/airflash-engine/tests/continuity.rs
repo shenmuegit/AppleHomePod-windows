@@ -527,6 +527,97 @@ fn media_transport_unknown_latency_recovers_cached_ciphertext_by_sent_age() {
 }
 
 #[test]
+fn media_transport_auto_minimum_does_not_expire_recovery_at_the_minimum() {
+    let (mut media, audio, control) = media();
+    media.configure_receiver_window(Some(Duration::from_millis(100)), None);
+    audio.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+    control.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+    let sent = Instant::now();
+    media.send(&vec![1; PCM_BYTES], true, sent, sent - Duration::from_secs(2), &Health::default()).unwrap();
+    let mut bytes = [0; 2048];
+    let length = audio.recv(&mut bytes).unwrap();
+    assert!(sent.elapsed() < Duration::from_millis(100), "auto minimum must not delay initial media");
+    let original = bytes[..length].to_vec();
+    let sequence = u16::from_be_bytes([bytes[2], bytes[3]]);
+    assert_eq!(media.metrics()["receiver_latency_ms"], 100.0);
+    assert_eq!(media.metrics()["receiver_latency_estimated"], false);
+    for age in [300, 500] {
+        thread::sleep(Duration::from_millis(age).saturating_sub(sent.elapsed()));
+        request_cached(&mut media, &control, sequence);
+        let length = control.recv(&mut bytes).unwrap();
+        assert_eq!(&bytes[..2], &[0x80, 0xd6]);
+        assert_eq!(&bytes[4..length], original);
+    }
+    assert_eq!(media.metrics.retransmits_sent, 2);
+    assert_eq!(media.metrics.nonzero_pcm_packets_sent, 1);
+    thread::sleep(Duration::from_millis(1100).saturating_sub(sent.elapsed()));
+    request_cached(&mut media, &control, sequence);
+    assert!(control.recv(&mut bytes).is_err());
+    assert_eq!(media.metrics.retransmit_expired, 1);
+}
+
+#[test]
+fn media_transport_auto_maximum_sets_recovery_without_inventing_measured_latency() {
+    for minimum in [Some(Duration::from_millis(50)), None] {
+        let (mut media, audio, _) = media();
+        media.configure_receiver_window(minimum, Some(Duration::from_millis(100)));
+        assert_eq!(media.metrics()["receiver_latency_ms"].as_f64(), minimum.map(|_| 50.0));
+        assert_eq!(media.metrics()["receiver_latency_estimated"], minimum.is_none());
+        let sent = Instant::now();
+        media.send(&vec![1; PCM_BYTES], true, sent, sent, &Health::default()).unwrap();
+        audio.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+        let mut bytes = [0; 2048];
+        let length = audio.recv(&mut bytes).unwrap();
+        let sequence = u16::from_be_bytes([bytes[2], bytes[3]]);
+        let Retransmit::Packet(reply) = media.packetizer.retransmit_packet(sequence, sent + Duration::from_millis(75)) else {
+            panic!("receiver maximum must allow recovery beyond its minimum");
+        };
+        assert_eq!(&reply[4..], &bytes[..length]);
+        for age in [100, 150] {
+            assert!(matches!(media.packetizer.retransmit_packet(sequence, sent + Duration::from_millis(age)), Retransmit::Expired));
+        }
+        let delayed = sent + Duration::from_millis(200);
+        let sequence = media.packetizer.seq;
+        media.send(&vec![0; PCM_BYTES], false, delayed, sent, &Health::default()).unwrap();
+        assert!(matches!(media.packetizer.retransmit_packet(sequence, delayed), Retransmit::Expired));
+    }
+}
+
+#[test]
+fn media_transport_auto_retention_uses_maximum_and_resets_when_it_is_unknown() {
+    let (mut media, audio, _) = media();
+    media.configure_receiver_window(Some(Duration::from_millis(50)), Some(Duration::from_secs(2)));
+    let sent = Instant::now();
+    media.send(&vec![0; PCM_BYTES], true, sent, sent + Duration::from_secs(2), &Health::default()).unwrap();
+    audio.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+    let mut bytes = [0; 2048];
+    audio.recv(&mut bytes).unwrap();
+    let sequence = u16::from_be_bytes([bytes[2], bytes[3]]);
+    assert!(matches!(media.packetizer.retransmit_packet(sequence, sent + Duration::from_millis(2249)), Retransmit::Packet(_)));
+    assert!(matches!(media.packetizer.retransmit_packet(sequence, sent + Duration::from_millis(2250)), Retransmit::Expired));
+    media.configure_receiver_window(None, None);
+    assert!(media.metrics()["receiver_latency_ms"].is_null());
+    assert_eq!(media.metrics()["receiver_latency_estimated"], true);
+    assert!(matches!(media.packetizer.retransmit_packet(sequence, sent + Duration::from_millis(999)), Retransmit::Packet(_)));
+    assert!(matches!(media.packetizer.retransmit_packet(sequence, sent + Duration::from_secs(1)), Retransmit::Expired));
+}
+
+#[test]
+fn media_transport_explicit_latency_overrides_auto_window_including_zero() {
+    for latency in [Duration::ZERO, Duration::from_millis(100)] {
+        let (mut media, _, _) = media();
+        media.configure_receiver_window(Some(Duration::from_millis(50)), Some(Duration::from_secs(2)));
+        media.configure_latency(latency, false);
+        let sent = Instant::now();
+        let sequence = media.packetizer.seq;
+        media.send(&vec![0; PCM_BYTES], true, sent, sent, &Health::default()).unwrap();
+        assert_eq!(media.metrics()["receiver_latency_ms"], latency.as_secs_f64() * 1000.0);
+        assert_eq!(media.metrics()["receiver_latency_estimated"], false);
+        assert!(matches!(media.packetizer.retransmit_packet(sequence, sent + latency), Retransmit::Expired));
+    }
+}
+
+#[test]
 fn media_transport_explicit_100ms_deadline_is_not_extended() {
     for estimated in [true, false] {
         let (mut media, audio, control) = media();

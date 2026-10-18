@@ -43,6 +43,7 @@ public sealed class SessionTests
         var receiver = Pod() with { Model = model, SoftwareVersion = version, IsLeader = leader, StereoId = stereo, GroupId = group, Codecs = [0, 1, 2] };
         await controller.StartAsync(receiver, Settings()); await Until(() => controller.Snapshot.State == PlaybackState.Streaming);
         var parameters = process.Commands.Single(c => c.Command == "start").Parameters;
+        Assert.False(parameters.TryGetProperty("latency_policy", out _));
         Assert.Equal(ntpAlac ? "ntp" : "ptp", parameters.GetProperty("timing").GetString());
         Assert.Equal(ntpAlac ? [1] : new[] { 0, 1, 2 }, parameters.GetProperty("peers")[0].GetProperty("codecs").EnumerateArray().Select(c => c.GetInt32()).ToArray());
         Assert.Equal(ntpAlac ? 2000 : 200, parameters.Number("latency_ms"));

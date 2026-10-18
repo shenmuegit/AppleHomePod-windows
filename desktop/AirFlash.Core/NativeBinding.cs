@@ -82,8 +82,7 @@ public static class NativeBindingPolicy
     }
 
     public static string? PlaybackQualification(NativeBinding binding) => ValidateStored(binding)
-        ?? (binding.Calibration is null ? "Finish the measured Windows volume and audible reference calibration before enabling native output."
-            : binding.VerifiedBufferMs is null ? "This receiver needs an audible timing reference before native output can be enabled." : null);
+        ?? (binding.Calibration is null ? "Finish the measured Windows volume and audible reference calibration before enabling native output." : null);
 
     public static string? ValidateLive(NativeBinding binding, EndpointIdentity live)
     {

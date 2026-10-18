@@ -33,7 +33,7 @@ public sealed class NativeBindingTests
         json.Remove("verified_buffer_ms");
         var loaded = System.Text.Json.JsonSerializer.Deserialize<NativeBinding>(json, AppSettings.JsonOptions)!;
         Assert.Null(loaded.VerifiedBufferMs); Assert.Null(NativeBindingPolicy.ValidateStored(loaded));
-        Assert.NotNull(NativeBindingPolicy.PlaybackQualification(loaded));
+        Assert.Null(NativeBindingPolicy.PlaybackQualification(loaded));
     }
 
     [Theory]

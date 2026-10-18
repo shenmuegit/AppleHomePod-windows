@@ -114,7 +114,7 @@ fn main() {
             "hello" => send(
                 &request.id,
                 &request.session_id,
-                json!({"event":"hello","engine_version":env!("CARGO_PKG_VERSION"),"mode":"native","qualification":"partial","live_loopback":true,"commands":["hello","start","probe","stop","set_gain","set_equalizer","set_device_volume","pair","pair_pin","arm_capture","begin_capture","reset_capture","disarm_capture","set_capture_gate"],"production_ready":false}),
+                json!({"event":"hello","engine_version":env!("CARGO_PKG_VERSION"),"mode":"native","qualification":"partial","live_loopback":true,"latency_negotiation":true,"commands":["hello","start","probe","stop","set_gain","set_equalizer","set_device_volume","pair","pair_pin","arm_capture","begin_capture","reset_capture","disarm_capture","set_capture_gate"],"production_ready":false}),
             ),
             "arm_capture" => {
                 let result = (|| -> anyhow::Result<_> {

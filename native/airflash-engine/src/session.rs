@@ -60,6 +60,8 @@ pub struct ProbeOptions {
     pub latency_ms: Option<u32>,
     #[serde(default)]
     pub latency_max_ms: Option<u32>,
+    #[serde(default)]
+    pub latency_policy: crate::latency::Policy,
     pub gain: f32,
     #[serde(default)]
     pub equalizer: crate::equalizer::Settings,
@@ -133,6 +135,7 @@ impl ProbeOptions {
         );
         ensure!(self.latency_ms.is_some() || self.timing == "ntp", "PTP requires an explicit latency");
         ensure!(self.latency_max_ms.is_none_or(|max| max <= 2000 && self.latency_ms.is_some_and(|min| min <= max)), "latency maximum requires a valid minimum and must be within 0..2000 ms");
+        ensure!(self.latency_policy == crate::latency::Policy::Fixed || self.timing == "ntp" && self.latency_max_ms.is_none(), "automatic negotiation requires NTP and no explicit maximum");
         ensure!(
             self.gain.is_finite() && (0.0..=self.probe_gain_limit() as f32).contains(&self.gain),
             "probe gain must be 0..{}", self.probe_gain_limit()
@@ -188,9 +191,12 @@ fn audio_stream(options: &ProbeOptions, control_port: u16, key: &[u8], ssrc: u32
         ("supportsDynamicStreamID", Value::Boolean(false)),
         ("streamConnectionID", number(ssrc as u64)),
     ];
-    if let Some(ms) = options.latency_ms {
+    let requested = if options.latency_policy == crate::latency::Policy::Negotiate {
+        Some(crate::latency::offer(options.latency_ms))
+    } else { options.latency_ms.map(|ms| (ms, options.latency_max_ms.unwrap_or(ms))) };
+    if let Some((ms, max)) = requested {
         let samples = u64::from(ms) * u64::from(options.sample_rate) / 1000;
-        let maximum = u64::from(options.latency_max_ms.unwrap_or(ms)) * u64::from(options.sample_rate) / 1000;
+        let maximum = u64::from(max) * u64::from(options.sample_rate) / 1000;
         fields.extend([("latencyMin", number(samples)), ("latencyMax", number(maximum))]);
     }
     dictionary(fields)
@@ -422,11 +428,20 @@ impl Member {
         let effective_latency = receiver_latency
             .filter(|v| *v > 0 && *v <= rate as u64 * 10)
             .map(|samples| Duration::from_nanos(samples * 1_000_000_000 / rate as u64));
-        if let Some(latency) = effective_latency.or_else(|| fallback_latency(options)) {
-            member.media.configure_latency(latency, effective_latency.is_none());
-        }
+        let negotiation = if options.latency_policy == crate::latency::Policy::Negotiate {
+            let choice = crate::latency::select(options.latency_ms, rate, stream)
+                .map_err(|error| Fault::new(peer.host, "latency", "latency_negotiation_failed", false, format!("{error:#}")))?;
+            let (min, max) = choice.recovery_bounds(rate);
+            member.media.configure_receiver_window(min, max);
+            Some(choice)
+        } else {
+            if let Some(latency) = effective_latency.or_else(|| fallback_latency(options)) {
+                member.media.configure_latency(latency, effective_latency.is_none());
+            }
+            None
+        };
         emit(
-            json!({"event":"negotiated","host":peer.host,"data_port":data_port,"codec":if use_alac{"alac"}else{"pcm"},"sample_rate":rate,"control_port":member.remote_control,"requested_latency_ms":options.latency_ms,"receiver_latency_min_samples":receiver_latency,"receiver_latency_max_samples":stream.as_dictionary().and_then(|d|d.get("latencyMax")).and_then(Value::as_unsigned_integer),"arrival_to_render_latency_ms":stream.as_dictionary().and_then(|d|d.get("arrivalToRenderLatencyMs")).and_then(Value::as_unsigned_integer),"measured_latency_ms":null}),
+            json!({"event":"negotiated","host":peer.host,"data_port":data_port,"codec":if use_alac{"alac"}else{"pcm"},"sample_rate":rate,"control_port":member.remote_control,"requested_latency_ms":options.latency_ms,"receiver_latency_min_samples":receiver_latency,"receiver_latency_max_samples":stream.as_dictionary().and_then(|d|d.get("latencyMax")).and_then(Value::as_unsigned_integer),"arrival_to_render_latency_ms":stream.as_dictionary().and_then(|d|d.get("arrivalToRenderLatencyMs")).and_then(Value::as_unsigned_integer),"latency_negotiation":negotiation,"measured_latency_ms":null}),
         );
         Ok(member)
     }
@@ -805,6 +820,50 @@ fn transport_metrics(members: &[Member], schedule: &MediaSchedule) -> Json {
 mod tests {
     use super::*;
     #[test]
+    fn negotiation_keeps_known_offer_and_uses_a_window_for_unknown_devices() {
+        for (preferred, rate) in [(Some(100u32), 44100u32), (None, 44100), (None, 48000)] {
+            let parsed = serde_json::from_value::<ProbeOptions>(json!({"peers":[{"host":"127.0.0.1"}],"duration_ms":5000,"gain":1.0,"timing":"ntp","sample_rate":rate,"latency_ms":preferred,"latency_policy":"negotiate"}));
+            assert!(parsed.is_ok(), "native negotiation must be supported: {parsed:?}");
+            let options = parsed.unwrap(); options.validate().unwrap();
+            let stream = audio_stream(&options, 1234, &[7; 32], 42, true);
+            let fields = stream.as_dictionary().unwrap();
+            assert_eq!(fields["latencyMin"].as_unsigned_integer(), Some(u64::from(rate) * u64::from(preferred.unwrap_or(250)) / 1000));
+            assert_eq!(fields["latencyMax"].as_unsigned_integer(), Some(u64::from(rate) * u64::from(preferred.unwrap_or(2000)) / 1000));
+        }
+    }
+    #[test]
+    fn real_rtsp_setup_round_trip_selects_the_receiver_window_without_prefilling_audio() {
+        use std::net::TcpListener;
+        let options: ProbeOptions = serde_json::from_value(json!({"peers":[{"host":"127.0.0.1"}],"duration_ms":5000,"gain":1.0,"timing":"ntp","latency_policy":"negotiate"})).unwrap();
+        options.validate().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (socket, _) = listener.accept().unwrap();
+            let mut wire = Connection::from_stream(socket, Cancellation::default()).unwrap();
+            let request = wire.read().unwrap();
+            assert!(request.first.starts_with("SETUP "));
+            let body = request.plist().unwrap();
+            let stream = &body.as_dictionary().unwrap()["streams"].as_array().unwrap()[0];
+            assert_eq!(stream.as_dictionary().unwrap()["latencyMin"].as_unsigned_integer(), Some(11025));
+            assert_eq!(stream.as_dictionary().unwrap()["latencyMax"].as_unsigned_integer(), Some(88200));
+            let response = dictionary(vec![("streams", Value::Array(vec![dictionary(vec![
+                ("latencyMin", number(4410)), ("latencyMax", number(22050)), ("arrivalToRenderLatencyMs", number(70))
+            ])]))]);
+            let mut bytes = Vec::new(); response.to_writer_binary(&mut bytes).unwrap();
+            let mut reply = format!("RTSP/1.0 200 OK\r\nCSeq: {}\r\nContent-Length: {}\r\n\r\n", request.headers["cseq"], bytes.len()).into_bytes();
+            reply.extend(bytes); wire.write(&reply).unwrap();
+        });
+        let started = Instant::now();
+        let mut client = Connection::connect(address, Cancellation::default()).unwrap();
+        let response = client.plist_request("SETUP", "rtsp://127.0.0.1/negotiation", &dictionary(vec![("streams", Value::Array(vec![audio_stream(&options, 1234, &[7;32], 42, true)]))])).unwrap().plist().unwrap();
+        let stream = &response.as_dictionary().unwrap()["streams"].as_array().unwrap()[0];
+        let selected = crate::latency::select(None, 44100, stream).unwrap();
+        assert_eq!(selected.selected_ms, 100);
+        assert!(started.elapsed() < Duration::from_secs(1), "the 2s capacity must not become a startup wait");
+        server.join().unwrap();
+    }
+    #[test]
     fn ntp_without_requested_latency_uses_receiver_defaults() {
         for explicit_null in [false, true] {
             let mut params = json!({"peers":[{"host":"127.0.0.1"}],"duration_ms":5000,"gain":1.0,"timing":"ntp"});
@@ -917,6 +976,7 @@ mod tests {
             duration_ms: 5001,
             latency_ms: Some(200),
             latency_max_ms: None,
+            latency_policy: crate::latency::Policy::Fixed,
             gain: 0.1,
             equalizer: crate::equalizer::Settings::default(),
             sample_rate: 44100,

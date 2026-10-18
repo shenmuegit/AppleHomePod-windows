@@ -176,8 +176,8 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
     public SessionSnapshot Snapshot { get { lock (_sync) return _snapshot; } }
     public event Action<SessionSnapshot>? Changed;
     public bool Muted => _muted;
-    private int? Latency(Receiver receiver, AppSettings settings) => factory is NativeEngineHost ? settings.Latency(receiver.Id) : settings.Latency(receiver);
-    private string Signature(Receiver receiver, AppSettings settings) => $"{receiver.TransportKey}|{receiver.PrefersNtpAlac}|{settings.EffectiveEndpoint}|{Latency(receiver, settings)}|{settings.StreamSampleRate}";
+    private int? Latency(Receiver receiver, AppSettings settings) => factory is NativeEngineHost host ? host.VerifiedBufferMs : settings.Latency(receiver);
+    private string Signature(Receiver receiver, AppSettings settings) => $"{(factory is NativeEngineHost ? receiver.Id : "")}|{receiver.TransportKey}|{receiver.PrefersNtpAlac}|{settings.EffectiveEndpoint}|{Latency(receiver, settings)}|{settings.StreamSampleRate}";
     public async Task StartAsync(Receiver receiver, AppSettings settings)
     {
         if (!receiver.Complete) throw new InvalidOperationException(L.Get("Both stereo pair members must be online."));
@@ -320,13 +320,15 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
                 SetConnection(connection, session);
                 try
                 {
-                    lock (_sync) { if (epoch == _generation) { _diagnostics = _diagnostics with { Transport = null, Warnings = [] }; _warnings.Clear(); _deviceVolume = new(); _volumeEdit?.Cancel(); _snapshot = _snapshot with { Metrics = null }; } }
+                    lock (_sync) { if (epoch == _generation) { _diagnostics = _diagnostics with { Transport = null, Warnings = [], Latency = null }; _warnings.Clear(); _deviceVolume = new(); _volumeEdit?.Cancel(); _snapshot = _snapshot with { Metrics = null }; } }
                     Publish(epoch, PlaybackState.Connecting, attempts > 0 ? L.Format("Reconnecting ({0}/{1})", attempts, settings.MaxReconnectAttempts) : L.Get("Connecting…"));
                     var deadline = DateTime.UtcNow + _timing.Connect;
                     await _equalizerWriter.WaitAsync(cancellation).ConfigureAwait(false);
                     try
                     {
-                        await connection.SendAsync(session, "start", new { peers, source = "loopback", duration_ms = 0, latency_ms = Latency(receiver, settings), gain = Gain(receiver), timing = receiver.PrefersNtpAlac ? "ntp" : "ptp", capture_endpoint = settings.EffectiveEndpoint, sample_rate = int.Parse(settings.StreamSampleRate), equalizer = EffectiveEqualizer().WireParameters() }, cancellation).ConfigureAwait(false);
+                        var parameters = JsonSerializer.SerializeToNode(new { peers, source = "loopback", duration_ms = 0, latency_ms = Latency(receiver, settings), gain = Gain(receiver), timing = receiver.PrefersNtpAlac ? "ntp" : "ptp", capture_endpoint = settings.EffectiveEndpoint, sample_rate = int.Parse(settings.StreamSampleRate), equalizer = EffectiveEqualizer().WireParameters() })!.AsObject();
+                        if (factory is NativeEngineHost) parameters["latency_policy"] = "negotiate";
+                        await connection.SendAsync(session, "start", parameters, cancellation).ConfigureAwait(false);
                         lock (_sync) { if (epoch == _generation && ReferenceEquals(_connection, connection)) _equalizerReady = factory is not NativeEngineHost; }
                     }
                     finally { _equalizerWriter.Release(); }
@@ -348,9 +350,18 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
                         if (kind == "streaming")
                         {
                             startedAt = Stopwatch.GetTimestamp();
-                            var target = Latency(receiver, settings) is { } ms ? $"target latency {ms} ms" : "receiver-default latency (not measured)";
+                            var target = Snapshot.TargetLatency is { } ms ? $"target latency {ms} ms"
+                                : factory is NativeEngineHost ? "latency negotiation pending (not measured)" : "receiver-default latency (not measured)";
                             log?.Invoke($"Streaming started: {receiver.Id}; {target}; reconnect attempts {attempts}");
                             Publish(epoch, PlaybackState.Streaming, _localMuteWarning);
+                        }
+                        else if (kind == "negotiated" && factory is NativeEngineHost && item.Text("host") == volumeHost
+                            && LatencyNegotiation.Parse(item, Latency(receiver, settings)) is { } latency
+                            && uint.TryParse(settings.StreamSampleRate, out var requestedRate) && latency.SampleRate == requestedRate)
+                        {
+                            lock (_sync) { if (epoch != _generation) continue; _diagnostics = _diagnostics with { Latency = latency }; }
+                            log?.Invoke("Native latency negotiated: " + JsonSerializer.Serialize(latency));
+                            PublishCurrent(epoch);
                         }
                         else if (kind == "device_volume" && startedAt != 0 && item.Text("host") == volumeHost)
                         {
@@ -414,6 +425,7 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
                 if (!_settings.ForceReconnect || attempts > _settings.MaxReconnectAttempts || notice.Retryable == false || notice.Retryable is null && IsAuthenticationFailure(error.Message)) return;
             }
             var delay = TimeSpan.FromMilliseconds(Math.Min(_timing.Retry.TotalMilliseconds * Math.Pow(2, attempts - 1), 8000));
+            lock (_sync) { if (epoch == _generation) _diagnostics = _diagnostics with { Latency = null }; }
             Publish(epoch, PlaybackState.Connecting, L.Format("Disconnected; reconnecting ({0}/{1})", attempts, _settings.MaxReconnectAttempts));
             await Task.Delay(delay, cancellation).ConfigureAwait(false);
             lock (_sync) { if (epoch == _generation) _diagnostics = _diagnostics with { ReconnectCount = _diagnostics.ReconnectCount + 1 }; }
@@ -522,7 +534,7 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
         lock (_sync)
         {
             if (epoch != _generation) return;
-            snapshot = new(state, _receiver, message, metrics ?? _snapshot.Metrics, _receiver is null ? null : Latency(_receiver, _settings), _diagnostics, int.TryParse(_settings.StreamSampleRate, out var streamRate) ? streamRate : 0, _deviceVolume);
+            snapshot = new(state, _receiver, message, metrics ?? _snapshot.Metrics, _receiver is null ? null : factory is NativeEngineHost ? _diagnostics.Latency?.SelectedMs : Latency(_receiver, _settings), _diagnostics, int.TryParse(_settings.StreamSampleRate, out var streamRate) ? streamRate : 0, _deviceVolume);
             _snapshot = snapshot;
         }
         Changed?.Invoke(snapshot);

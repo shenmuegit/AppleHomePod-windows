@@ -77,8 +77,7 @@ internal static class NativeOutputCheck
                         throw new InvalidOperationException("The receiver's actual volume changed since listening confirmation. No calibration was saved.");
                     var current=await NativeVolumeCalibration.ReadBoundAsync(timeout.Token).ConfigureAwait(false);
                     if (current!=binding) throw new IOException("The binding changed during calibration; its contents were preserved.");
-                    await new NativeBindingStore(WindowsNativeBinding.BindingPath).SaveAsync(binding with { Calibration=proposed.Calibration,
-                        VerifiedBufferMs=binding.VerifiedBufferMs ?? NativeVolumeCalibration.ReferenceBufferMs },timeout.Token).ConfigureAwait(false);
+                    await new NativeBindingStore(WindowsNativeBinding.BindingPath).SaveAsync(binding with { Calibration=proposed.Calibration },timeout.Token).ConfigureAwait(false);
                 }
                 Write(output!,new { ok=true,stage="native-calibration",calibrated=confirmed is not null,
                     requires_listening_confirmation=confirmed is null,reference_device_volume=proposed.Calibration.ResumeDeviceVolume,

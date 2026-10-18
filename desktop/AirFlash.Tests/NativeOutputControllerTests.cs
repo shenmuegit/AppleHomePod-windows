@@ -5,6 +5,150 @@ namespace AirFlash.Tests;
 
 public sealed class NativeOutputControllerTests
 {
+    [Theory]
+    [InlineData(null)]
+    [InlineData(75)]
+    [InlineData(350)]
+    public async Task NativeStartsWithOnlyItsOwnNullableTimingPreference(int? preference)
+    {
+        await using var f = await Fixture.Create(bufferMs: preference);
+        f.Monitor.Select(true); f.Start();
+        await Until(() => f.Starts.Count == 1 && f.Session.Snapshot.State == PlaybackState.Streaming);
+        var start = f.Starts.Single().Params;
+        Assert.Equal("negotiate", start.Text("latency_policy"));
+        Assert.Equal(preference, start.Number("latency_ms"));
+        Assert.Null(f.Session.Snapshot.TargetLatency);
+    }
+    [Fact]
+    public async Task LegacySettingsCannotOverrideTheArmedNativePreference()
+    {
+        await using var f = await Fixture.Create(bufferMs: 75);
+        await f.Session.StartAsync(f.Receiver, new() { CaptureMode = "endpoint", CaptureEndpoint = "endpoint-1", StreamSampleRate = "44100",
+            LatencyMode = "custom", CustomBufferMs = 2000, ForceReconnect = false });
+        await Until(() => f.Session.Snapshot.State == PlaybackState.Streaming);
+        Assert.Equal(75, f.Starts.Single().Params.Number("latency_ms"));
+    }
+    private static System.Text.Json.Nodes.JsonObject Negotiation(int? preference = 100, int selected = 125) =>
+        System.Text.Json.JsonSerializer.SerializeToNode(new { @event = "negotiated", host = "127.0.0.1", sample_rate = 44100,
+            latency_negotiation = new { policy = "negotiate", preferred_ms = preference, offered_min_ms = 50, offered_max_ms = 500,
+                receiver_min_samples = (uint?)2205, receiver_max_samples = (uint?)22050, selected_ms = selected,
+                source = "receiver_window", fallback_reason = (string?)null, arrival_to_render_ms = (double?)70 } })!.AsObject();
+    [Fact]
+    public async Task ReceiverWindowCanOverrideTheRequestedKnownReference()
+    {
+        await using var f = await Fixture.Create(); f.Monitor.Select(true); f.Start();
+        await Until(() => f.Session.Snapshot.State == PlaybackState.Streaming);
+        var item = Negotiation(selected: 200); var metadata = item["latency_negotiation"]!.AsObject();
+        metadata["offered_min_ms"] = 100; metadata["offered_max_ms"] = 100;
+        metadata["receiver_min_samples"] = 8820; metadata["receiver_max_samples"] = 35280;
+        f.Wire.Event(f.StreamId, item);
+        await Until(() => f.Session.Snapshot.TargetLatency == 200);
+        Assert.Equal(70, f.Session.Snapshot.Diagnostics!.Latency!.ArrivalToRenderMs);
+        Assert.Equal(100, f.Host.VerifiedBufferMs);
+    }
+    [Fact]
+    public async Task NegotiatedTargetIsSeparateFromPreferenceAndHealthyRenderLatency()
+    {
+        await using var f = await Fixture.Create(); f.Monitor.Select(true); f.Start();
+        await Until(() => f.Gates.Any(c => c.Params.Boolean("open") == true));
+        f.Wire.Event(f.StreamId, Negotiation());
+        await Until(() => f.Session.Snapshot.TargetLatency == 125);
+        var latency = f.Session.Snapshot.Diagnostics!.Latency!;
+        Assert.Equal(100, latency.PreferredMs); Assert.Equal(70, latency.ArrivalToRenderMs);
+        Assert.Equal(100, f.Host.VerifiedBufferMs);
+        f.Wire.Event(f.StreamId, new { @event = "transport_metrics", members = new[] { new { host = "127.0.0.1", media = new { receiver_latency_ms = 999 } } } });
+        await Until(() => f.Session.Snapshot.Diagnostics?.Transport is not null);
+        Assert.Equal(125, f.Session.Snapshot.TargetLatency);
+        f.Monitor.Select(false); await Until(() => f.Wire.Commands.Any(c => c.Command == "reset_capture"));
+        f.Monitor.Select(true); await Until(() => f.Starts.Count == 2);
+        Assert.Equal(100, f.Starts.Last().Params.Number("latency_ms"));
+        Assert.Null(f.Session.Snapshot.TargetLatency);
+        Assert.Null(f.Session.Snapshot.Diagnostics!.Latency);
+    }
+    [Theory]
+    [InlineData("host", "wrong")]
+    [InlineData("sample_rate", "different_stream")]
+    [InlineData("policy", "fixed")]
+    [InlineData("preferred_ms", "stale")]
+    [InlineData("selected_ms", "negative")]
+    [InlineData("selected_ms", "large")]
+    [InlineData("selected_ms", "string")]
+    [InlineData("selected_ms", "outside_offer")]
+    [InlineData("offered_min_ms", "inverted")]
+    [InlineData("receiver_min_samples", "negative")]
+    [InlineData("receiver_max_samples", "overflow")]
+    [InlineData("source", "unknown")]
+    [InlineData("arrival_to_render_ms", "negative")]
+    [InlineData("fallback_reason", "number")]
+    [InlineData("selected_ms", "missing")]
+    public async Task InvalidNegotiationCannotChangeCurrentTarget(string field, string invalid)
+    {
+        await using var f = await Fixture.Create(); f.Monitor.Select(true); f.Start();
+        await Until(() => f.Session.Snapshot.State == PlaybackState.Streaming);
+        var item = Negotiation(); var metadata = item["latency_negotiation"]!.AsObject();
+        if (field == "host") item[field] = "127.0.0.2";
+        else if (field == "sample_rate") item[field] = 48000;
+        else if (invalid == "missing") metadata.Remove(field);
+        else metadata[field] = invalid switch { "fixed" => System.Text.Json.Nodes.JsonValue.Create("fixed"),
+            "unknown" => System.Text.Json.Nodes.JsonValue.Create("invented"), "string" => System.Text.Json.Nodes.JsonValue.Create("125"),
+            "stale" => System.Text.Json.Nodes.JsonValue.Create(350), "large" => System.Text.Json.Nodes.JsonValue.Create(2001),
+            "outside_offer" => System.Text.Json.Nodes.JsonValue.Create(750), "inverted" => System.Text.Json.Nodes.JsonValue.Create(501),
+            "overflow" => System.Text.Json.Nodes.JsonValue.Create(4294967296L), "number" => System.Text.Json.Nodes.JsonValue.Create(1),
+            _ => System.Text.Json.Nodes.JsonValue.Create(-1) };
+        f.Wire.Event(f.StreamId, item);
+        f.Wire.Event(f.StreamId, new { @event = "capture_metrics", metrics = new { underrun_packets = 22 } });
+        await Until(() => f.Session.Snapshot.Metrics?.Underruns == 22);
+        Assert.Null(f.Session.Snapshot.TargetLatency);
+        Assert.Null(f.Session.Snapshot.Diagnostics!.Latency);
+        Assert.Equal(PlaybackState.Streaming, f.Session.Snapshot.State);
+    }
+    [Fact]
+    public async Task ReconnectClearsNegotiationAndIgnoresOldSessionMetadata()
+    {
+        await using var f = await Fixture.Create(); f.Monitor.Select(true); f.Start();
+        await Until(() => f.Session.Snapshot.State == PlaybackState.Streaming);
+        var old = f.StreamId; f.Wire.Event(old, Negotiation());
+        await Until(() => f.Session.Snapshot.TargetLatency == 125);
+        f.Wire.Event(old, new { @event = "error", message = "network disconnected", retryable = true });
+        await Until(() => f.Starts.Count == 2 && f.Session.Snapshot.State == PlaybackState.Streaming);
+        Assert.Null(f.Session.Snapshot.TargetLatency);
+        f.Wire.Event(old, Negotiation(selected: 200));
+        f.Wire.Event(f.StreamId, new { @event = "capture_metrics", metrics = new { underrun_packets = 23 } });
+        await Until(() => f.Session.Snapshot.Metrics?.Underruns == 23);
+        Assert.Null(f.Session.Snapshot.TargetLatency);
+        f.Wire.Event(f.StreamId, Negotiation(selected: 175));
+        await Until(() => f.Session.Snapshot.TargetLatency == 175);
+    }
+    [Theory]
+    [InlineData(null, 250, "compatibility_fallback")]
+    [InlineData(100, 100, "verified_reference")]
+    public async Task ReceiverWithoutBoundsReportsFallbackOrItsVerifiedReference(int? preference, int selected, string source)
+    {
+        await using var f = await Fixture.Create(bufferMs: preference); f.Monitor.Select(true); f.Start();
+        await Until(() => f.Session.Snapshot.State == PlaybackState.Streaming);
+        var item = Negotiation(preference, selected); var metadata = item["latency_negotiation"]!.AsObject();
+        metadata["offered_min_ms"] = selected; metadata["offered_max_ms"] = preference is null ? 2000 : selected;
+        metadata["receiver_min_samples"] = null; metadata["receiver_max_samples"] = null;
+        metadata["source"] = source; metadata["fallback_reason"] = "receiver_bounds_missing";
+        metadata["arrival_to_render_ms"] = null;
+        f.Wire.Event(f.StreamId, item);
+        await Until(() => f.Session.Snapshot.TargetLatency == selected);
+        Assert.Equal(source, f.Session.Snapshot.Diagnostics!.Latency!.Source);
+        Assert.Equal(preference, f.Host.VerifiedBufferMs);
+    }
+    [Fact]
+    public async Task ChangedNativeIdentityAtTheSameAddressCannotKeepThePreviousTarget()
+    {
+        await using var f = await Fixture.Create();
+        var settings = new AppSettings { CaptureMode = "endpoint", CaptureEndpoint = "endpoint-1", StreamSampleRate = "44100", ForceReconnect = false };
+        await f.Session.StartAsync(f.Receiver, settings);
+        await Until(() => f.Session.Snapshot.State == PlaybackState.Streaming);
+        f.Wire.Event(f.StreamId, Negotiation()); await Until(() => f.Session.Snapshot.TargetLatency == 125);
+        await f.Session.UpdateReceiverAsync(f.Receiver with { Id = "replacement-receiver" }, settings);
+        Assert.Null(f.Session.Snapshot.TargetLatency);
+        Assert.Null(f.Session.Snapshot.Diagnostics!.Latency);
+        await Until(() => f.Starts.Count == 2);
+    }
     [Fact]
     public async Task NativeMasterWritesReceiverWithoutRepeatingWindowsAttenuationInPcm()
     {
@@ -110,7 +254,7 @@ public sealed class NativeOutputControllerTests
         Assert.Single(f.Starts); Assert.Equal(0, f.Monitor.PhysicalMuteCalls);
         var start = f.Starts.Single().Params;
         Assert.Equal("ntp", start.Text("timing")); Assert.Equal(bufferMs, start.Number("latency_ms"));
-        Assert.Equal(bufferMs, f.Session.Snapshot.TargetLatency);
+        Assert.Null(f.Session.Snapshot.TargetLatency);
         Assert.Equal(44100, start.Number("sample_rate")); Assert.False(start.GetProperty("equalizer").GetProperty("enabled").GetBoolean());
         Assert.DoesNotContain(f.Wire.Commands, c => c.Command == "set_equalizer");
         Assert.Contains(f.Wire.Commands, c => c.Command == "set_device_volume" && c.Params.Number("volume") == 1);

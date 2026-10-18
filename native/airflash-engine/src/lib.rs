@@ -2,6 +2,7 @@ pub mod auth;
 pub mod clock;
 pub mod crypto;
 pub mod equalizer;
+pub mod latency;
 pub mod rtp;
 pub mod rtsp;
 pub mod session;

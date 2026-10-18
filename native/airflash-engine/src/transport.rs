@@ -418,6 +418,7 @@ pub struct MediaTransport {
     remote: SocketAddr,
     pending: VecDeque<(u16, SocketAddr)>,
     latency: Option<Duration>,
+    recovery_window: Option<Duration>,
     estimated: bool,
     last_success: Instant,
     send_warning: bool,
@@ -439,6 +440,7 @@ impl MediaTransport {
             remote,
             pending: VecDeque::new(),
             latency: None,
+            recovery_window: None,
             estimated: true,
             last_success: Instant::now(),
             send_warning: false,
@@ -446,8 +448,16 @@ impl MediaTransport {
     }
     pub fn configure_latency(&mut self, latency: Duration, estimated: bool) {
         self.latency = Some(latency);
+        self.recovery_window = Some(latency);
         self.estimated = estimated;
         self.packetizer.configure_latency(latency);
+    }
+    pub fn configure_receiver_window(&mut self, min: Option<Duration>, max: Option<Duration>) {
+        self.latency = min;
+        self.estimated = min.is_none();
+        // A receiver minimum does not establish when it will play a packet.
+        self.recovery_window = max;
+        self.packetizer.configure_latency(max.unwrap_or(Duration::ZERO));
     }
     pub fn control_port(&self) -> Result<u16> {
         Ok(self.control.local_addr()?.port())
@@ -483,7 +493,7 @@ impl MediaTransport {
         health: &Health,
     ) -> Result<()> {
         health.check()?;
-        let deadline = self.latency.map_or(now + Duration::from_secs(1), |latency| media_time + latency);
+        let deadline = self.recovery_window.map_or(now + Duration::from_secs(1), |window| media_time + window);
         let packet = self
             .packetizer
             .packet_at(pcm, first, now, deadline)?;

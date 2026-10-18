@@ -15,6 +15,21 @@ public sealed class NativeEngineHostTests
             return new(1, "receiver-1", endpoint, "CABLE Input", "HomePod – da", new(false, endpoint.MixFormat, endpoint.DriverSha256, 0, 38));
         }
     }
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"latency_negotiation\":false}")]
+    [InlineData("{\"latency_negotiation\":\"true\"}")]
+    public async Task NativeHelloRejectsAnEngineWithoutNegotiationCapability(string capability)
+    {
+        var wire = new WireConnection { HelloReplies = false };
+        await using var host = new NativeEngineHost(wire, 42);
+        var hello = EngineHandshake.HelloAsync(host);
+        await Until(() => wire.Commands.Any(c => c.Command == "hello"));
+        var reply = JsonSerializer.Deserialize<System.Text.Json.Nodes.JsonObject>(capability)!; reply["event"] = "hello";
+        wire.Event("check", reply);
+        var error = await Assert.ThrowsAsync<IOException>(() => hello);
+        Assert.Contains("negotiation", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
     [Fact]
     public async Task LeaseCancellationDoesNotCancelHalfLinePumpOrLoseNextSession()
     {
@@ -212,7 +227,7 @@ public sealed class NativeEngineHostTests
                 case "begin_capture": Event(session, new { @event = "capture_begun", capture_id = p.Text("capture_id"), epoch = p.Integer("epoch") }); break;
                 case "reset_capture": Event(session, new { @event = "capture_reset", capture_id = p.Text("capture_id"), epoch = p.Integer("epoch") + 1 }); break;
                 case "set_capture_gate": Event(session, new { @event = "capture_gate", capture_id = p.Text("capture_id"), epoch = p.Integer("epoch"), open = p.Boolean("open") }); break;
-                case "hello" when HelloReplies: Event(session, new { @event = "hello" }); break;
+                case "hello" when HelloReplies: Event(session, new { @event = "hello", latency_negotiation = true }); break;
                 case "set_device_volume" when VolumeReplies: Volume(session, (int)p.Integer("volume")!.Value, p.Integer("sequence")!.Value); break;
                 case "stop" when StopReplies: Event(session, new { @event = "stopped" }); break;
                 case "start":

@@ -23,6 +23,7 @@ public sealed class NativeEngineHost : IEngineFactory, IAsyncDisposable
     private Lease? _transport;
     public int ProcessId { get; }
     public ulong CaptureEpoch => Volatile.Read(ref _epoch);
+    public int? VerifiedBufferMs => _binding?.VerifiedBufferMs;
     public string? CaptureSessionInstanceId { get; private set; }
     public Task Completion => _completion.Task;
     public NativeEngineHost(IEngineConnection connection, int processId)
