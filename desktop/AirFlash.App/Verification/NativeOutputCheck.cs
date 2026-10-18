@@ -36,7 +36,7 @@ internal static class NativeOutputCheck
                 var task = await NativeAutostart.InspectAsync(NativeAutostart.InstalledExecutable, timeout.Token).ConfigureAwait(false);
                 Write(output!, new { ok = true, stage = "native-check", headless_dispatch = NativeStartupPolicy.IsHeadless(["--native-agent"]),
                     wpf_initialized = Application.Current is not null, normal_window_count = Application.Current?.Windows.Count ?? 0, daily_tray_registered = false,
-                    binding_present = binding is not null, can_enable = gate is null, qualification_error = gate, task_schema_valid = schema,
+                    binding_present = binding is not null, verified_buffer_ms = binding?.VerifiedBufferMs, can_enable = gate is null, qualification_error = gate, task_schema_valid = schema,
                     reboot_verified = binding is not null && File.Exists(WindowsNativeBinding.PreflightPath) && WindowsNativeBinding.RebootedSincePreinstall(),
                     task_exists = task.Exists, task_owned = task.Owned, ready = await NativeAutostart.QueryReadyAsync(timeout.Token).ConfigureAwait(false),
                     engine_started = false, capture_started = false, uses_service = false, stores_password = false,

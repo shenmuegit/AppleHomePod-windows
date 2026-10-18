@@ -170,6 +170,10 @@ fn string(s: impl Into<String>) -> Value {
 fn number(n: u64) -> Value {
     Value::Integer(n.into())
 }
+fn fallback_latency(options: &ProbeOptions) -> Option<Duration> {
+    options.latency_ms.filter(|min| options.latency_max_ms.is_none_or(|max| max == *min))
+        .map(|ms| Duration::from_millis(u64::from(ms)))
+}
 fn audio_stream(options: &ProbeOptions, control_port: u16, key: &[u8], ssrc: u32, alac: bool) -> Value {
     let mut fields = vec![
         ("audioFormat", number(crate::rtp::audio_format(alac, options.sample_rate))),
@@ -418,7 +422,7 @@ impl Member {
         let effective_latency = receiver_latency
             .filter(|v| *v > 0 && *v <= rate as u64 * 10)
             .map(|samples| Duration::from_nanos(samples * 1_000_000_000 / rate as u64));
-        if let Some(latency) = effective_latency.or_else(|| options.latency_ms.map(|ms| Duration::from_millis(u64::from(ms)))) {
+        if let Some(latency) = effective_latency.or_else(|| fallback_latency(options)) {
             member.media.configure_latency(latency, effective_latency.is_none());
         }
         emit(
@@ -853,6 +857,18 @@ mod tests {
             let invalid: ProbeOptions = serde_json::from_value(invalid).unwrap();
             assert!(invalid.validate().is_err());
         }
+    }
+    #[test]
+    fn range_fallback_does_not_expire_packets_at_its_lower_bound() {
+        let mut options: ProbeOptions = serde_json::from_value(json!({"peers":[{"host":"127.0.0.1"}],"duration_ms":5000,"gain":1.0,"timing":"ntp","latency_ms":50,"latency_max_ms":100})).unwrap();
+        assert_eq!(fallback_latency(&options), None, "a requested lower bound is not the receiver's actual playout deadline");
+        options.latency_max_ms = Some(50);
+        assert_eq!(fallback_latency(&options), Some(Duration::from_millis(50)));
+        options.latency_max_ms = None;
+        options.latency_ms = Some(0);
+        assert_eq!(fallback_latency(&options), Some(Duration::ZERO));
+        options.latency_ms = None;
+        assert_eq!(fallback_latency(&options), None);
     }
     #[test]
     fn finite_wav_full_gain_preserves_quiet_samples() {
