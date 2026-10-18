@@ -62,6 +62,8 @@ pub struct ProbeOptions {
     pub latency_max_ms: Option<u32>,
     #[serde(default)]
     pub latency_policy: crate::latency::Policy,
+    #[serde(default)]
+    pub latency_reference_ms: Option<u32>,
     pub gain: f32,
     #[serde(default)]
     pub equalizer: crate::equalizer::Settings,
@@ -136,6 +138,8 @@ impl ProbeOptions {
         ensure!(self.latency_ms.is_some() || self.timing == "ntp", "PTP requires an explicit latency");
         ensure!(self.latency_max_ms.is_none_or(|max| max <= 2000 && self.latency_ms.is_some_and(|min| min <= max)), "latency maximum requires a valid minimum and must be within 0..2000 ms");
         ensure!(self.latency_policy == crate::latency::Policy::Fixed || self.timing == "ntp" && self.latency_max_ms.is_none(), "automatic negotiation requires NTP and no explicit maximum");
+        ensure!(self.latency_reference_ms.is_none_or(|ms| ms <= 2000) && (self.latency_reference_ms.is_none() || self.latency_policy == crate::latency::Policy::Apply), "original timing reference is only valid while applying a negotiated request");
+        ensure!(self.latency_policy != crate::latency::Policy::Apply || self.latency_ms.is_some(), "applying negotiation requires the selected timing request");
         ensure!(
             self.gain.is_finite() && (0.0..=self.probe_gain_limit() as f32).contains(&self.gain),
             "probe gain must be 0..{}", self.probe_gain_limit()
@@ -428,8 +432,12 @@ impl Member {
         let effective_latency = receiver_latency
             .filter(|v| *v > 0 && *v <= rate as u64 * 10)
             .map(|samples| Duration::from_nanos(samples * 1_000_000_000 / rate as u64));
-        let negotiation = if options.latency_policy == crate::latency::Policy::Negotiate {
-            let choice = crate::latency::select(options.latency_ms, rate, stream)
+        let negotiation = if options.latency_policy != crate::latency::Policy::Fixed {
+            let choice = match options.latency_policy {
+                crate::latency::Policy::Negotiate => crate::latency::select(options.latency_ms, rate, stream),
+                crate::latency::Policy::Apply => crate::latency::apply(options.latency_ms.context("missing negotiated request")?, options.latency_reference_ms, rate, stream),
+                crate::latency::Policy::Fixed => unreachable!(),
+            }
                 .map_err(|error| Fault::new(peer.host, "latency", "latency_negotiation_failed", false, format!("{error:#}")))?;
             let (min, max) = choice.recovery_bounds(rate);
             member.media.configure_receiver_window(min, max);
@@ -839,20 +847,22 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server = thread::spawn(move || {
-            let (socket, _) = listener.accept().unwrap();
-            let mut wire = Connection::from_stream(socket, Cancellation::default()).unwrap();
-            let request = wire.read().unwrap();
-            assert!(request.first.starts_with("SETUP "));
-            let body = request.plist().unwrap();
-            let stream = &body.as_dictionary().unwrap()["streams"].as_array().unwrap()[0];
-            assert_eq!(stream.as_dictionary().unwrap()["latencyMin"].as_unsigned_integer(), Some(11025));
-            assert_eq!(stream.as_dictionary().unwrap()["latencyMax"].as_unsigned_integer(), Some(88200));
-            let response = dictionary(vec![("streams", Value::Array(vec![dictionary(vec![
-                ("latencyMin", number(4410)), ("latencyMax", number(22050)), ("arrivalToRenderLatencyMs", number(70))
-            ])]))]);
-            let mut bytes = Vec::new(); response.to_writer_binary(&mut bytes).unwrap();
-            let mut reply = format!("RTSP/1.0 200 OK\r\nCSeq: {}\r\nContent-Length: {}\r\n\r\n", request.headers["cseq"], bytes.len()).into_bytes();
-            reply.extend(bytes); wire.write(&reply).unwrap();
+            for (minimum, maximum) in [(11025, 88200), (4410, 4410)] {
+                let (socket, _) = listener.accept().unwrap();
+                let mut wire = Connection::from_stream(socket, Cancellation::default()).unwrap();
+                let request = wire.read().unwrap();
+                assert!(request.first.starts_with("SETUP "));
+                let body = request.plist().unwrap();
+                let stream = &body.as_dictionary().unwrap()["streams"].as_array().unwrap()[0];
+                assert_eq!(stream.as_dictionary().unwrap()["latencyMin"].as_unsigned_integer(), Some(minimum));
+                assert_eq!(stream.as_dictionary().unwrap()["latencyMax"].as_unsigned_integer(), Some(maximum));
+                let response = dictionary(vec![("streams", Value::Array(vec![dictionary(vec![
+                    ("latencyMin", number(4410)), ("latencyMax", number(22050)), ("arrivalToRenderLatencyMs", number(70))
+                ])]))]);
+                let mut bytes = Vec::new(); response.to_writer_binary(&mut bytes).unwrap();
+                let mut reply = format!("RTSP/1.0 200 OK\r\nCSeq: {}\r\nContent-Length: {}\r\n\r\n", request.headers["cseq"], bytes.len()).into_bytes();
+                reply.extend(bytes); wire.write(&reply).unwrap();
+            }
         });
         let started = Instant::now();
         let mut client = Connection::connect(address, Cancellation::default()).unwrap();
@@ -860,8 +870,34 @@ mod tests {
         let stream = &response.as_dictionary().unwrap()["streams"].as_array().unwrap()[0];
         let selected = crate::latency::select(None, 44100, stream).unwrap();
         assert_eq!(selected.selected_ms, 100);
+        assert_eq!(selected.applied_ms, None);
+        drop(client);
+        let mut applied_options = options;
+        applied_options.latency_policy = crate::latency::Policy::Apply;
+        applied_options.latency_ms = Some(selected.selected_ms);
+        applied_options.validate().unwrap();
+        let mut client = Connection::connect(address, Cancellation::default()).unwrap();
+        let response = client.plist_request("SETUP", "rtsp://127.0.0.1/negotiation", &dictionary(vec![("streams", Value::Array(vec![audio_stream(&applied_options, 1234, &[7;32], 42, true)]))])).unwrap().plist().unwrap();
+        let stream = &response.as_dictionary().unwrap()["streams"].as_array().unwrap()[0];
+        let applied = crate::latency::apply(selected.selected_ms, None, 44100, stream).unwrap();
+        assert_eq!(applied.applied_ms, Some(100));
         assert!(started.elapsed() < Duration::from_secs(1), "the 2s capacity must not become a startup wait");
         server.join().unwrap();
+    }
+    #[test]
+    fn applying_requires_a_candidate_and_keeps_original_reference_separate() {
+        let base = json!({"peers":[{"host":"127.0.0.1"}],"duration_ms":5000,"gain":1.0,"timing":"ntp","latency_policy":"apply","latency_ms":200,"latency_reference_ms":100});
+        let options: ProbeOptions = serde_json::from_value(base.clone()).unwrap();
+        options.validate().unwrap();
+        let stream = audio_stream(&options, 1234, &[7;32], 42, true);
+        for key in ["latencyMin", "latencyMax"] {
+            assert_eq!(stream.as_dictionary().unwrap()[key].as_unsigned_integer(), Some(8820));
+        }
+        for (key, invalid) in [("latency_ms", Json::Null), ("latency_reference_ms", json!(2001)), ("latency_policy", json!("negotiate")), ("latency_policy", json!("fixed")), ("timing", json!("ptp")), ("latency_max_ms", json!(300))] {
+            let mut params = base.clone(); params[key] = invalid;
+            let invalid: ProbeOptions = serde_json::from_value(params).unwrap();
+            assert!(invalid.validate().is_err(), "invalid Apply fields must be rejected: {key}");
+        }
     }
     #[test]
     fn ntp_without_requested_latency_uses_receiver_defaults() {
@@ -977,6 +1013,7 @@ mod tests {
             latency_ms: Some(200),
             latency_max_ms: None,
             latency_policy: crate::latency::Policy::Fixed,
+            latency_reference_ms: None,
             gain: 0.1,
             equalizer: crate::equalizer::Settings::default(),
             sample_rate: 44100,

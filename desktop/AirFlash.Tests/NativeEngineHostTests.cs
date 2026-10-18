@@ -177,7 +177,7 @@ public sealed class NativeEngineHostTests
         var releaseStart = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var wire = new WireConnection { StartHold = releaseStart, StreamReplies = true };
         await using var host = new NativeEngineHost(wire, 42);
-        await host.ArmAsync(Binding, default); await host.BeginCaptureAsync(default);
+        await host.ArmAsync(Binding with { VerifiedBufferMs = 100 }, default); await host.BeginCaptureAsync(default);
         await using var session = new SessionController(host, new NativeAudio());
         await session.SetNativeGainAsync(0);
         await session.StartAsync(new("receiver-1", "da", "127.0.0.1"), new() { CaptureMode = "endpoint", CaptureEndpoint = "endpoint-1", StreamSampleRate = "44100", MuteWhileStreaming = false, ForceReconnect = false });
@@ -232,6 +232,19 @@ public sealed class NativeEngineHostTests
                 case "stop" when StopReplies: Event(session, new { @event = "stopped" }); break;
                 case "start":
                     if (StartHold is not null) await StartHold.Task.WaitAsync(cancellation);
+                    if (StreamReplies && p.Text("latency_policy") is "negotiate" or "apply")
+                    {
+                        var applying = p.Text("latency_policy") == "apply";
+                        var reference = p.Integer(applying ? "latency_reference_ms" : "latency_ms");
+                        var selected = applying ? p.Integer("latency_ms")!.Value : reference ?? 250;
+                        var min = applying ? selected : reference ?? 250; var max = applying ? selected : reference ?? 2000;
+                        Event(session, new { @event = "negotiated", host = p.GetProperty("peers")[0].Text("host"), sample_rate = 44100,
+                            latency_negotiation = new { policy = applying ? "apply" : "negotiate", preferred_ms = reference,
+                                offered_min_ms = min, offered_max_ms = max, receiver_min_samples = (uint?)null, receiver_max_samples = (uint?)null,
+                                selected_ms = selected, applied_ms = applying || min == max ? (long?)selected : null,
+                                source = applying ? "negotiated_request" : reference is null ? "compatibility_fallback" : "verified_reference",
+                                fallback_reason = (string?)null, arrival_to_render_ms = (double?)70 } });
+                    }
                     if (StreamReplies) Event(session, new { @event = "streaming" });
                     if (InitialVolume is { } value) Volume(session, value, 0);
                     break;

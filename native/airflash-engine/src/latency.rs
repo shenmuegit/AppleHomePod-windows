@@ -15,6 +15,7 @@ pub enum Policy {
     #[default]
     Fixed,
     Negotiate,
+    Apply,
 }
 
 pub fn offer(preferred_ms: Option<u32>) -> (u32, u32) {
@@ -30,6 +31,7 @@ pub struct Negotiation {
     pub receiver_min_samples: Option<u32>,
     pub receiver_max_samples: Option<u32>,
     pub selected_ms: u32,
+    pub applied_ms: Option<u32>,
     source: &'static str,
     fallback_reason: Option<String>,
     arrival_to_render_ms: Option<f64>,
@@ -50,6 +52,28 @@ fn bound(reply: &Value, key: &str, rate: u32) -> Result<Option<u32>> {
     Ok(Some(u32::try_from(samples)?))
 }
 
+fn bounds(reply: &Value, rate: u32) -> Result<(Option<u32>, Option<u32>)> {
+    let min = bound(reply, "latencyMin", rate)?;
+    let max = bound(reply, "latencyMax", rate)?;
+    ensure!(!matches!((min.filter(|n| *n > 0), max.filter(|n| *n > 0)), (Some(a), Some(b)) if a > b), "receiver latencyMin exceeds latencyMax");
+    Ok((min, max))
+}
+
+fn millisecond_window(min: Option<u32>, max: Option<u32>, rate: u32) -> Result<(Option<u32>, Option<u32>, u32, u32)> {
+    let min_ms = min.filter(|n| *n > 0).map(|n| (u64::from(n) * 1000).div_ceil(u64::from(rate)) as u32);
+    let max_ms = max.filter(|n| *n > 0).map(|n| (u64::from(n) * 1000 / u64::from(rate)) as u32);
+    let lower = min_ms.unwrap_or(0);
+    let upper = max_ms.unwrap_or(MAX_TARGET_MS).min(MAX_TARGET_MS);
+    ensure!(lower <= upper, "receiver window cannot be represented within supported target range");
+    Ok((min_ms, max_ms, lower, upper))
+}
+
+fn arrival_to_render(reply: &Value) -> Option<f64> {
+    reply.as_dictionary().and_then(|d| d.get("arrivalToRenderLatencyMs"))
+        .and_then(|v| v.as_unsigned_integer().map(|n| n as f64).or_else(|| v.as_real()))
+        .filter(|n| n.is_finite() && (0.0..=10_000.0).contains(n))
+}
+
 pub fn select(preferred_ms: Option<u32>, rate: u32, reply: &Value) -> Result<Negotiation> {
     ensure!(crate::rtp::SUPPORTED_RATES.contains(&rate), "unsupported negotiation sample rate");
     ensure!(preferred_ms.is_none_or(|n| n <= MAX_TARGET_MS), "invalid verified timing preference");
@@ -58,19 +82,12 @@ pub fn select(preferred_ms: Option<u32>, rate: u32, reply: &Value) -> Result<Neg
         policy: "negotiate", preferred_ms, offered_min_ms, offered_max_ms,
         receiver_min_samples: None, receiver_max_samples: None,
         selected_ms: preferred_ms.unwrap_or(COMPATIBILITY_MIN_MS),
+        applied_ms: preferred_ms,
         source: if preferred_ms.is_some() { "verified_reference" } else { "compatibility_fallback" },
         fallback_reason: None,
-        arrival_to_render_ms: reply.as_dictionary().and_then(|d| d.get("arrivalToRenderLatencyMs"))
-            .and_then(|v| v.as_unsigned_integer().map(|n| n as f64).or_else(|| v.as_real()))
-            .filter(|n| n.is_finite() && (0.0..=10_000.0).contains(n)),
+        arrival_to_render_ms: arrival_to_render(reply),
     };
-    let bounds = (|| -> Result<_> {
-        let min = bound(reply, "latencyMin", rate)?;
-        let max = bound(reply, "latencyMax", rate)?;
-        ensure!(!matches!((min.filter(|n| *n > 0), max.filter(|n| *n > 0)), (Some(a), Some(b)) if a > b), "receiver latencyMin exceeds latencyMax");
-        Ok((min, max))
-    })();
-    let (min, max) = match bounds {
+    let (min, max) = match bounds(reply, rate) {
         Ok(bounds) => bounds,
         Err(error) if preferred_ms.is_some() => {
             choice.source = "verified_reference_invalid_reply";
@@ -79,14 +96,11 @@ pub fn select(preferred_ms: Option<u32>, rate: u32, reply: &Value) -> Result<Neg
         }
         Err(error) => return Err(error.context("receiver timing is invalid and no verified reference exists")),
     };
-    let min_ms = min.filter(|n| *n > 0).map(|n| (u64::from(n) * 1000).div_ceil(u64::from(rate)) as u32);
-    let max_ms = max.filter(|n| *n > 0).map(|n| (u64::from(n) * 1000 / u64::from(rate)) as u32);
-    let lower = min_ms.unwrap_or(0);
-    let upper = max_ms.unwrap_or(MAX_TARGET_MS).min(MAX_TARGET_MS);
-    ensure!(lower <= upper, "receiver window cannot be represented within supported target range");
+    let (min_ms, max_ms, lower, upper) = millisecond_window(min, max, rate)?;
     choice.receiver_min_samples = min;
     choice.receiver_max_samples = max;
     choice.selected_ms = preferred_ms.or(min_ms).unwrap_or(COMPATIBILITY_MIN_MS).clamp(lower, upper);
+    choice.applied_ms = (offered_min_ms == offered_max_ms && choice.selected_ms == offered_min_ms).then_some(choice.selected_ms);
     choice.source = match (min_ms, max_ms) {
         (Some(_), Some(_)) => "receiver_window",
         (Some(_), None) => "receiver_minimum",
@@ -94,6 +108,22 @@ pub fn select(preferred_ms: Option<u32>, rate: u32, reply: &Value) -> Result<Neg
         _ => choice.source,
     };
     Ok(choice)
+}
+
+pub fn apply(requested_ms: u32, preferred_ms: Option<u32>, rate: u32, reply: &Value) -> Result<Negotiation> {
+    ensure!(crate::rtp::SUPPORTED_RATES.contains(&rate), "unsupported negotiation sample rate");
+    ensure!(requested_ms <= MAX_TARGET_MS, "invalid negotiated timing request");
+    ensure!(preferred_ms.is_none_or(|n| n <= MAX_TARGET_MS), "invalid verified timing preference");
+    let (min, max) = bounds(reply, rate)?;
+    let (_, _, lower, upper) = millisecond_window(min, max, rate)?;
+    ensure!((lower..=upper).contains(&requested_ms), "receiver changed its window while applying the negotiated request");
+    Ok(Negotiation {
+        policy: "apply", preferred_ms, offered_min_ms: requested_ms, offered_max_ms: requested_ms,
+        receiver_min_samples: min, receiver_max_samples: max,
+        selected_ms: requested_ms, applied_ms: Some(requested_ms),
+        source: "negotiated_request", fallback_reason: None,
+        arrival_to_render_ms: arrival_to_render(reply),
+    })
 }
 
 #[cfg(test)]
@@ -156,5 +186,39 @@ mod tests {
         assert!(select(Some(100), 44100, &response).is_err());
         assert!(select(None, 44100, &response).is_err());
         assert!(select(None, 0, &reply(vec![])).is_err());
+    }
+    #[test]
+    fn selection_is_not_applied_until_the_actual_offer_matches() {
+        assert_eq!(select(Some(100), 44100, &reply(vec![])).unwrap().applied_ms, Some(100));
+        assert_eq!(select(None, 44100, &reply(vec![])).unwrap().applied_ms, None);
+        let changed = reply(vec![("latencyMin", number(8820)), ("latencyMax", number(22050))]);
+        let choice = select(Some(100), 44100, &changed).unwrap();
+        assert_eq!(choice.selected_ms, 200);
+        assert_eq!(choice.applied_ms, None);
+    }
+    #[test]
+    fn applied_request_uses_fresh_bounds_without_claiming_a_verified_reference() {
+        for reference in [None, Some(100)] {
+            let choice = apply(200, reference, 44100, &reply(vec![])).unwrap();
+            assert_eq!((choice.policy, choice.source), ("apply", "negotiated_request"));
+            assert_eq!(choice.preferred_ms, reference);
+            assert_eq!((choice.offered_min_ms, choice.offered_max_ms, choice.selected_ms, choice.applied_ms), (200, 200, 200, Some(200)));
+            assert_eq!(choice.fallback_reason, None);
+        }
+        let valid = reply(vec![("latencyMin", number(4410)), ("latencyMax", number(22050)), ("arrivalToRenderLatencyMs", number(70))]);
+        let choice = apply(200, Some(100), 44100, &valid).unwrap();
+        assert_eq!(choice.arrival_to_render_ms, Some(70.0));
+        assert_eq!(choice.applied_ms, Some(200));
+        for fields in [
+            vec![("latencyMin", number(11025))],
+            vec![("latencyMax", number(4410))],
+            vec![("latencyMin", number(22050)), ("latencyMax", number(4410))],
+            vec![("latencyMin", Value::String("200".into()))],
+            vec![("latencyMax", number(u64::MAX))],
+        ] {
+            assert!(apply(200, Some(100), 44100, &reply(fields)).is_err(), "a changed or malformed final reply must fail without another candidate");
+        }
+        assert!(apply(2001, None, 44100, &reply(vec![])).is_err());
+        assert!(apply(100, Some(2001), 44100, &reply(vec![])).is_err());
     }
 }

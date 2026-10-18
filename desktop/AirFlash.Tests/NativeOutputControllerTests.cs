@@ -8,16 +8,18 @@ public sealed class NativeOutputControllerTests
     [Theory]
     [InlineData(null)]
     [InlineData(75)]
+    [InlineData(100)]
     [InlineData(350)]
     public async Task NativeStartsWithOnlyItsOwnNullableTimingPreference(int? preference)
     {
         await using var f = await Fixture.Create(bufferMs: preference);
         f.Monitor.Select(true); f.Start();
-        await Until(() => f.Starts.Count == 1 && f.Session.Snapshot.State == PlaybackState.Streaming);
-        var start = f.Starts.Single().Params;
+        await Until(() => f.Session.Snapshot.State == PlaybackState.Streaming);
+        var start = f.Starts.First().Params;
         Assert.Equal("negotiate", start.Text("latency_policy"));
         Assert.Equal(preference, start.Number("latency_ms"));
-        Assert.Null(f.Session.Snapshot.TargetLatency);
+        Assert.Equal(preference ?? 250, f.Session.Snapshot.TargetLatency);
+        Assert.Equal(preference is null ? 2 : 1, f.Starts.Count);
     }
     [Fact]
     public async Task LegacySettingsCannotOverrideTheArmedNativePreference()
@@ -28,20 +30,80 @@ public sealed class NativeOutputControllerTests
         await Until(() => f.Session.Snapshot.State == PlaybackState.Streaming);
         Assert.Equal(75, f.Starts.Single().Params.Number("latency_ms"));
     }
-    private static System.Text.Json.Nodes.JsonObject Negotiation(int? preference = 100, int selected = 125) =>
+    private static System.Text.Json.Nodes.JsonObject Negotiation(int? preference = 100, int selected = 100) =>
         System.Text.Json.JsonSerializer.SerializeToNode(new { @event = "negotiated", host = "127.0.0.1", sample_rate = 44100,
-            latency_negotiation = new { policy = "negotiate", preferred_ms = preference, offered_min_ms = 50, offered_max_ms = 500,
-                receiver_min_samples = (uint?)2205, receiver_max_samples = (uint?)22050, selected_ms = selected,
+            latency_negotiation = new { policy = "negotiate", preferred_ms = preference, offered_min_ms = preference ?? 250, offered_max_ms = preference ?? 2000,
+                receiver_min_samples = (uint?)2205, receiver_max_samples = (uint?)22050, selected_ms = selected, applied_ms = preference == selected ? (int?)selected : null,
                 source = "receiver_window", fallback_reason = (string?)null, arrival_to_render_ms = (double?)70 } })!.AsObject();
+    [Fact]
+    public async Task CandidateRequiresOneFixedApplyBeforeAnyVolumeOrCaptureRelease()
+    {
+        await using var f = await Fixture.Create(bufferMs: null); f.Wire.StreamReplies = false;
+        var observations = new ConcurrentQueue<SessionSnapshot>(); f.Session.Changed += observations.Enqueue;
+        f.Monitor.Select(true); f.Start(); await Until(() => f.Starts.Count == 1);
+        var first = f.StreamId; var item = Negotiation(null, 250); var metadata = item["latency_negotiation"]!.AsObject();
+        metadata["offered_min_ms"] = 250; metadata["offered_max_ms"] = 2000; metadata["applied_ms"] = null;
+        metadata["receiver_min_samples"] = null; metadata["receiver_max_samples"] = null; metadata["source"] = "compatibility_fallback";
+        f.Wire.Event(first, item); f.Wire.Event(first, new { @event = "streaming" }); f.Wire.Volume(first, 38, 0);
+        await Until(() => f.Starts.Count == 2);
+        Assert.Null(f.Session.Snapshot.TargetLatency);
+        Assert.DoesNotContain(f.Gates, c => c.Params.Boolean("open") == true);
+        Assert.DoesNotContain(f.Wire.Commands, c => c.Command == "set_device_volume");
+        var apply = f.Starts.Last().Params;
+        Assert.Equal("apply", apply.Text("latency_policy")); Assert.Equal(250, apply.Number("latency_ms"));
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, apply.GetProperty("latency_reference_ms").ValueKind);
+        Assert.Equal(2, apply.Integer("capture_epoch"));
+        Assert.Equal(f.Starts.First().Params.Text("capture_id"), apply.Text("capture_id"));
+        Assert.Equal(f.Starts.First().Params.GetProperty("peers").GetRawText(), apply.GetProperty("peers").GetRawText());
+        Assert.Equal(44100, apply.Integer("sample_rate"));
+        Assert.Contains(observations, s => s.Diagnostics?.Latency?.SelectedMs == 250 && s.Diagnostics.Latency.AppliedMs is null && s.TargetLatency is null);
+        metadata["policy"] = "apply"; metadata["offered_max_ms"] = 250; metadata["applied_ms"] = 250; metadata["source"] = "negotiated_request";
+        f.Wire.Event(f.StreamId, item); f.Wire.Event(f.StreamId, new { @event = "streaming" }); f.Wire.Volume(f.StreamId, 38, 0);
+        await Until(() => f.Gates.Any(c => c.Params.Boolean("open") == true));
+        Assert.Equal(250, f.Session.Snapshot.TargetLatency); Assert.Equal(0, f.Session.Snapshot.Diagnostics!.ReconnectCount);
+        Assert.Equal(2, f.Starts.Count); Assert.Null(f.Host.VerifiedBufferMs);
+        f.Wire.StreamReplies = true; f.Wire.Event(f.StreamId, new { @event = "error", message = "network disconnected", retryable = true });
+        await Until(() => f.Starts.Count == 4 && f.Session.Snapshot.State == PlaybackState.Streaming);
+        Assert.Equal("negotiate", f.Starts[2].Params.Text("latency_policy"));
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, f.Starts[2].Params.GetProperty("latency_ms").ValueKind);
+        Assert.False(f.Starts[2].Params.TryGetProperty("latency_reference_ms", out _));
+    }
+    [Fact]
+    public async Task UnrequestedFixedOfferCannotBeReportedAsApplied()
+    {
+        await using var f = await Fixture.Create(); f.Wire.StreamReplies = false; f.Monitor.Select(true); f.Start();
+        await Until(() => f.Starts.Count == 1);
+        var forged = Negotiation(selected: 175); var metadata = forged["latency_negotiation"]!.AsObject();
+        metadata["offered_min_ms"] = 175; metadata["offered_max_ms"] = 175; metadata["applied_ms"] = 175;
+        f.Wire.Event(f.StreamId, forged); f.Wire.Event(f.StreamId, new { @event = "streaming" });
+        f.Wire.Event(f.StreamId, Negotiation()); f.Wire.Event(f.StreamId, new { @event = "streaming" });
+        await Until(() => f.Session.Snapshot.State == PlaybackState.Streaming);
+        Assert.Equal(100, f.Session.Snapshot.TargetLatency); Assert.Single(f.Starts);
+    }
+    [Fact]
+    public async Task ChangedReceiverReplyDuringApplyIsTerminalWithoutAThirdStart()
+    {
+        await using var f = await Fixture.Create(); f.Wire.StreamReplies = false;
+        f.Monitor.Select(true); f.Start(); await Until(() => f.Starts.Count == 1);
+        var item = Negotiation(selected: 200); var metadata = item["latency_negotiation"]!.AsObject();
+        metadata["offered_min_ms"] = 100; metadata["offered_max_ms"] = 100; metadata["applied_ms"] = null;
+        metadata["receiver_min_samples"] = 8820; metadata["receiver_max_samples"] = 35280;
+        f.Wire.Event(f.StreamId, item); await Until(() => f.Starts.Count == 2);
+        Assert.Equal(100, f.Starts.Last().Params.Number("latency_reference_ms"));
+        f.Wire.Event(f.StreamId, new { @event = "error", code = "latency_contract_changed", message = "Receiver window changed", retryable = false });
+        await Until(() => f.Session.Snapshot.State == PlaybackState.Error);
+        Assert.Equal(2, f.Starts.Count); Assert.Null(f.Session.Snapshot.TargetLatency);
+        Assert.DoesNotContain(f.Gates, c => c.Params.Boolean("open") == true);
+    }
     [Fact]
     public async Task ReceiverWindowCanOverrideTheRequestedKnownReference()
     {
-        await using var f = await Fixture.Create(); f.Monitor.Select(true); f.Start();
-        await Until(() => f.Session.Snapshot.State == PlaybackState.Streaming);
+        await using var f = await Fixture.Create(); f.Wire.StreamReplies = false; f.Monitor.Select(true); f.Start();
+        await Until(() => f.Starts.Count == 1);
         var item = Negotiation(selected: 200); var metadata = item["latency_negotiation"]!.AsObject();
         metadata["offered_min_ms"] = 100; metadata["offered_max_ms"] = 100;
         metadata["receiver_min_samples"] = 8820; metadata["receiver_max_samples"] = 35280;
-        f.Wire.Event(f.StreamId, item);
+        f.Wire.StreamReplies = true; f.Wire.Event(f.StreamId, item);
         await Until(() => f.Session.Snapshot.TargetLatency == 200);
         Assert.Equal(70, f.Session.Snapshot.Diagnostics!.Latency!.ArrivalToRenderMs);
         Assert.Equal(100, f.Host.VerifiedBufferMs);
@@ -52,18 +114,18 @@ public sealed class NativeOutputControllerTests
         await using var f = await Fixture.Create(); f.Monitor.Select(true); f.Start();
         await Until(() => f.Gates.Any(c => c.Params.Boolean("open") == true));
         f.Wire.Event(f.StreamId, Negotiation());
-        await Until(() => f.Session.Snapshot.TargetLatency == 125);
+        await Until(() => f.Session.Snapshot.TargetLatency == 100);
         var latency = f.Session.Snapshot.Diagnostics!.Latency!;
         Assert.Equal(100, latency.PreferredMs); Assert.Equal(70, latency.ArrivalToRenderMs);
         Assert.Equal(100, f.Host.VerifiedBufferMs);
         f.Wire.Event(f.StreamId, new { @event = "transport_metrics", members = new[] { new { host = "127.0.0.1", media = new { receiver_latency_ms = 999 } } } });
         await Until(() => f.Session.Snapshot.Diagnostics?.Transport is not null);
-        Assert.Equal(125, f.Session.Snapshot.TargetLatency);
+        Assert.Equal(100, f.Session.Snapshot.TargetLatency);
         f.Monitor.Select(false); await Until(() => f.Wire.Commands.Any(c => c.Command == "reset_capture"));
         f.Monitor.Select(true); await Until(() => f.Starts.Count == 2);
         Assert.Equal(100, f.Starts.Last().Params.Number("latency_ms"));
-        Assert.Null(f.Session.Snapshot.TargetLatency);
-        Assert.Null(f.Session.Snapshot.Diagnostics!.Latency);
+        await Until(() => f.Session.Snapshot.State == PlaybackState.Streaming);
+        Assert.Equal(100, f.Session.Snapshot.TargetLatency);
     }
     [Theory]
     [InlineData("host", "wrong")]
@@ -98,26 +160,27 @@ public sealed class NativeOutputControllerTests
         f.Wire.Event(f.StreamId, item);
         f.Wire.Event(f.StreamId, new { @event = "capture_metrics", metrics = new { underrun_packets = 22 } });
         await Until(() => f.Session.Snapshot.Metrics?.Underruns == 22);
-        Assert.Null(f.Session.Snapshot.TargetLatency);
-        Assert.Null(f.Session.Snapshot.Diagnostics!.Latency);
+        Assert.Equal(100, f.Session.Snapshot.TargetLatency);
         Assert.Equal(PlaybackState.Streaming, f.Session.Snapshot.State);
     }
     [Fact]
     public async Task ReconnectClearsNegotiationAndIgnoresOldSessionMetadata()
     {
         await using var f = await Fixture.Create(); f.Monitor.Select(true); f.Start();
+        var observations = new ConcurrentQueue<SessionSnapshot>(); f.Session.Changed += observations.Enqueue;
         await Until(() => f.Session.Snapshot.State == PlaybackState.Streaming);
         var old = f.StreamId; f.Wire.Event(old, Negotiation());
-        await Until(() => f.Session.Snapshot.TargetLatency == 125);
+        await Until(() => f.Session.Snapshot.TargetLatency == 100);
         f.Wire.Event(old, new { @event = "error", message = "network disconnected", retryable = true });
         await Until(() => f.Starts.Count == 2 && f.Session.Snapshot.State == PlaybackState.Streaming);
-        Assert.Null(f.Session.Snapshot.TargetLatency);
+        Assert.Contains(observations, s => s.State == PlaybackState.Connecting && s.TargetLatency is null && s.Diagnostics?.Latency is null);
+        Assert.Equal(100, f.Session.Snapshot.TargetLatency);
         f.Wire.Event(old, Negotiation(selected: 200));
         f.Wire.Event(f.StreamId, new { @event = "capture_metrics", metrics = new { underrun_packets = 23 } });
         await Until(() => f.Session.Snapshot.Metrics?.Underruns == 23);
-        Assert.Null(f.Session.Snapshot.TargetLatency);
+        Assert.Equal(100, f.Session.Snapshot.TargetLatency);
         f.Wire.Event(f.StreamId, Negotiation(selected: 175));
-        await Until(() => f.Session.Snapshot.TargetLatency == 175);
+        Assert.Equal(100, f.Session.Snapshot.TargetLatency);
     }
     [Theory]
     [InlineData(null, 250, "compatibility_fallback")]
@@ -133,7 +196,7 @@ public sealed class NativeOutputControllerTests
         metadata["arrival_to_render_ms"] = null;
         f.Wire.Event(f.StreamId, item);
         await Until(() => f.Session.Snapshot.TargetLatency == selected);
-        Assert.Equal(source, f.Session.Snapshot.Diagnostics!.Latency!.Source);
+        Assert.Equal(preference is null ? "negotiated_request" : source, f.Session.Snapshot.Diagnostics!.Latency!.Source);
         Assert.Equal(preference, f.Host.VerifiedBufferMs);
     }
     [Fact]
@@ -143,10 +206,8 @@ public sealed class NativeOutputControllerTests
         var settings = new AppSettings { CaptureMode = "endpoint", CaptureEndpoint = "endpoint-1", StreamSampleRate = "44100", ForceReconnect = false };
         await f.Session.StartAsync(f.Receiver, settings);
         await Until(() => f.Session.Snapshot.State == PlaybackState.Streaming);
-        f.Wire.Event(f.StreamId, Negotiation()); await Until(() => f.Session.Snapshot.TargetLatency == 125);
+        f.Wire.Event(f.StreamId, Negotiation()); await Until(() => f.Session.Snapshot.TargetLatency == 100);
         await f.Session.UpdateReceiverAsync(f.Receiver with { Id = "replacement-receiver" }, settings);
-        Assert.Null(f.Session.Snapshot.TargetLatency);
-        Assert.Null(f.Session.Snapshot.Diagnostics!.Latency);
         await Until(() => f.Starts.Count == 2);
     }
     [Fact]
@@ -254,7 +315,7 @@ public sealed class NativeOutputControllerTests
         Assert.Single(f.Starts); Assert.Equal(0, f.Monitor.PhysicalMuteCalls);
         var start = f.Starts.Single().Params;
         Assert.Equal("ntp", start.Text("timing")); Assert.Equal(bufferMs, start.Number("latency_ms"));
-        Assert.Null(f.Session.Snapshot.TargetLatency);
+        Assert.Equal(bufferMs, f.Session.Snapshot.TargetLatency);
         Assert.Equal(44100, start.Number("sample_rate")); Assert.False(start.GetProperty("equalizer").GetProperty("enabled").GetBoolean());
         Assert.DoesNotContain(f.Wire.Commands, c => c.Command == "set_equalizer");
         Assert.Contains(f.Wire.Commands, c => c.Command == "set_device_volume" && c.Params.Number("volume") == 1);
@@ -431,6 +492,7 @@ public sealed class NativeOutputControllerTests
         await Until(() => f.Starts.Count == 2 || f.Run!.IsCompleted);
         Assert.False(f.Run!.IsCompleted, "Transport refresh must not apply the previous lease's streaming state.");
         var next = f.Starts.Last().Session;
+        var negotiated = Negotiation(); negotiated["host"] = "127.0.0.2"; f.Wire.Event(next, negotiated);
         f.Wire.Event(next, new { @event = "streaming" });
         await Until(() => f.Wire.Commands.Any(c => c.Session == next && c.Command == "set_gain" && c.Params.Number("gain") == 0) || f.Run.IsCompleted);
         Assert.False(f.Run.IsCompleted);

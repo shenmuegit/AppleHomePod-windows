@@ -300,10 +300,13 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
     private async Task RunStreamAsync(Receiver receiver, long epoch, CancellationToken cancellation)
     {
         var attempts = 0;
+        int? applyCandidate = null;
         while (!cancellation.IsCancellationRequested)
         {
             lock (_sync) { if (epoch == _generation && _receiver is not null) receiver = _receiver; }
             var startedAt = 0L;
+            var applying = applyCandidate;
+            var reoffer = false;
             try
             {
                 var settings = _settings;
@@ -326,8 +329,12 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
                     await _equalizerWriter.WaitAsync(cancellation).ConfigureAwait(false);
                     try
                     {
-                        var parameters = JsonSerializer.SerializeToNode(new { peers, source = "loopback", duration_ms = 0, latency_ms = Latency(receiver, settings), gain = Gain(receiver), timing = receiver.PrefersNtpAlac ? "ntp" : "ptp", capture_endpoint = settings.EffectiveEndpoint, sample_rate = int.Parse(settings.StreamSampleRate), equalizer = EffectiveEqualizer().WireParameters() })!.AsObject();
-                        if (factory is NativeEngineHost) parameters["latency_policy"] = "negotiate";
+                        var parameters = JsonSerializer.SerializeToNode(new { peers, source = "loopback", duration_ms = 0, latency_ms = applying ?? Latency(receiver, settings), gain = Gain(receiver), timing = receiver.PrefersNtpAlac ? "ntp" : "ptp", capture_endpoint = settings.EffectiveEndpoint, sample_rate = int.Parse(settings.StreamSampleRate), equalizer = EffectiveEqualizer().WireParameters() })!.AsObject();
+                        if (factory is NativeEngineHost)
+                        {
+                            parameters["latency_policy"] = applying is null ? "negotiate" : "apply";
+                            if (applying is not null) parameters["latency_reference_ms"] = Latency(receiver, settings);
+                        }
                         await connection.SendAsync(session, "start", parameters, cancellation).ConfigureAwait(false);
                         lock (_sync) { if (epoch == _generation && ReferenceEquals(_connection, connection)) _equalizerReady = factory is not NativeEngineHost; }
                     }
@@ -349,6 +356,7 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
                         }
                         if (kind == "streaming")
                         {
+                            if (factory is NativeEngineHost && Snapshot.Diagnostics?.Latency?.AppliedMs is null) continue;
                             startedAt = Stopwatch.GetTimestamp();
                             var target = Snapshot.TargetLatency is { } ms ? $"target latency {ms} ms"
                                 : factory is NativeEngineHost ? "latency negotiation pending (not measured)" : "receiver-default latency (not measured)";
@@ -357,11 +365,16 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
                         }
                         else if (kind == "negotiated" && factory is NativeEngineHost && item.Text("host") == volumeHost
                             && LatencyNegotiation.Parse(item, Latency(receiver, settings)) is { } latency
-                            && uint.TryParse(settings.StreamSampleRate, out var requestedRate) && latency.SampleRate == requestedRate)
+                            && uint.TryParse(settings.StreamSampleRate, out var requestedRate) && latency.SampleRate == requestedRate
+                            && latency.Policy == (applying is null ? "negotiate" : "apply")
+                            && (applying is { } candidate ? latency.SelectedMs == candidate && latency.AppliedMs == candidate
+                                : latency.OfferedMinMs == (Latency(receiver, settings) ?? 250) && latency.OfferedMaxMs == (Latency(receiver, settings) ?? 2000)))
                         {
+                            if (Snapshot.Diagnostics?.Latency?.AppliedMs is not null) continue;
                             lock (_sync) { if (epoch != _generation) continue; _diagnostics = _diagnostics with { Latency = latency }; }
                             log?.Invoke("Native latency negotiated: " + JsonSerializer.Serialize(latency));
                             PublishCurrent(epoch);
+                            if (latency.AppliedMs is null) { applyCandidate = latency.SelectedMs; reoffer = true; break; }
                         }
                         else if (kind == "device_volume" && startedAt != 0 && item.Text("host") == volumeHost)
                         {
@@ -409,6 +422,7 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { return; }
             catch (Exception error)
             {
+                applyCandidate = null; reoffer = false;
                 await RestoreAudioAsync().ConfigureAwait(false);
                 if (cancellation.IsCancellationRequested) return;
                 if (startedAt != 0 && Stopwatch.GetElapsedTime(startedAt) >= TimeSpan.FromSeconds(10)) attempts = 0;
@@ -424,6 +438,7 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
                 Publish(epoch, PlaybackState.Error, notice.Detail);
                 if (!_settings.ForceReconnect || attempts > _settings.MaxReconnectAttempts || notice.Retryable == false || notice.Retryable is null && IsAuthenticationFailure(error.Message)) return;
             }
+            if (reoffer) continue;
             var delay = TimeSpan.FromMilliseconds(Math.Min(_timing.Retry.TotalMilliseconds * Math.Pow(2, attempts - 1), 8000));
             lock (_sync) { if (epoch == _generation) _diagnostics = _diagnostics with { Latency = null }; }
             Publish(epoch, PlaybackState.Connecting, L.Format("Disconnected; reconnecting ({0}/{1})", attempts, _settings.MaxReconnectAttempts));
@@ -534,7 +549,7 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
         lock (_sync)
         {
             if (epoch != _generation) return;
-            snapshot = new(state, _receiver, message, metrics ?? _snapshot.Metrics, _receiver is null ? null : factory is NativeEngineHost ? _diagnostics.Latency?.SelectedMs : Latency(_receiver, _settings), _diagnostics, int.TryParse(_settings.StreamSampleRate, out var streamRate) ? streamRate : 0, _deviceVolume);
+            snapshot = new(state, _receiver, message, metrics ?? _snapshot.Metrics, _receiver is null ? null : factory is NativeEngineHost ? _diagnostics.Latency?.AppliedMs : Latency(_receiver, _settings), _diagnostics, int.TryParse(_settings.StreamSampleRate, out var streamRate) ? streamRate : 0, _deviceVolume);
             _snapshot = snapshot;
         }
         Changed?.Invoke(snapshot);
