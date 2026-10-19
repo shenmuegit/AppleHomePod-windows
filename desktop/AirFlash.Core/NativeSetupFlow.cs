@@ -6,10 +6,12 @@ public sealed record NativeSetupInspection(bool DriverInstalled, bool RebootVeri
 public interface INativeSetupPlatform : IAsyncDisposable
 {
     Task<NativeSetupInspection> InspectAsync(CancellationToken cancellation);
+    Task<NativeSetupInspection> InspectPreviewAsync(CancellationToken cancellation) => InspectAsync(cancellation);
     Task<IReadOnlyList<Receiver>> DiscoverAsync(CancellationToken cancellation);
     Task<NativeDriverInstallOutcome> InstallDriverAsync(CancellationToken cancellation);
     Task PrepareOutputAsync(Receiver receiver, CancellationToken cancellation);
     Task StartPreviewAsync(Receiver receiver, CancellationToken cancellation);
+    Task PrepareConfirmationAsync(CancellationToken cancellation) => Task.CompletedTask;
     Task PlayConfirmationAsync(CancellationToken cancellation);
     Task<bool> TryAdaptMusicAsync(CancellationToken cancellation) => Task.FromResult(false);
     Task CompleteAsync(CancellationToken cancellation);
@@ -82,13 +84,14 @@ public sealed class NativeSetupFlow(INativeSetupPlatform platform) : IAsyncDispo
         Step = NativeSetupStep.Configuring;
         await platform.PrepareOutputAsync(selected, token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
         await platform.StartPreviewAsync(selected, token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
+        await platform.PrepareConfirmationAsync(token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
         Step = NativeSetupStep.Testing;
         await platform.PlayConfirmationAsync(token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
         Step = NativeSetupStep.Listening;
     }
 
     public Task ReplayConfirmationAsync(CancellationToken cancellation) => RunAsync(async token => {
-        if (!await CheckPreviewAsync(token).ConfigureAwait(false)) return;
+        if (!await CheckPreviewAsync(token, replay: true).ConfigureAwait(false)) return;
         Step = NativeSetupStep.Testing;
         await platform.PlayConfirmationAsync(token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
         Step = NativeSetupStep.Listening;
@@ -100,11 +103,11 @@ public sealed class NativeSetupFlow(INativeSetupPlatform platform) : IAsyncDispo
         _preview = false; _previewEndpoint = null; Step = NativeSetupStep.Ready;
     }, cancellation);
 
-    private async Task<bool> CheckPreviewAsync(CancellationToken token)
+    private async Task<bool> CheckPreviewAsync(CancellationToken token, bool replay = false)
     {
         if (Step != NativeSetupStep.Listening || !_preview || SelectedReceiver is null) return false;
-        var inspection = await platform.InspectAsync(token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
-        if (!CheckInspection(inspection)) { await StopPreviewAsync(token).ConfigureAwait(false); return false; }
+        var inspection = await (replay ? platform.InspectPreviewAsync(token) : platform.InspectAsync(token)).ConfigureAwait(false); token.ThrowIfCancellationRequested();
+        if (!CheckInspection(inspection, publishReceiverStep: false)) { await StopPreviewAsync(token).ConfigureAwait(false); return false; }
         if (!SameEndpoint(inspection.Endpoint!, _previewEndpoint!) || inspection.Binding is { } binding
             && !SameReceiver(binding.ReceiverId, SelectedReceiver.Id))
             throw new InvalidOperationException("The selected output or HomePod changed during audio verification. Reconnect before continuing.");
@@ -115,7 +118,9 @@ public sealed class NativeSetupFlow(INativeSetupPlatform platform) : IAsyncDispo
         if (Step != NativeSetupStep.Listening) return;
         if (await platform.TryAdaptMusicAsync(token).ConfigureAwait(false))
         {
-            token.ThrowIfCancellationRequested(); Step = NativeSetupStep.Testing;
+            token.ThrowIfCancellationRequested(); Step = NativeSetupStep.Configuring;
+            await platform.PrepareConfirmationAsync(token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
+            Step = NativeSetupStep.Testing;
             await platform.PlayConfirmationAsync(token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
             Step = NativeSetupStep.Listening; return;
         }
@@ -132,7 +137,7 @@ public sealed class NativeSetupFlow(INativeSetupPlatform platform) : IAsyncDispo
         return char.IsHighSurrogate(name[^1]) ? name[..^1] : name;
     }
 
-    private bool CheckInspection(NativeSetupInspection inspection)
+    private bool CheckInspection(NativeSetupInspection inspection, bool publishReceiverStep = true)
     {
         Inspection = inspection;
         if (!inspection.DriverInstalled) { Step = NativeSetupStep.Driver; return false; }
@@ -146,7 +151,8 @@ public sealed class NativeSetupFlow(INativeSetupPlatform platform) : IAsyncDispo
             if (!SameEndpoint(binding.Endpoint, endpoint)) return Block("The bound output or its format changed. Revalidate the binding before continuing.");
             if (binding.Calibration is not null && NativeBindingPolicy.ValidateLive(binding, endpoint) is { } changed) return Block(changed);
         }
-        Step = NativeSetupStep.Receiver; return true;
+        if (publishReceiverStep) Step = NativeSetupStep.Receiver;
+        return true;
     }
     private bool Block(string error) { Error = DiagnosticText.Protect(error); Step = NativeSetupStep.Blocked; return false; }
     private static bool SameReceiver(string left, string right) => ReceiverIdentity.Normalize(left) == ReceiverIdentity.Normalize(right);

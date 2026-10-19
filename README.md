@@ -6,7 +6,7 @@
 
 详细结果见 [兼容矩阵](docs/COMPATIBILITY.md)、[验证记录](docs/VALIDATION.md)。调研、已审阅规格和实施计划保存在 `docs/research/` 与 `docs/superpowers/`。
 
-保留的实机验收快照为 `dist/AppleHome-61992a2-current-mini-20261019.zip`，当前可用后台继续使用该程序。新的极简安装候选位于 `dist/minimal-setup-20261019/AppleHome.exe`：[向导](docs/first-run.md)自动安装原厂驱动、命名和选择 Windows 输出、准备连接并播放确认音频，用户可点“再播放一次”，再确认“听到了 / 没听到”。多只 HomePod 时选择目标，Windows 要求的安装许可和驱动重启保留。新自动流程的完整实机资格独立记录，不能继承旧手动向导的通过结论。最新结果见[原生输出验收记录](docs/validation/windows-native-homepod-output.md)。
+保留的实机验收快照为 `dist/AppleHome-61992a2-current-mini-20261019.zip`，当前可用后台继续使用该程序。新的安装候选位于 `dist/apple-devices-setup-20261019/AppleHome.exe`：[向导](docs/first-run.md)自动安装原厂驱动、命名和选择 Windows 输出、准备连接并播放确认音频，用户可点“再播放一次”，再确认“听到了 / 没听到”。界面参考 Apple Devices 的浅灰层次、设备标识和简洁操作区；不依赖 Apple Devices。连接阶段预先准备音源，健康连接下重播复用同一播放器，不再每次启动子进程和固定等待2秒。多只 HomePod 时选择目标，Windows 要求的安装许可和驱动重启保留。新自动流程的完整实机资格独立记录，不能继承旧手动向导的通过结论。最新结果见[原生输出验收记录](docs/validation/windows-native-homepod-output.md)。
 
 ## Windows 原生输出候选
 

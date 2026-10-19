@@ -61,3 +61,10 @@ AGENTS.md
 
 # AppleHome local tools
 .runtime/
+
+# Design working data; durable product and token documentation stays tracked.
+.impeccable/questions/
+.impeccable/review/
+.impeccable/mocks/
+.impeccable/build/
+.impeccable/design-choice.json

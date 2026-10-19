@@ -8,6 +8,7 @@ namespace AirFlash.App.Services;
 public sealed class WindowsNativeOutput : INativeOutputMonitor, IMMNotificationClient
 {
     private readonly NativeBinding _binding;
+    private readonly NativeBindingValidation _bindingValidation = new();
     private readonly BlockingCollection<Action> _queue = new(64);
     private readonly TaskCompletionSource _stopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Dictionary<string, (AudioSessionControl Control, SessionEvents Events, NativeAudioSession Value)> _sessions = [];
@@ -25,6 +26,7 @@ public sealed class WindowsNativeOutput : INativeOutputMonitor, IMMNotificationC
     private bool _disposed, _bindingValid, _revalidate;
     private int _scheduled;
     public NativeOutputSnapshot Snapshot => Volatile.Read(ref _snapshot);
+    public bool IsBindingCurrent => Snapshot.BindingValid && _bindingValidation.IsCurrent;
     public event Action<NativeOutputSnapshot>? Changed;
     public event Action? EndpointsChanged;
     public WindowsNativeOutput(NativeBinding binding)
@@ -131,9 +133,11 @@ public sealed class WindowsNativeOutput : INativeOutputMonitor, IMMNotificationC
     private void Publish()
     {
         Interlocked.Exchange(ref _scheduled, 0);
+        long? validatedVersion = null;
         if (_revalidate)
         {
             _revalidate = false;
+            validatedVersion = _bindingValidation.Version;
             var endpoints = new WindowsNativeBinding().SnapshotAsync(default).WaitAsync(TimeSpan.FromSeconds(3)).GetAwaiter().GetResult();
             var current = endpoints.SingleOrDefault(e => e.EndpointId == _binding.Endpoint.EndpointId);
             var valid = current is not null && NativeBindingPolicy.ValidateLive(_binding, current) is null;
@@ -146,11 +150,14 @@ public sealed class WindowsNativeOutput : INativeOutputMonitor, IMMNotificationC
             catch (COMException) { return null; }
         }).ToArray();
         var value = new NativeOutputSnapshot(_generation, defaults, _tracker.TakeSnapshot(), _volume, _bindingValid);
-        Volatile.Write(ref _snapshot, value); Changed?.Invoke(value); EndpointsChanged?.Invoke();
+        Volatile.Write(ref _snapshot, value);
+        if (validatedVersion is { } version) _bindingValidation.CompleteValidation(version);
+        Changed?.Invoke(value); EndpointsChanged?.Invoke();
         foreach (var expired in value.Sessions.Where(s => !_sessions.ContainsKey(s.InstanceId))) _tracker.Remove(expired.InstanceId);
     }
     private void Invalidate(Exception error)
     {
+        _bindingValidation.NotifyChanged();
         AppPaths.Log($"Native output monitor failed: {error}"); _bindingValid = false; _generation = checked(_generation + 1);
         var value = Snapshot with { Generation = _generation, BindingValid = false };
         Volatile.Write(ref _snapshot, value); Changed?.Invoke(value);
@@ -182,13 +189,19 @@ public sealed class WindowsNativeOutput : INativeOutputMonitor, IMMNotificationC
     public void OnDeviceAdded(string deviceId) => DeviceChanged(deviceId);
     public void OnDeviceRemoved(string deviceId) => DeviceChanged(deviceId);
     public void OnPropertyValueChanged(string deviceId, PropertyKey key) => DeviceChanged(deviceId);
-    private void DeviceChanged(string id) { if (id == _binding.Endpoint.EndpointId) Post(() => { _revalidate = true; Schedule(); }); }
+    private void DeviceChanged(string id)
+    {
+        if (!string.Equals(id, _binding.Endpoint.EndpointId, StringComparison.OrdinalIgnoreCase)) return;
+        _bindingValidation.NotifyChanged();
+        Post(() => { _revalidate = true; Schedule(); });
+    }
     public async ValueTask DisposeAsync()
     {
         lock (_queue)
         {
             if (!_disposed)
             {
+                _bindingValidation.NotifyChanged();
                 _disposed = true; _publish.Dispose(); _queue.CompleteAdding();
             }
         }

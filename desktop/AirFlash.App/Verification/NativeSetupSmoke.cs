@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Automation.Peers;
 using System.Windows.Automation.Provider;
+using System.Windows.Automation;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -26,7 +27,7 @@ internal static class NativeSetupSmoke
             await Capture("driver", "正在安装音频驱动");
             platform.Installed = true;
             await flow.RefreshAsync(default); window.RefreshView();
-            await Capture("receiver", "选择 HomePod");
+            await Capture("receiver", "选择要连接的 HomePod");
             var connect = Descendants(window).OfType<Button>().Single(button => Equals(button.Content, "连接"));
             ((IInvokeProvider)new ButtonAutomationPeer(connect).GetPattern(PatternInterface.Invoke)).Invoke();
             await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
@@ -40,6 +41,11 @@ internal static class NativeSetupSmoke
                 throw new InvalidOperationException("Confirmation must contain replay, the two hearing choices and About only.");
             if (Descendants(window).OfType<TextBlock>().Sum(text => text.Text.Length) > 100)
                 throw new InvalidOperationException("The confirmation screen contains unnecessary explanatory text.");
+            var liveStatus = (TextBlock)window.FindName("StepText");
+            if (AutomationProperties.GetLiveSetting(liveStatus) != AutomationLiveSetting.Polite
+                || !AutomationProperties.GetName(liveStatus).Contains("听到声音", StringComparison.Ordinal))
+                throw new InvalidOperationException("State changes must have one polite, meaningful automation announcement.");
+            checks.Add("state-announcement-is-polite-and-current");
             checks.Add("confirmation-keeps-only-essential-content");
             var beforeReplay = platform.PlayCount;
             var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -49,6 +55,7 @@ internal static class NativeSetupSmoke
             if (flow.Step != NativeSetupStep.Testing || Descendants(window).OfType<Button>()
                 .Any(button => !Equals(button.Content, "关于") && button.IsEnabled))
                 throw new InvalidOperationException("Playback must disable replay and confirmation until it finishes.");
+            await Capture("playing", "正在播放");
             finished.SetResult();
             await UntilIdle();
             platform.Playback = null;
@@ -58,7 +65,7 @@ internal static class NativeSetupSmoke
             checks.Add("replay-button-twice-and-no-overlap");
             window.Width = window.MinWidth;
             await Capture("compact-confirmation", "听到声音了吗");
-            window.Width = 480;
+            window.Width = 520;
             if (platform.Completed) throw new InvalidOperationException("Setup completed before the user confirmed music.");
             await flow.ConfirmMusicAsync(default); window.RefreshView();
             await Capture("ready", "已准备好");

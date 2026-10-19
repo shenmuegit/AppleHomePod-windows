@@ -13,6 +13,10 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
     private IReadOnlyList<Receiver> _receivers = [];
     private IDisposable? _maintenance;
     private WindowsNativeOutput? _monitor;
+    private NativeSetupAudioPlayer? _confirmation;
+    private NativeSetupInspection? _previewInspection;
+    private long _previewGeneration;
+    private byte[]? _previewReceipt;
     private NativeEngineHost? _host;
     private SessionController? _session;
     private CancellationTokenSource? _previewLifetime;
@@ -181,20 +185,28 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
                 && NativeLatencyAdaptation.VerifiedPreference(ready, current, 44100) is not null)
             {
                 _baseline = _provisional = ready; _usingExistingAgent = true;
-                return;
+                _monitor = new WindowsNativeOutput(ready);
+                await _monitor.GetDefaultEndpointIdAsync().WaitAsync(cancellation).ConfigureAwait(false);
+                _previewReceipt = ReadStartupReceipt();
             }
-            await StopOwnedAgentAsync(cancellation).ConfigureAwait(false);
-            _maintenance = NativeVolumeCalibration.AcquireMaintenance();
-            _baseline = inspection.Binding ?? await _windows.BindAsync(current.Id, inspection.Endpoint.EndpointId,
-                NativeSetupFlow.OutputName(current), cancellation).ConfigureAwait(false);
-            _newBinding = inspection.Binding is null;
-            _provisional = _baseline;
-            if (_baseline.Calibration is null)
+            else
             {
-                var proposal = await NativeVolumeCalibration.MeasureForSetupAsync(_baseline, current, cancellation).ConfigureAwait(false);
-                _provisional = _baseline with { Calibration = proposal.Calibration };
+                await StopOwnedAgentAsync(cancellation).ConfigureAwait(false);
+                _maintenance = NativeVolumeCalibration.AcquireMaintenance();
+                _baseline = inspection.Binding ?? await _windows.BindAsync(current.Id, inspection.Endpoint.EndpointId,
+                    NativeSetupFlow.OutputName(current), cancellation).ConfigureAwait(false);
+                _newBinding = inspection.Binding is null;
+                _provisional = _baseline;
+                if (_baseline.Calibration is null)
+                {
+                    var proposal = await NativeVolumeCalibration.MeasureForSetupAsync(_baseline, current, cancellation).ConfigureAwait(false);
+                    _provisional = _baseline with { Calibration = proposal.Calibration };
+                }
+                await OpenPreviewAsync(current, null, cancellation).ConfigureAwait(false);
             }
-            await OpenPreviewAsync(current, null, cancellation).ConfigureAwait(false);
+            if (!_monitor!.Snapshot.BindingValid) throw new InvalidDataException("The Windows output changed before audio verification.");
+            _previewGeneration = _monitor.Snapshot.Generation;
+            _previewInspection = inspection with { Binding = _baseline };
         }
         catch
         {
@@ -203,42 +215,83 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
         }
     }
 
-    public async Task PlayConfirmationAsync(CancellationToken cancellation)
+    public async Task<NativeSetupInspection> InspectPreviewAsync(CancellationToken cancellation)
     {
-        var output = _outputSetup ?? throw new InvalidOperationException("Prepare the Windows playback output before verification.");
-        await WindowsNativeBinding.OnMtaAsync(() => { output.SelectForConfirmation(); return true; }, cancellation).ConfigureAwait(false);
-        var executable = Environment.ProcessPath ?? throw new IOException("The setup executable is unavailable.");
-        var start = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true,
-            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
-        start.ArgumentList.Add(NativeSetupAudioSource.SourceFlag);
-        using var source = Process.Start(start) ?? throw new IOException("The setup confirmation audio could not start.");
-        var errors = source.StandardError.ReadToEndAsync(cancellation);
+        cancellation.ThrowIfCancellationRequested();
+        var inspection = _previewInspection ?? throw new InvalidOperationException("Start audio verification before replaying it.");
+        var monitor = _monitor ?? throw new IOException("The native output monitor is unavailable.");
+        var snapshot = monitor.Snapshot;
+        if (!monitor.IsBindingCurrent || snapshot.Generation != _previewGeneration)
+            throw new IOException("The monitored output, driver or mix format changed. Reconnect before replaying.");
+        if (_store.Load() != _baseline) throw new IOException("Device settings changed during audio verification; their current contents were preserved.");
+        _ = CurrentPreviewReceiver();
+        if (_usingExistingAgent)
+        {
+            if (_previewReceipt is null || !ReadStartupReceipt().AsSpan().SequenceEqual(_previewReceipt)
+                || !await NativeAutostart.QueryReadyAsync(cancellation).ConfigureAwait(false))
+                throw new IOException("The verified native output background is no longer ready. Reconnect before replaying.");
+        }
+        else if (_previewWork is null || _previewWork.IsCompleted)
+        {
+            if (_previewWork is not null) await _previewWork.ConfigureAwait(false);
+            throw new IOException("The native output preview stopped. Reconnect before replaying.");
+        }
+        return inspection;
+    }
+
+    private static byte[] ReadStartupReceipt()
+    {
+        using var file = File.OpenRead(Path.Combine(AppPaths.DataDirectory, "native-startup.json"));
+        if (file.Length > 65536) throw new InvalidDataException("The native startup ownership proof exceeds its size limit.");
+        var bytes = new byte[file.Length]; file.ReadExactly(bytes); return bytes;
+    }
+
+    public async Task PrepareConfirmationAsync(CancellationToken cancellation)
+    {
+        if (_confirmation is not null) return;
         try
         {
-            if (await source.StandardOutput.ReadLineAsync(cancellation).AsTask().WaitAsync(TimeSpan.FromSeconds(6), cancellation).ConfigureAwait(false) != "ready")
-                throw new IOException("The isolated setup audio source did not become ready.");
+            var output = _outputSetup ?? throw new InvalidOperationException("Prepare the Windows playback output before verification.");
+            var monitor = _monitor ?? throw new IOException("The native output monitor is unavailable.");
+            await WaitForCurrentBindingAsync(monitor, cancellation).ConfigureAwait(false);
+            await WindowsNativeBinding.OnMtaAsync(() => { output.SelectForConfirmation(); return true; }, cancellation).ConfigureAwait(false);
+            await WaitForCurrentBindingAsync(monitor, cancellation).ConfigureAwait(false);
+            var generation = _previewGeneration;
+            _confirmation = new NativeSetupAudioPlayer(_provisional ?? throw new InvalidOperationException("The measured calibration is unavailable."),
+                () => monitor.IsBindingCurrent && monitor.Snapshot.Generation == generation);
+            await _confirmation.Ready.WaitAsync(TimeSpan.FromSeconds(6), cancellation).ConfigureAwait(false);
             if (_usingExistingAgent)
             {
                 if (!await NativeAutostart.QueryReadyAsync(cancellation).ConfigureAwait(false)) throw new IOException("The native output background is unavailable.");
+                // shortcut: installed-agent readiness omits transport status; retain this first-route settle until its IPC reports it.
                 await Task.Delay(TimeSpan.FromSeconds(2), cancellation).ConfigureAwait(false);
             }
             else
             {
-                using var ready = CancellationTokenSource.CreateLinkedTokenSource(cancellation); ready.CancelAfter(TimeSpan.FromSeconds(12));
-                while (_session?.Snapshot.State != PlaybackState.Streaming)
-                {
-                    if (_previewWork?.IsCompleted == true) await _previewWork.ConfigureAwait(false);
-                    if (_session?.Snapshot.State == PlaybackState.Error) throw new IOException(_session.Snapshot.Message);
-                    await Task.Delay(50, ready.Token).ConfigureAwait(false);
-                }
-                // Let the native controller apply the receiver's volume before the finite confirmation clip.
+                await WaitForPreviewStreamAsync(cancellation).ConfigureAwait(false);
+                // Let the native controller apply the receiver's volume before the first finite confirmation clip.
                 await Task.Delay(500, cancellation).ConfigureAwait(false);
             }
-            await source.StandardInput.WriteAsync('p').ConfigureAwait(false); await source.StandardInput.FlushAsync(cancellation).ConfigureAwait(false);
-            if (await source.StandardOutput.ReadLineAsync(cancellation).AsTask().WaitAsync(TimeSpan.FromSeconds(6), cancellation).ConfigureAwait(false) != "played")
-                throw new IOException("The setup confirmation audio did not finish.");
-            await source.WaitForExitAsync(cancellation).WaitAsync(TimeSpan.FromSeconds(2), cancellation).ConfigureAwait(false);
-            if (source.ExitCode != 0) throw new IOException("Setup audio failed: " + await errors.ConfigureAwait(false));
+            await WaitForCurrentBindingAsync(monitor, cancellation).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException error) when (!cancellation.IsCancellationRequested)
+        { throw new IOException("自动音频准备未在限定时间内就绪，尚未完成安装。请重新检查 HomePod 连接。", error); }
+        catch (TimeoutException error)
+        { throw new IOException("自动音频准备超时，尚未完成安装。请重新检查 HomePod 连接。", error); }
+    }
+
+    public async Task PlayConfirmationAsync(CancellationToken cancellation)
+    {
+        if (_confirmation is null) throw new InvalidOperationException("Prepare the setup confirmation before playing it.");
+        try
+        {
+            var monitor = _monitor ?? throw new IOException("The native output monitor is unavailable.");
+            if (!monitor.IsBindingCurrent || monitor.Snapshot.Generation != _previewGeneration)
+                throw new IOException("The monitored output changed before confirmation playback. Reconnect before continuing.");
+            _ = CurrentPreviewReceiver();
+            if (!_usingExistingAgent) await WaitForPreviewStreamAsync(cancellation).ConfigureAwait(false);
+            await _confirmation.PlayAsync(cancellation).WaitAsync(TimeSpan.FromSeconds(6), cancellation).ConfigureAwait(false);
+            AppPaths.Log($"Setup confirmation enqueue_to_provider_ms={_confirmation.LastDispatchDelay?.TotalMilliseconds:F1}; clip_ms=1500; acoustic_latency=unmeasured");
             if (!_usingExistingAgent)
             {
                 using var evidence = CancellationTokenSource.CreateLinkedTokenSource(cancellation); evidence.CancelAfter(TimeSpan.FromSeconds(7));
@@ -257,14 +310,29 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
         { throw new IOException("自动音频验证未在限定时间内就绪，尚未完成安装。请重新检查 HomePod 连接。", error); }
         catch (TimeoutException error)
         { throw new IOException("自动音频验证超时，尚未完成安装。请重新检查 HomePod 连接。", error); }
-        finally
+    }
+
+    private async Task WaitForCurrentBindingAsync(WindowsNativeOutput monitor, CancellationToken cancellation)
+    {
+        using var ready = CancellationTokenSource.CreateLinkedTokenSource(cancellation); ready.CancelAfter(TimeSpan.FromSeconds(6));
+        while (!monitor.IsBindingCurrent)
         {
-            source.StandardInput.Close();
-            if (!source.HasExited)
-            {
-                try { await source.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
-                catch (TimeoutException) { source.Kill(); await source.WaitForExitAsync().ConfigureAwait(false); }
-            }
+            if (!monitor.Snapshot.BindingValid || monitor.Snapshot.Generation != _previewGeneration)
+                throw new IOException("The Windows output changed during audio preparation. Reconnect before continuing.");
+            await Task.Delay(25, ready.Token).ConfigureAwait(false);
+        }
+        if (monitor.Snapshot.Generation != _previewGeneration)
+            throw new IOException("The Windows output changed during audio preparation. Reconnect before continuing.");
+    }
+
+    private async Task WaitForPreviewStreamAsync(CancellationToken cancellation)
+    {
+        using var ready = CancellationTokenSource.CreateLinkedTokenSource(cancellation); ready.CancelAfter(TimeSpan.FromSeconds(12));
+        while (_session?.Snapshot.State != PlaybackState.Streaming)
+        {
+            if (_previewWork?.IsCompleted == true) { await _previewWork.ConfigureAwait(false); throw new IOException("The native output preview stopped."); }
+            if (_session?.Snapshot.State == PlaybackState.Error) throw new IOException(_session.Snapshot.Message);
+            await Task.Delay(50, ready.Token).ConfigureAwait(false);
         }
     }
 
@@ -288,6 +356,7 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
             if (live is null || NativeBindingPolicy.ValidateLive(provisional, live) is { })
                 throw new IOException("The Windows output changed while reconnecting. Recheck the output before continuing.");
             await OpenPreviewAsync(CurrentPreviewReceiver(), next, cancellation).ConfigureAwait(false);
+            _previewGeneration = _monitor!.Snapshot.Generation;
             return true;
         }
         catch
@@ -369,6 +438,7 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
             }
         }
         _baseline = _provisional = null; _usingExistingAgent = false; _newBinding = false;
+        _previewInspection = null; _previewReceipt = null;
         _previewReceiver = null; _adaptations = 0;
         await ResumeAgentAsync().ConfigureAwait(false);
     }
@@ -441,6 +511,8 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
     private async Task ClosePreviewResourcesAsync(bool discardUnconfirmed = false)
     {
         var errors = new List<Exception>();
+        if (_confirmation is not null) await Cleanup(async () => await _confirmation.DisposeAsync().ConfigureAwait(false)).ConfigureAwait(false);
+        _confirmation = null;
         if (_previewLifetime is not null) await _previewLifetime.CancelAsync().ConfigureAwait(false);
         if (_previewWork is not null)
         {

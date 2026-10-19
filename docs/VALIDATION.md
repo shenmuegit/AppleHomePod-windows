@@ -4,7 +4,7 @@
 
 ## 当前交付与资格
 
-极简安装候选另见`dist/minimal-setup-20261019/AppleHome.exe`，不替换下面的已验收后台快照。新增重播与极简界面后完整.NET738项、模拟向导12项通过；先前Windows10自动改名及友好名称读回已做真实往返探针。新自动流程的完整原厂安装/UAC/重启仍待独立验收，具体范围见[原生输出记录](validation/windows-native-homepod-output.md)。
+当前安装候选另见`dist/apple-devices-setup-20261019/AppleHome.exe`，不替换下面的已验收后台快照。本轮重播准备与Apple Devices参考界面完整.NET752项、模拟向导14项通过。真实NAudio零PCM探针在健康绑定下，本地检查到首次provider读取为9.15–9.66ms；故障后重新创建播放器的独立一次为8.90ms。仅测调度与生命周期，没有播放、录制或测量HomePod实际出声时间。先前Windows10自动改名及友好名称读回已做真实往返探针。新自动流程的完整原厂安装/UAC/重启仍待独立验收，具体范围见[原生输出记录](validation/windows-native-homepod-output.md)。
 
 交付文件 `dist/AppleHome-61992a2-current-mini-20261019.zip` 保留程序代码 `61992a2c72063045cd6ff8327d8e680a9d2fd7ff` 的同一可执行文件，EXE SHA256 `4d811deafc1e77d7610f7d2b86760211cf38e6c8f71320d791d31278f0f1cff6`，引擎SHA256 `ba3cea74a809fc4d165d3f26926f494e5b3e5717b5025178a60f53ce5ffb30e6`。仅同步文档、源码留档与资格元数据，没有重编程序。
 

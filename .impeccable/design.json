@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-19T22:28:35+08:00",
+  "title": "Design System: AppleHome",
+  "extensions": {
+    "sourceAuthority": {
+      "platform": "Windows native WPF",
+      "files": [
+        "desktop/AirFlash.App/Ui/NativeSetupWindow.xaml",
+        "desktop/AirFlash.App/Ui/NativeSetupWindow.cs"
+      ],
+      "units": "Frontmatter px values preserve the numeric WPF DIP values. Padding uses top/right/bottom/left order.",
+      "preview": "No HTML/CSS preview is supplied; the native WPF source is authoritative."
+    },
+    "highContrast": {
+      "evaluation": "SystemParameters.HighContrast is evaluated when the setup window is constructed.",
+      "resourceMappings": {
+        "SetupPaper": "SystemColors.WindowBrush",
+        "SetupCanvas": "SystemColors.ControlBrush",
+        "SetupFooter": "SystemColors.ControlBrush",
+        "SetupInk": "SystemColors.WindowTextBrush",
+        "SetupMuted": "SystemColors.WindowTextBrush",
+        "SetupAccent": "SystemColors.HighlightBrush",
+        "SetupAccentText": "SystemColors.HighlightTextBrush",
+        "SetupHover": "SystemColors.ControlBrush",
+        "SetupAccentHover": "SystemColors.HighlightBrush",
+        "SetupPressed": "SystemColors.HighlightBrush",
+        "SetupPressedText": "SystemColors.HighlightTextBrush",
+        "SetupAccentPressed": "SystemColors.HighlightBrush",
+        "SetupButtonFill": "SystemColors.WindowBrush",
+        "SetupButtonBorder": "SystemColors.WindowTextBrush"
+      }
+    },
+    "focus": {
+      "restingButtonBorderDip": 1,
+      "keyboardFocusedButtonBorderDip": 2,
+      "keyboardFocusedButtonBrush": "SetupAccent",
+      "tabIndices": {
+        "ReplayButton": 0,
+        "SecondaryButton": 1,
+        "PrimaryButton": 2,
+        "AboutButton": 3
+      },
+      "restoration": "After an operation, restore the initiating button only when it is visible and enabled, the window is active, and keyboard focus was previously within the window."
+    },
+    "nativeMotion": {
+      "customTransitions": "None; text and native control states update without added motion.",
+      "preparation": "The native progress indicator is indeterminate only when SystemParameters.ClientAreaAnimation is true and SystemParameters.HighContrast is false."
+    },
+    "nativeAccessibility": {
+      "liveSetting": "Polite",
+      "announcement": "The main instruction's accessible name includes visible status; unchanged announcements are suppressed and LiveRegionChanged is raised when listeners exist."
+    },
+    "nativeSizing": {
+      "windowDip": [520, 420],
+      "minimumWindowDip": [440, 380],
+      "minimumButtonDip": [98, 36],
+      "minimumReplayDip": [182, 44],
+      "receiverPickerHeightDip": [70, 110],
+      "disabledControlOpacity": 0.45
+    },
+    "iconProvenance": {
+      "device": "Native XAML Path geometry in NativeSetupWindow.xaml.",
+      "play": "Native XAML Path geometry in NativeSetupWindow.xaml.",
+      "shippingRasters": "These setup controls introduce no raster assets."
+    }
+  },
+  "narrative": {
+    "northStar": "Apple Devices for Windows",
+    "overview": "AppleHome's setup follows the user's chosen Apple Devices reference: pale silver surroundings, a white grouped work area, precise type and restrained blue actions. The tone is calm, clear and polished. Device identity leads; the current task and its next action remain easy to scan.\n\nThis document records the implemented Windows WPF setup language. Native window controls, keyboard behavior and accessible state feedback belong to that language. `desktop/AirFlash.App/Ui/NativeSetupWindow.xaml` and `NativeSetupWindow.cs` are the implementation authority. Frontmatter uses portable `px` notation for the same numeric WPF device-independent pixel (DIP) values; padding uses top/right/bottom/left order. It does not define a separate CSS implementation.",
+    "keyCharacteristics": [
+      "Quiet neutral layers with one blue action family.",
+      "Clear device identity and compact, readable task hierarchy.",
+      "Soft grouped surfaces with smaller control corners.",
+      "Immediate state feedback through text and native control states.",
+      "Native Windows accessibility and window affordances."
+    ],
+    "rules": [
+      {
+        "name": "The System Contrast Rule",
+        "body": "When high contrast is active at window creation, use the implemented Windows SystemColors mappings for surfaces, text, actions and interaction states. Do not hold the light palette above the user's contrast colors.",
+        "section": "colors"
+      },
+      {
+        "name": "The Quiet Layers Rule",
+        "body": "Use tonal separation and spacing to organize the setup; keep ornamental depth out of the task area.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Native Feedback Rule",
+        "body": "Use the implemented text, focus and control states without added transition effects. Preparation uses the native progress indicator; its indeterminate animation is enabled only when Windows client-area animation is enabled and high contrast is off.",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "**Do** carry the chosen Apple Devices reference through neutral layering, precise type and restrained blue actions.",
+      "**Do** reuse the existing WPF brushes and button styles, including their keyboard and high-contrast states.",
+      "**Do** preserve native window controls, readable wrapped feedback and polite state announcements.",
+      "**Do** use native Path geometry for the setup's device and play icons.",
+      "**Do** keep replay and explicit hearing confirmation as distinct controls."
+    ],
+    "donts": [
+      "**Don't** reinstate the rejected bare text-and-buttons arrangement as the visual authority.",
+      "**Don't** add decorative shadows or transition effects to the setup's quiet task area.",
+      "**Don't** replace Windows contrast colors with fixed palette values in high-contrast mode.",
+      "**Don't** create a second browser-style implementation as the authority for these native controls."
+    ]
+  }
+}

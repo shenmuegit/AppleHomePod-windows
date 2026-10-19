@@ -10,8 +10,25 @@ public sealed class NativeAutomaticSetupTests
         var platform = new Fake(); await using var setup = new NativeSetupFlow(platform);
         await setup.StartAutomaticAsync(default); platform.Calls.Clear();
         await setup.ReplayConfirmationAsync(default); await setup.ReplayConfirmationAsync(default);
-        Assert.Equal(["inspect", "play", "inspect", "play"], platform.Calls);
+        Assert.Equal(["preview-check", "play", "preview-check", "play"], platform.Calls);
         Assert.Equal(NativeSetupStep.Listening, setup.Step);
+    }
+
+    [Fact]
+    public async Task ReplayStopsWhenTheMonitoredPreviewIsInvalidButCompletionStillRequiresFullInspection()
+    {
+        var platform = new Fake(); await using var setup = new NativeSetupFlow(platform);
+        await setup.StartAutomaticAsync(default); platform.Calls.Clear();
+        platform.PreviewBlockedReason = "The monitored endpoint changed.";
+        await setup.ReplayConfirmationAsync(default);
+        Assert.Equal(NativeSetupStep.Blocked, setup.Step);
+        Assert.Equal(["preview-check", "stop"], platform.Calls);
+
+        platform.PreviewBlockedReason = null;
+        await setup.StartAutomaticAsync(default); platform.Calls.Clear();
+        await setup.ConfirmMusicAsync(default);
+        Assert.Equal(["inspect", "complete"], platform.Calls);
+        Assert.Equal(NativeSetupStep.Ready, setup.Step);
     }
 
     [Fact]
@@ -20,6 +37,18 @@ public sealed class NativeAutomaticSetupTests
         var platform = new Fake(); await using var setup = new NativeSetupFlow(platform);
         await setup.ReplayConfirmationAsync(default);
         Assert.Empty(platform.Calls);
+    }
+
+    [Fact]
+    public async Task ValidReplayAndConfirmationDoNotPublishAnIntermediateDeviceSelection()
+    {
+        var platform = new Fake(); await using var setup = new NativeSetupFlow(platform);
+        await setup.StartAutomaticAsync(default);
+        var steps = new List<NativeSetupStep>(); setup.Changed += () => steps.Add(setup.Step);
+        await setup.ReplayConfirmationAsync(default);
+        Assert.Equal([NativeSetupStep.Testing, NativeSetupStep.Listening], steps);
+        steps.Clear(); await setup.ConfirmMusicAsync(default);
+        Assert.Equal([NativeSetupStep.Ready], steps);
     }
 
     [Fact]
@@ -32,8 +61,9 @@ public sealed class NativeAutomaticSetupTests
         platform.Play = _ => { entered.SetResult(); return release.Task; };
         var playing = setup.ReplayConfirmationAsync(default); await entered.Task;
         await setup.ReplayConfirmationAsync(default); await setup.ConfirmMusicAsync(default);
-        Assert.Equal(["inspect", "play"], platform.Calls); Assert.Equal(NativeSetupStep.Testing, setup.Step);
+        var busyStep = setup.Step;
         release.SetResult(); await playing;
+        Assert.Equal(["preview-check", "play"], platform.Calls); Assert.Equal(NativeSetupStep.Testing, busyStep);
         Assert.Equal(NativeSetupStep.Listening, setup.Step);
     }
 
@@ -60,6 +90,41 @@ public sealed class NativeAutomaticSetupTests
         Assert.Contains(NativeSetupStep.Testing, steps); Assert.DoesNotContain("complete", platform.Calls);
         await setup.ConfirmMusicAsync(default);
         Assert.Equal(NativeSetupStep.Ready, setup.Step); Assert.Equal("complete", platform.Calls[^1]);
+    }
+
+    [Fact]
+    public async Task ConnectionAndAdaptationStayConfiguringUntilAudioPreparationFinishes()
+    {
+        var platform = new Fake(); await using var setup = new NativeSetupFlow(platform);
+        var preparation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        platform.Preparation = _ => preparation.Task;
+        var connecting = setup.StartAutomaticAsync(default);
+        var connectingStep = setup.Step; var connectionWaited = !connecting.IsCompleted;
+        var playedBeforeReady = platform.Calls.Contains("play");
+        preparation.SetResult(); await connecting;
+        Assert.True(connectionWaited); Assert.False(playedBeforeReady);
+        Assert.Equal(NativeSetupStep.Configuring, connectingStep);
+        Assert.Equal(NativeSetupStep.Listening, setup.Step);
+
+        platform.Calls.Clear(); preparation = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var adapting = setup.RejectMusicAsync(default);
+        var adaptingStep = setup.Step; var adaptationWaited = !adapting.IsCompleted;
+        playedBeforeReady = platform.Calls.Contains("play");
+        preparation.SetResult(); await adapting;
+        Assert.True(adaptationWaited); Assert.False(playedBeforeReady);
+        Assert.Equal(NativeSetupStep.Configuring, adaptingStep);
+        Assert.Equal(NativeSetupStep.Listening, setup.Step);
+    }
+
+    [Fact]
+    public async Task HotReplayNeverPreparesTheSourceAgain()
+    {
+        var platform = new Fake(); await using var setup = new NativeSetupFlow(platform);
+        await setup.StartAutomaticAsync(default); platform.Calls.Clear();
+        platform.Preparation = _ => Task.FromException(new IOException("source must already be prepared"));
+        await setup.ReplayConfirmationAsync(default);
+        Assert.Equal(["preview-check", "play"], platform.Calls);
+        Assert.Equal(NativeSetupStep.Listening, setup.Step);
     }
 
     [Fact]
@@ -115,7 +180,9 @@ public sealed class NativeAutomaticSetupTests
     {
         public bool Driver = true, Reboot = true, Multiple, FailPrepare, CanAdapt = true;
         public Task? Browse;
+        public string? PreviewBlockedReason;
         public Func<CancellationToken, Task>? Play;
+        public Func<CancellationToken, Task>? Preparation;
         public readonly List<string> Calls = [];
         private readonly Receiver _receiver = new("9efd9099abd6", "da", "192.0.2.10")
             { Model = "AudioAccessory5,1", SoftwareVersion = "27.0", IsLeader = true, Codecs = [1] };
@@ -124,12 +191,15 @@ public sealed class NativeAutomaticSetupTests
             "CABLE Input", "CABLE Input", "48000/2/32/3", 2, AudioEndpointKind.Playback, true, "CABLE Input");
         public Task<NativeSetupInspection> InspectAsync(CancellationToken token)
         { Calls.Add("inspect"); return Task.FromResult(new NativeSetupInspection(Driver, Reboot, _endpoint, null, false)); }
+        public Task<NativeSetupInspection> InspectPreviewAsync(CancellationToken token)
+        { Calls.Add("preview-check"); return Task.FromResult(new NativeSetupInspection(Driver, Reboot, _endpoint, null, false, PreviewBlockedReason)); }
         public Task<NativeDriverInstallOutcome> InstallDriverAsync(CancellationToken token) { Calls.Add("install"); Driver = true; return Task.FromResult(NativeDriverInstallOutcome.VerificationRequired); }
         public async Task<IReadOnlyList<Receiver>> DiscoverAsync(CancellationToken token)
         { Calls.Add("discover"); if (Browse is not null) await Browse.WaitAsync(token); return Multiple ? [_receiver, _receiver with { Id = "001122334455" }] : [_receiver]; }
         public Task PrepareOutputAsync(Receiver receiver, CancellationToken token)
         { Calls.Add("prepare"); return FailPrepare ? Task.FromException(new IOException("name denied")) : Task.CompletedTask; }
         public Task StartPreviewAsync(Receiver receiver, CancellationToken token) { Calls.Add("preview"); return Task.CompletedTask; }
+        public Task PrepareConfirmationAsync(CancellationToken token) => Preparation?.Invoke(token) ?? Task.CompletedTask;
         public Task PlayConfirmationAsync(CancellationToken token) { Calls.Add("play"); return Play?.Invoke(token) ?? Task.CompletedTask; }
         public Task<bool> TryAdaptMusicAsync(CancellationToken token) { Calls.Add("adapt"); return Task.FromResult(CanAdapt); }
         public Task CompleteAsync(CancellationToken token) { Calls.Add("complete"); return Task.CompletedTask; }

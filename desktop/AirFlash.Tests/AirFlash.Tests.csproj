@@ -21,5 +21,6 @@
     <Compile Include="../AirFlash.App/Services/AppPaths.cs" Link="AppPaths.cs"/>
     <Compile Include="../AirFlash.App/Services/SingleInstance.cs" Link="SingleInstance.cs"/>
     <Compile Include="../AirFlash.App/Services/NetworkAdapterCatalog.cs" Link="NetworkAdapterCatalog.cs"/>
+    <Compile Include="../AirFlash.App/Verification/NativeSetupAudioLifetime.cs" Link="NativeSetupAudioLifetime.cs"/>
   </ItemGroup>
 </Project>

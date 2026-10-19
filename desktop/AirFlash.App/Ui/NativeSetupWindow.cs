@@ -3,48 +3,37 @@ using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Animation;
+using System.Windows.Automation;
+using System.Windows.Automation.Peers;
 using AirFlash.App.Services;
 using AirFlash.Core;
 namespace AirFlash.App.Ui;
 
-public sealed class NativeSetupWindow : Window
+public partial class NativeSetupWindow : Window
 {
     private readonly NativeSetupFlow _flow;
     private readonly CancellationTokenSource _lifetime = new();
-    private readonly StackPanel _body = new() { Margin = new(28, 22, 28, 10) };
-    private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap, Margin = new(0, 14, 0, 0), FontSize = 13 };
-    private readonly List<Button> _actions = [];
-    private bool _busy, _closing, _allowClose;
-    private string? _operationError, _busyTitle;
+    private bool _busy, _closing, _allowClose, _confirming;
+    private string? _operationError, _selectedId, _lastAnnouncement;
     public NativeSetupWindow(NativeSetupFlow flow, bool initializeOnLoad = true, bool verifyExistingConnection = false)
     {
         _flow = flow;
-        Title = "AppleHome";
-        Width = 480; Height = 340; MinWidth = 420; MinHeight = 300;
-        WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        Background = SystemColors.WindowBrush; Foreground = SystemColors.WindowTextBrush;
-        FontFamily = new FontFamily("Satoshi, Segoe UI, Microsoft YaHei UI"); FontSize = 14;
-        Resources["SurfaceBrush"] = SystemColors.WindowBrush; Resources["TextBrush"] = SystemColors.WindowTextBrush;
-        Resources["MutedBrush"] = SystemColors.GrayTextBrush;
+        InitializeComponent();
         if (SystemParameters.HighContrast)
-        { Resources["TintBrush"] = SystemColors.ControlBrush; Resources["LineBrush"] = SystemColors.WindowTextBrush; }
+        {
+            Resources["SetupPaper"] = SystemColors.WindowBrush; Resources["SetupFooter"] = SystemColors.ControlBrush;
+            Resources["SetupCanvas"] = SystemColors.ControlBrush;
+            Resources["SetupInk"] = SystemColors.WindowTextBrush; Resources["SetupMuted"] = SystemColors.WindowTextBrush;
+            Resources["SetupLine"] = SystemColors.WindowTextBrush; Resources["SetupAccent"] = SystemColors.HighlightBrush;
+            Resources["SetupAccentText"] = SystemColors.HighlightTextBrush;
+            Resources["SetupHover"] = SystemColors.ControlBrush; Resources["SetupAccentHover"] = SystemColors.HighlightBrush;
+            Resources["SetupPressed"] = SystemColors.HighlightBrush; Resources["SetupPressedText"] = SystemColors.HighlightTextBrush;
+            Resources["SetupAccentPressed"] = SystemColors.HighlightBrush;
+            Resources["SetupButtonFill"] = SystemColors.WindowBrush; Resources["SetupButtonBorder"] = SystemColors.WindowTextBrush;
+        }
         AppIconService.Track(this);
-        var layout = new DockPanel();
-        var about = new Button { Content = "关于", FontSize = 12, BorderThickness = new(0), Background = Brushes.Transparent,
-            Foreground = SystemColors.GrayTextBrush, Padding = new(0), MinHeight = 24,
-            HorizontalAlignment = HorizontalAlignment.Left, Margin = new(28, 0, 28, 14) };
-        about.Click += (_, _) => ShowAbout();
-        DockPanel.SetDock(about, Dock.Bottom); layout.Children.Add(about);
-        layout.Children.Add(new ScrollViewer { Content = _body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
-        Content = layout;
         Closing += CloseSafely;
         _flow.Changed += FlowChanged;
-        Loaded += (_, _) => {
-            if (SystemParameters.ClientAreaAnimation && !SystemParameters.HighContrast)
-                _body.BeginAnimation(OpacityProperty, new DoubleAnimation(.9, 1, TimeSpan.FromMilliseconds(140)) { FillBehavior = FillBehavior.Stop });
-        };
         if (initializeOnLoad) Loaded += async (_, _) => await RunAsync(async token => {
             await _flow.StartAutomaticAsync(token);
             if (verifyExistingConnection && _flow.Step == NativeSetupStep.Ready && _flow.SelectedReceiver is { } receiver)
@@ -54,83 +43,115 @@ public sealed class NativeSetupWindow : Window
     }
     public void RefreshView()
     {
-        _body.Children.Clear();
-        _actions.Clear();
-        Height = _flow.Step == NativeSetupStep.Receiver ? 420 : 340;
-        if (_flow.SelectedReceiver is { } selected && _flow.Step != NativeSetupStep.Ready)
-            _body.Children.Add(new TextBlock { Text = selected.Name, Foreground = SystemColors.GrayTextBrush,
-                FontSize = 13, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new(0, 0, 0, 6) });
-        Text(_busyTitle ?? (_flow.Step switch {
-            NativeSetupStep.Driver => "正在安装音频驱动",
-            NativeSetupStep.Restart => "重启后继续",
-            NativeSetupStep.Receiver => "选择 HomePod",
-            NativeSetupStep.Configuring => "正在连接…",
-            NativeSetupStep.Testing => "正在播放…",
+        var step = _flow.Step;
+        var listening = step is NativeSetupStep.Testing or NativeSetupStep.Listening;
+        HeaderTitle.Text = _flow.SelectedReceiver is { } boundReceiver ? DisplayName(boundReceiver.Name) : "HomePod";
+        TaskTitle.Text = step switch {
+            NativeSetupStep.Driver => "安装音频驱动", NativeSetupStep.Restart => "重启后继续",
+            NativeSetupStep.Ready => "已准备好", NativeSetupStep.Blocked => "连接未完成",
+            _ when listening => "测试声音", _ => "连接设备"
+        };
+        DeviceText.Text = step == NativeSetupStep.Ready ? OutputName() : _flow.SelectedReceiver is { } selected
+            ? (selected.Model == "AudioAccessory5,1" ? "HomePod mini" : "Windows 音频输出")
+            : "Windows 音频输出";
+        StepText.Text = _confirming ? "正在保存设置…" : step switch {
+            NativeSetupStep.Driver => "正在安装音频驱动…",
+            NativeSetupStep.Restart => "保存工作，重启 Windows 后重新打开 AppleHome。",
+            NativeSetupStep.Receiver when _flow.Receivers.Count == 0 => "未发现 HomePod，请确认设备已通电并与电脑同网。",
+            NativeSetupStep.Receiver => "选择要连接的 HomePod。",
+            NativeSetupStep.Configuring => "正在准备连接和声音…",
+            NativeSetupStep.Testing => "正在播放，请留意 HomePod。",
             NativeSetupStep.Listening => "听到声音了吗？",
-            NativeSetupStep.Ready => "已准备好",
-            NativeSetupStep.Blocked => "连接未完成",
-            _ => "正在准备…"
-        }), 26, FontWeights.SemiBold);
-        switch (_flow.Step)
+            NativeSetupStep.Ready => "已可播放音乐和视频。",
+            NativeSetupStep.Blocked => "请检查下方原因，然后重试。",
+            _ => "正在检查设备…"
+        };
+        Preparation.Visibility = _busy && step is not (NativeSetupStep.Testing or NativeSetupStep.Listening)
+            ? Visibility.Visible : Visibility.Collapsed;
+        Preparation.IsIndeterminate = SystemParameters.ClientAreaAnimation && !SystemParameters.HighContrast;
+        var showReceivers = step == NativeSetupStep.Receiver && _flow.Receivers.Count > 0;
+        ReceiverPicker.Visibility = showReceivers ? Visibility.Visible : Visibility.Collapsed;
+        if (showReceivers)
         {
-            case NativeSetupStep.Driver:
-                Text("如 Windows 提示，请允许安装。");
-                if (!_busy) AsyncAction("开始自动设置", _flow.StartAutomaticAsync);
-                break;
-            case NativeSetupStep.Restart:
-                Text("保存工作，重启 Windows 后打开 AppleHome。");
-                AsyncAction("重新检查", _flow.RefreshAsync);
-                break;
-            case NativeSetupStep.Receiver:
-                var devices = new ListBox { MinHeight = 70, MaxHeight = 140, Margin = new(0, 12, 0, 12) };
-                foreach (var receiver in _flow.Receivers)
-                {
-                    var qualified = receiver.PrefersNtpAlac && receiver.Online;
-                    devices.Items.Add(new ListBoxItem { Content = receiver.Name + (qualified ? "" : " · 暂不支持"),
-                        Tag = receiver, Padding = new(12), IsEnabled = qualified });
-                }
-                if (devices.Items.Count == 0) Text("未发现设备，请确认 HomePod 已通电并与电脑同网。");
-                _body.Children.Add(devices);
-                AsyncAction("连接", token => devices.SelectedItem is ListBoxItem { Tag: Receiver receiver }
-                    ? _flow.ConnectAsync(receiver, token) : ShowSelectionRequired());
-                AsyncAction("重新搜索", _flow.RefreshAsync);
-                break;
-            case NativeSetupStep.Configuring:
-                break;
-            case NativeSetupStep.Testing:
-            case NativeSetupStep.Listening:
-                ConfirmationActions();
-                break;
-            case NativeSetupStep.Ready:
-                Text(OutputName());
-                Action("完成", Close);
-                break;
-            case NativeSetupStep.Blocked:
-                AsyncAction("重试", _flow.RefreshAsync);
-                break;
-            default:
-                break;
+            var previous = _selectedId;
+            ReceiverPicker.Items.Clear();
+            foreach (var receiver in _flow.Receivers)
+            {
+                var qualified = receiver.Online && receiver.PrefersNtpAlac;
+                var item = new ListBoxItem { Content = DisplayName(receiver.Name) + (qualified ? "" : " · 暂不支持"),
+                    Tag = receiver, Padding = new(10), IsEnabled = qualified };
+                ReceiverPicker.Items.Add(item);
+                if (receiver.Id == previous) ReceiverPicker.SelectedItem = item;
+            }
         }
-        _status.Text = _operationError ?? _flow.Error ?? "";
-        _status.Visibility = _status.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
-        _body.Children.Add(_status);
-        foreach (var button in _actions) button.IsEnabled = !_busy;
+        ReplayButton.Visibility = listening ? Visibility.Visible : Visibility.Collapsed;
+        SecondaryButton.Visibility = listening || step == NativeSetupStep.Receiver ? Visibility.Visible : Visibility.Collapsed;
+        SecondaryButton.Content = listening ? "没听到" : "重新搜索";
+        PrimaryButton.Content = step switch {
+            NativeSetupStep.Driver => "开始设置", NativeSetupStep.Restart => "重新检查",
+            NativeSetupStep.Receiver => "连接", NativeSetupStep.Ready => "完成",
+            NativeSetupStep.Blocked => "重试", _ => "听到了"
+        };
+        PrimaryButton.Visibility = listening || step is NativeSetupStep.Driver or NativeSetupStep.Restart or NativeSetupStep.Ready or NativeSetupStep.Blocked
+            || showReceivers ? Visibility.Visible : Visibility.Collapsed;
+        var enabled = !_busy && !_closing;
+        ReplayButton.IsEnabled = enabled; PrimaryButton.IsEnabled = enabled; SecondaryButton.IsEnabled = enabled;
+        ReceiverPicker.IsEnabled = enabled;
+        StatusText.Text = _operationError ?? _flow.Error ?? (step == NativeSetupStep.Driver ? "如 Windows 提示，请允许安装。" : "");
+        StatusText.Visibility = StatusText.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        AnnounceState(StatusText.Text.Length == 0 ? StepText.Text : StepText.Text + " " + StatusText.Text);
     }
-    private void ConfirmationActions()
+    private void AnnounceState(string text)
     {
-        var replay = AsyncAction("再播放一次", _flow.ReplayConfirmationAsync);
-        replay.BorderThickness = new(0); replay.Background = Brushes.Transparent;
-        replay.Foreground = SystemParameters.HighContrast ? SystemColors.HotTrackBrush : new SolidColorBrush(Color.FromRgb(31, 76, 120));
-        replay.MinWidth = 0; replay.Padding = new(0); replay.Margin = new(0, 14, 0, 12);
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new(0, 6, 0, 0) };
-        var no = AsyncAction("没听到", _flow.RejectMusicAsync);
-        var yes = AsyncAction("听到了", async token => { await _flow.ConfirmMusicAsync(token); if (_flow.Step == NativeSetupStep.Ready) Close(); }, "正在完成…");
-        _body.Children.Remove(no); _body.Children.Remove(yes);
-        no.Margin = new(0, 0, 10, 0); yes.Margin = new(0);
-        yes.Background = yes.BorderBrush = SystemParameters.HighContrast ? SystemColors.HighlightBrush : new SolidColorBrush(Color.FromRgb(31, 76, 120));
-        yes.Foreground = SystemParameters.HighContrast ? SystemColors.HighlightTextBrush : Brushes.White;
-        yes.Resources["TintBrush"] = SystemParameters.HighContrast ? SystemColors.HighlightBrush : new SolidColorBrush(Color.FromRgb(23, 60, 95));
-        row.Children.Add(no); row.Children.Add(yes); _body.Children.Add(row);
+        if (_lastAnnouncement == text) return;
+        _lastAnnouncement = text;
+        AutomationProperties.SetName(StepText, text);
+        if (IsLoaded && AutomationPeer.ListenerExists(AutomationEvents.LiveRegionChanged))
+            (UIElementAutomationPeer.FromElement(StepText) ?? UIElementAutomationPeer.CreatePeerForElement(StepText))?
+                .RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+    }
+    private static string DisplayName(string name)
+    {
+        var safe = new string(name.Where(character => !char.IsControl(character)).ToArray()).Trim();
+        return safe.Length > 96 ? safe[..95] + "…" : safe;
+    }
+    private void ReceiverSelected(object sender, SelectionChangedEventArgs args)
+    { if (ReceiverPicker.SelectedItem is ListBoxItem { Tag: Receiver receiver }) _selectedId = receiver.Id; }
+    private async void ReplayClicked(object sender, RoutedEventArgs args) => await RunAsync(_flow.ReplayConfirmationAsync, ReplayButton);
+    private async void SecondaryClicked(object sender, RoutedEventArgs args)
+        => await RunAsync(_flow.Step == NativeSetupStep.Listening ? _flow.RejectMusicAsync : _flow.RefreshAsync, SecondaryButton);
+    private async void PrimaryClicked(object sender, RoutedEventArgs args)
+    {
+        if (_flow.Step == NativeSetupStep.Ready) { Close(); return; }
+        if (_flow.Step == NativeSetupStep.Listening)
+        {
+            _confirming = true;
+            try { await RunAsync(async token => { await _flow.ConfirmMusicAsync(token); if (_flow.Step == NativeSetupStep.Ready) Close(); }, PrimaryButton); }
+            finally { _confirming = false; if (!_closing) RefreshView(); }
+            return;
+        }
+        if (_flow.Step == NativeSetupStep.Receiver)
+            await RunAsync(token => ReceiverPicker.SelectedItem is ListBoxItem { Tag: Receiver receiver }
+                ? _flow.ConnectAsync(receiver, token) : Task.FromException(new InvalidOperationException("请先选择一只可连接的 HomePod。")), PrimaryButton);
+        else await RunAsync(_flow.StartAutomaticAsync, PrimaryButton);
+    }
+    private async Task RunAsync(Func<CancellationToken, Task> action, Button? focusAfter = null)
+    {
+        if (_busy || _closing) return;
+        var hadFocus = IsKeyboardFocusWithin;
+        _busy = true; _operationError = null; RefreshView();
+        try { await action(_lifetime.Token); }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        catch (Exception error) { AppPaths.Log("First-run setup failed: " + error); _operationError = DiagnosticText.Protect(error.Message); }
+        finally
+        {
+            _busy = false;
+            if (!_closing)
+            {
+                RefreshView();
+                if (hadFocus && IsActive && focusAfter is { IsEnabled: true, IsVisible: true }) Keyboard.Focus(focusAfter);
+            }
+        }
     }
     private void FlowChanged()
     {
@@ -138,58 +159,19 @@ public sealed class NativeSetupWindow : Window
         if (Dispatcher.CheckAccess()) Update(); else _ = Dispatcher.BeginInvoke(Update);
         void Update() { if (!_closing) { _operationError = null; RefreshView(); } }
     }
-    private string OutputName()
-    {
-        var endpoint = _flow.Inspection?.Endpoint;
-        if (!string.IsNullOrWhiteSpace(endpoint?.EndpointLabel)) return endpoint.EndpointLabel;
-        if (!string.IsNullOrWhiteSpace(endpoint?.FriendlyName)) return endpoint.FriendlyName;
-        return _flow.Inspection?.Binding?.AssignedName ?? (_flow.SelectedReceiver is { } receiver ? NativeSetupFlow.OutputName(receiver) : "HomePod");
-    }
-    private static Task ShowSelectionRequired() => Task.FromException(new InvalidOperationException("请先选择一只可连接的 HomePod。"));
-    private void Text(string text, double size = 14, FontWeight? weight = null)
-        => _body.Children.Add(new TextBlock { Text = text, FontSize = size, FontWeight = weight ?? FontWeights.Normal,
-            TextWrapping = TextWrapping.Wrap, Margin = new(0, 8, 0, 8), LineHeight = size * 1.4 });
-    private void Action(string title, System.Action action)
-    {
-        var button = Button(title); button.Click += (_, _) => { try { action(); } catch (Exception error) { _status.Text = DiagnosticText.Protect(error.Message); } };
-    }
-    private Button AsyncAction(string title, Func<CancellationToken, Task> action, string? busyTitle = null)
-    { var button = Button(title); button.Click += async (_, _) => await RunAsync(action, busyTitle, title); return button; }
-    private Button Button(string title)
-    {
-        var button = new Button { Content = title, HorizontalAlignment = HorizontalAlignment.Left, MinWidth = 120,
-            Padding = new(18, 9, 18, 9), Margin = new(0, 6, 0, 2) };
-        _actions.Add(button); _body.Children.Add(button); return button;
-    }
-    private async Task RunAsync(Func<CancellationToken, Task> action, string? busyTitle = null, string? focusAfter = null)
-    {
-        if (_busy || _closing) return;
-        var hadFocus = IsKeyboardFocusWithin;
-        _busy = true; _operationError = null; _busyTitle = busyTitle;
-        foreach (var button in _actions) button.IsEnabled = false;
-        try { await action(_lifetime.Token); }
-        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
-        catch (Exception error) { AppPaths.Log("First-run setup failed: " + error); _operationError = DiagnosticText.Protect(error.Message); }
-        finally
-        {
-            _busy = false; _busyTitle = null;
-            if (!_closing)
-            {
-                RefreshView();
-                if (hadFocus && IsActive && _actions.FirstOrDefault(button => Equals(button.Content, focusAfter) && button.IsEnabled) is { } button)
-                    Keyboard.Focus(button);
-            }
-        }
-    }
-    private void ShowAbout()
+    private string OutputName() => _flow.Inspection?.Endpoint?.EndpointLabel ?? _flow.Inspection?.Binding?.AssignedName ?? "HomePod";
+    private void AboutClicked(object sender, RoutedEventArgs args)
     {
         var about = new Window { Title = "关于 AppleHome", Owner = this, Width = 400, SizeToContent = SizeToContent.Height,
             ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            Background = SystemColors.WindowBrush, Foreground = SystemColors.WindowTextBrush, FontFamily = FontFamily, FontSize = 14 };
+            Background = Background, Foreground = Foreground, FontFamily = FontFamily, FontSize = 14 };
         var body = new StackPanel { Margin = new(24) };
         body.Children.Add(new TextBlock { Text = "AppleHome · GPLv3+\n\n音频驱动：VB-CABLE · VB-Audio Software\nDonationware", TextWrapping = TextWrapping.Wrap, Margin = new(0, 0, 0, 16) });
-        var license = new Button { Content = "驱动许可与捐助", HorizontalAlignment = HorizontalAlignment.Left };
-        license.Click += (_, _) => { try { Open("https://vb-audio.com/Services/licensing.htm"); } catch (Exception error) { MessageBox.Show(about, DiagnosticText.Protect(error.Message)); } };
+        var license = new Button { Content = "驱动许可与捐助", Style = (Style)FindResource("SetupButton"), HorizontalAlignment = HorizontalAlignment.Left };
+        license.Click += (_, _) => {
+            try { Process.Start(new ProcessStartInfo("https://vb-audio.com/Services/licensing.htm") { UseShellExecute = true }); }
+            catch (Exception error) { MessageBox.Show(about, DiagnosticText.Protect(error.Message)); }
+        };
         body.Children.Add(license); about.Content = body; about.ShowDialog();
     }
     private async void CloseSafely(object? sender, CancelEventArgs args)
@@ -202,5 +184,4 @@ public sealed class NativeSetupWindow : Window
         catch (Exception error) { AppPaths.Log("First-run setup cleanup failed: " + error); }
         finally { _flow.Changed -= FlowChanged; _lifetime.Dispose(); _allowClose = true; _ = Dispatcher.BeginInvoke(Close); }
     }
-    private static void Open(string target) => Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
 }
