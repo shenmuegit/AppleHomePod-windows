@@ -1,13 +1,16 @@
 namespace AirFlash.Core;
 
-public enum NativeSetupStep { Checking, Driver, Restart, Receiver, NameOutput, Listening, Ready, Blocked }
+public enum NativeSetupStep { Checking, Driver, Restart, Receiver, Configuring, Testing, Listening, Ready, Blocked }
 public sealed record NativeSetupInspection(bool DriverInstalled, bool RebootVerified, EndpointIdentity? Endpoint,
     NativeBinding? Binding, bool AgentReady, string? BlockedReason = null);
 public interface INativeSetupPlatform : IAsyncDisposable
 {
     Task<NativeSetupInspection> InspectAsync(CancellationToken cancellation);
     Task<IReadOnlyList<Receiver>> DiscoverAsync(CancellationToken cancellation);
+    Task<NativeDriverInstallOutcome> InstallDriverAsync(CancellationToken cancellation);
+    Task PrepareOutputAsync(Receiver receiver, CancellationToken cancellation);
     Task StartPreviewAsync(Receiver receiver, CancellationToken cancellation);
+    Task PlayConfirmationAsync(CancellationToken cancellation);
     Task<bool> TryAdaptMusicAsync(CancellationToken cancellation) => Task.FromResult(false);
     Task CompleteAsync(CancellationToken cancellation);
     Task StopPreviewAsync(CancellationToken cancellation);
@@ -18,15 +21,28 @@ public sealed class NativeSetupFlow(INativeSetupPlatform platform) : IAsyncDispo
     private readonly SemaphoreSlim _action = new(1);
     private readonly CancellationTokenSource _lifetime = new();
     private EndpointIdentity? _previewEndpoint;
-    private bool _preview, _disposed;
-    public NativeSetupStep Step { get; private set; } = NativeSetupStep.Checking;
+    private bool _preview, _disposed, _automatic;
+    private NativeSetupStep _step = NativeSetupStep.Checking;
+    public event Action? Changed;
+    public NativeSetupStep Step { get => _step; private set { _step = value; Changed?.Invoke(); } }
     public NativeSetupInspection? Inspection { get; private set; }
     public IReadOnlyList<Receiver> Receivers { get; private set; } = [];
     public Receiver? SelectedReceiver { get; private set; }
     public string? Error { get; private set; }
+    public Task StartAutomaticAsync(CancellationToken cancellation)
+    { _automatic = true; return RefreshAsync(cancellation); }
     public Task RefreshAsync(CancellationToken cancellation) => RunAsync(async token => {
         await StopPreviewAsync(token).ConfigureAwait(false);
+        Step = NativeSetupStep.Checking;
         var inspection = await platform.InspectAsync(token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
+        if (_automatic && !inspection.DriverInstalled && string.IsNullOrWhiteSpace(inspection.BlockedReason))
+        {
+            Step = NativeSetupStep.Driver;
+            var outcome = await platform.InstallDriverAsync(token).ConfigureAwait(false);
+            inspection = await platform.InspectAsync(token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
+            if (outcome == NativeDriverInstallOutcome.RestartRequired) { Inspection = inspection; Step = NativeSetupStep.Restart; return; }
+            if (!inspection.DriverInstalled) throw new IOException("驱动安装后未通过 Windows 设备核验。请重新运行安装程序。");
+        }
         if (!CheckInspection(inspection)) return;
         if (inspection.Binding is { Calibration: not null, VerifiedBufferMs: not null, VerifiedBufferProfile: null } && inspection.AgentReady)
         { Step = NativeSetupStep.Ready; return; }
@@ -41,27 +57,35 @@ public sealed class NativeSetupFlow(INativeSetupPlatform platform) : IAsyncDispo
         if (SelectedReceiver is { } previous)
             SelectedReceiver = Receivers.FirstOrDefault(receiver => SameReceiver(receiver.Id, previous.Id));
         Step = NativeSetupStep.Receiver;
+        if (_automatic)
+        {
+            var candidates = Receivers.Where(Qualified).Where(receiver => inspection.Binding is not { } bound
+                || SameReceiver(receiver.Id, bound.ReceiverId)).ToArray();
+            if (candidates.Length == 1) await ConnectCoreAsync(candidates[0], token).ConfigureAwait(false);
+        }
     }, cancellation);
 
-    public Task ConnectAsync(Receiver receiver, CancellationToken cancellation) => RunAsync(async token => {
+    public Task ConnectAsync(Receiver receiver, CancellationToken cancellation) => RunAsync(token => ConnectCoreAsync(receiver, token), cancellation);
+    private async Task ConnectCoreAsync(Receiver receiver, CancellationToken token)
+    {
         await StopPreviewAsync(token).ConfigureAwait(false);
         var inspection = await platform.InspectAsync(token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
         if (!CheckInspection(inspection)) return;
         var selected = Receivers.FirstOrDefault(candidate => SameReceiver(candidate.Id, receiver.Id));
-        if (selected is null || !ReceiverIdentity.IsBroadcast(selected.Id) || !selected.Online || !selected.Complete
-            || !selected.PrefersNtpAlac || selected.Port is < 1 or > 65535)
+        if (selected is null || !Qualified(selected))
             throw new InvalidOperationException("Select a discovered, online HomePod with a qualified standalone profile.");
         SelectedReceiver = selected;
         if (inspection.Binding is { } binding && !SameReceiver(binding.ReceiverId, selected.Id))
             throw new InvalidOperationException("An existing output is bound to another HomePod. Remove that binding before replacing it.");
-        var endpoint = inspection.Endpoint!; var name = OutputName(selected);
-        if (inspection.Binding?.Calibration is null && endpoint.EndpointLabel != name && endpoint.FriendlyName != name
-            && (endpoint.EndpointLabel is null || string.Equals(endpoint.EndpointLabel, endpoint.PinName, StringComparison.OrdinalIgnoreCase)))
-        { Step = NativeSetupStep.NameOutput; return; }
+        var endpoint = inspection.Endpoint!;
         _preview = true; _previewEndpoint = endpoint;
+        Step = NativeSetupStep.Configuring;
+        await platform.PrepareOutputAsync(selected, token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
         await platform.StartPreviewAsync(selected, token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
+        Step = NativeSetupStep.Testing;
+        await platform.PlayConfirmationAsync(token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
         Step = NativeSetupStep.Listening;
-    }, cancellation);
+    }
 
     public Task ConfirmMusicAsync(CancellationToken cancellation) => RunAsync(async token => {
         if (Step != NativeSetupStep.Listening || !_preview || SelectedReceiver is null) return;
@@ -77,9 +101,13 @@ public sealed class NativeSetupFlow(INativeSetupPlatform platform) : IAsyncDispo
     public Task RejectMusicAsync(CancellationToken cancellation) => RunAsync(async token => {
         if (Step != NativeSetupStep.Listening) return;
         if (await platform.TryAdaptMusicAsync(token).ConfigureAwait(false))
-        { token.ThrowIfCancellationRequested(); Step = NativeSetupStep.Listening; return; }
+        {
+            token.ThrowIfCancellationRequested(); Step = NativeSetupStep.Testing;
+            await platform.PlayConfirmationAsync(token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
+            Step = NativeSetupStep.Listening; return;
+        }
         await StopPreviewAsync(token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
-        Step = NativeSetupStep.Receiver;
+        Block("自动检查与重试后仍未确认出声，尚未完成安装。请检查 HomePod 已通电且未被其他设备占用，再重新检查。");
     }, cancellation);
 
     public static string OutputName(Receiver receiver)
@@ -109,6 +137,8 @@ public sealed class NativeSetupFlow(INativeSetupPlatform platform) : IAsyncDispo
     }
     private bool Block(string error) { Error = DiagnosticText.Protect(error); Step = NativeSetupStep.Blocked; return false; }
     private static bool SameReceiver(string left, string right) => ReceiverIdentity.Normalize(left) == ReceiverIdentity.Normalize(right);
+    private static bool Qualified(Receiver receiver) => ReceiverIdentity.IsBroadcast(receiver.Id) && receiver.Online
+        && receiver.Complete && receiver.PrefersNtpAlac && receiver.Port is >= 1 and <= 65535;
     private static bool SameEndpoint(EndpointIdentity left, EndpointIdentity right)
         => string.Equals(left.EndpointId, right.EndpointId, StringComparison.OrdinalIgnoreCase)
         && string.Equals(left.AdapterInstanceId, right.AdapterInstanceId, StringComparison.OrdinalIgnoreCase)

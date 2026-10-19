@@ -1487,6 +1487,16 @@ You are solely responsible for determining the appropriateness of using and dist
 
 
 
+VB-CABLE Driver Pack45
+---------------------
+Copyright VB-Audio Software / Vincent Burel. VB-CABLE is Donationware,
+distributed as an unmodified original package separately from AppleHome's GPL code.
+Original package: https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip
+Product and donation: https://vb-audio.com/Cable/
+Current distribution terms: https://vb-audio.com/Services/licensing.htm
+The original readme.txt, INF, CAT, SYS and setup programs are retained in the archive.
+Professional or hidden distribution requires checking VB-Audio's applicable licensing terms.
+
 Windows Desktop Runtime
 
 The MIT License (MIT)

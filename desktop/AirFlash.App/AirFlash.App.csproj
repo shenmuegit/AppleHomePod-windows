@@ -20,6 +20,7 @@
     <PublishTrimmed>false</PublishTrimmed>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <NoWarn>$(NoWarn);WPF0001</NoWarn>
+    <VbCablePackage Condition="'$(VbCablePackage)' == ''">$(MSBuildProjectDirectory)/../../artifacts/vendor/VBCABLE_Driver_Pack45.zip</VbCablePackage>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../AirFlash.Core/AirFlash.Core.csproj"/>
@@ -30,9 +31,13 @@
     <EmbeddedResource Include="Assets/app.ico" LogicalName="AirFlash.Icon.ico"/>
     <EmbeddedResource Include="Assets/ThirdPartyNotices.txt" LogicalName="AirFlash.ThirdPartyNotices.txt"/>
     <EmbeddedResource Include="../../native/airflash-engine/target/release/airflash-engine.exe" LogicalName="AirFlash.Engine.exe" Condition="Exists('../../native/airflash-engine/target/release/airflash-engine.exe')"/>
+    <EmbeddedResource Include="$(VbCablePackage)" LogicalName="AirFlash.VbCable.zip" Condition="Exists('$(VbCablePackage)')"/>
   </ItemGroup>
   <Target Name="RequireEngineForPublish" BeforeTargets="PrepareForPublish">
     <Error Condition="!Exists('../../native/airflash-engine/target/release/airflash-engine.exe')" Text="Build the Rust engine first with scripts/build-native.ps1."/>
+    <Error Condition="!Exists('$(VbCablePackage)')" Text="Prepare the original VB-CABLE package with scripts/prepare-native-driver.ps1 before publishing."/>
+    <GetFileHash Files="$(VbCablePackage)" Algorithm="SHA256"><Output TaskParameter="Items" ItemName="VbCableHash"/></GetFileHash>
+    <Error Condition="'%(VbCableHash.FileHash)' != 'B950E39F01AF1D04EA623C8F6D8EB9B6EA5C477C637295FABF20631C85116BFB'" Text="VB-CABLE input must be the verified, unmodified Pack45 archive."/>
   </Target>
   <Target Name="AuditWindowsCompatibility" BeforeTargets="GenerateSingleFileBundle" DependsOnTargets="PrepareForBundle" Condition="'$(PublishSingleFile)' == 'true'">
     <PropertyGroup>

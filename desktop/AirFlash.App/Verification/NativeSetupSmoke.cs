@@ -23,18 +23,20 @@ internal static class NativeSetupSmoke
         {
             await flow.RefreshAsync(default);
             window.RefreshView(); window.Show();
-            await Capture("driver", "官方驱动页面");
+            await Capture("driver", "内附的原厂");
             platform.Installed = true;
             await flow.RefreshAsync(default); window.RefreshView();
-            await Capture("receiver", "选择 HomePod");
-            var connect = Descendants(window).OfType<Button>().Single(button => Equals(button.Content, "连接并验证"));
+            await Capture("receiver", "要使用的 HomePod");
+            var connect = Descendants(window).OfType<Button>().Single(button => Equals(button.Content, "使用这只 HomePod"));
             ((IInvokeProvider)new ButtonAutomationPeer(connect).GetPattern(PatternInterface.Invoke)).Invoke();
             await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
             if (!Descendants(window).OfType<TextBlock>().Any(text => text.Text.Contains("请先选择", StringComparison.Ordinal)))
                 throw new InvalidOperationException("An empty device selection must keep an actionable message visible.");
             checks.Add("empty-selection-remains-visible");
             await flow.ConnectAsync(platform.Receiver, default); window.RefreshView();
-            await Capture("listening", "正常音乐");
+            await Capture("listening", "是否听到");
+            var choices = Descendants(window).OfType<Button>().Select(button => button.Content).ToArray();
+            if (!choices.Contains("听到了") || !choices.Contains("没听到")) throw new InvalidOperationException("Setup must ask only whether its automatic audio was heard.");
             if (platform.Completed) throw new InvalidOperationException("Setup completed before the user confirmed music.");
             await flow.ConfirmMusicAsync(default); window.RefreshView();
             await Capture("ready", "已准备好");
@@ -42,7 +44,13 @@ internal static class NativeSetupSmoke
             await flow.RefreshAsync(default); window.RefreshView();
             await Capture("renamed-ready", "客厅 HomePod");
             if (!platform.Completed || !platform.Previewed) throw new InvalidOperationException("The setup did not use explicit preview and confirmation.");
-            checks.Add("completion-requires-normal-music-confirmation");
+            checks.Add("completion-requires-automatic-audio-confirmation");
+            platform.RenamedExisting = platform.Completed = platform.Configured = platform.AudioPlayed = false;
+            await flow.StartAutomaticAsync(default); window.RefreshView();
+            if (flow.Step != NativeSetupStep.Listening || !platform.Configured || !platform.AudioPlayed || platform.Completed)
+                throw new InvalidOperationException("A single HomePod must automatically configure and play before the only functional confirmation.");
+            await Capture("automatic-confirmation", "是否听到");
+            checks.Add("single-device-needs-no-manual-route-name-or-player");
             App.WriteOutput(args, new { ok = true, checks, audio_sent = false, hardware_used = false, production_state_modified = false });
             return 0;
         }
@@ -76,7 +84,7 @@ internal static class NativeSetupSmoke
     }
     private sealed class SimulatedPlatform : INativeSetupPlatform
     {
-        internal bool Installed, Previewed, Completed, RenamedExisting;
+        internal bool Installed, Previewed, Completed, RenamedExisting, Configured, AudioPlayed;
         internal readonly Receiver Receiver = new("9efd9099abd6", "da", "127.0.0.1")
             { Model = "AudioAccessory5,1", SoftwareVersion = "27.0", IsLeader = true, Codecs = [1] };
         private readonly EndpointIdentity _endpoint = new("simulated-output", "simulated-adapter", NativeBindingPolicy.HardwareId,
@@ -90,6 +98,9 @@ internal static class NativeSetupSmoke
             return Task.FromResult(new NativeSetupInspection(Installed, Installed, Installed ? live : null, stored, Completed));
         }
         public Task<IReadOnlyList<Receiver>> DiscoverAsync(CancellationToken cancellation) => Task.FromResult<IReadOnlyList<Receiver>>([Receiver]);
+        public Task<NativeDriverInstallOutcome> InstallDriverAsync(CancellationToken cancellation) { Installed = true; return Task.FromResult(NativeDriverInstallOutcome.VerificationRequired); }
+        public Task PrepareOutputAsync(Receiver receiver, CancellationToken cancellation) { Configured = true; return Task.CompletedTask; }
+        public Task PlayConfirmationAsync(CancellationToken cancellation) { AudioPlayed = true; return Task.CompletedTask; }
         public Task StartPreviewAsync(Receiver receiver, CancellationToken cancellation) { Previewed = true; return Task.CompletedTask; }
         public Task CompleteAsync(CancellationToken cancellation) { Completed = true; return Task.CompletedTask; }
         public Task StopPreviewAsync(CancellationToken cancellation) => Task.CompletedTask;

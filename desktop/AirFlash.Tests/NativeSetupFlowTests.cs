@@ -113,16 +113,12 @@ public sealed class NativeSetupFlowTests
     }
 
     [Fact]
-    public async Task RawOutputRequiresWindowsNamingBeforePreviewAndRetainsSelection()
+    public async Task RawOutputIsConfiguredWithoutManualWindowsNaming()
     {
         var raw = Endpoint with { EndpointLabel = "CABLE Input" };
         var platform = new Fake { Inspection = new(true, true, raw, null, false) };
         await using var flow = new NativeSetupFlow(platform); await flow.RefreshAsync(default); await flow.ConnectAsync(Mini, default);
-        Assert.Equal(NativeSetupStep.NameOutput, flow.Step); Assert.Equal(Mini, flow.SelectedReceiver);
-        Assert.DoesNotContain("preview", platform.Calls);
-        platform.Inspection = platform.Inspection with { Endpoint = Endpoint };
-        await flow.ConnectAsync(Mini, default);
-        Assert.Equal(NativeSetupStep.Listening, flow.Step);
+        Assert.Equal(NativeSetupStep.Listening, flow.Step); Assert.Equal(Mini, flow.SelectedReceiver);
         Assert.Equal(1, platform.Calls.Count(call => call == "preview"));
     }
 
@@ -220,7 +216,7 @@ public sealed class NativeSetupFlowTests
     {
         var platform = new Fake(); await using var flow = new NativeSetupFlow(platform); await flow.RefreshAsync(default); await flow.ConnectAsync(Mini, default);
         await flow.RejectMusicAsync(default);
-        Assert.Equal(NativeSetupStep.Receiver, flow.Step); Assert.Contains("stop", platform.Calls);
+        Assert.Equal(NativeSetupStep.Blocked, flow.Step); Assert.Contains("stop", platform.Calls);
         Assert.DoesNotContain("complete", platform.Calls); Assert.Equal(Mini, flow.SelectedReceiver);
     }
 
@@ -236,7 +232,7 @@ public sealed class NativeSetupFlowTests
         Assert.Same(binding, platform.Inspection.Binding); Assert.Null(binding.VerifiedBufferMs);
         platform.Adapt = _ => Task.FromResult(false);
         await flow.RejectMusicAsync(default);
-        Assert.Equal(NativeSetupStep.Receiver, flow.Step); Assert.Equal(["adapt", "adapt", "stop"], platform.Calls);
+        Assert.Equal(NativeSetupStep.Blocked, flow.Step); Assert.Equal(["adapt", "adapt", "stop"], platform.Calls);
         Assert.DoesNotContain("complete", platform.Calls);
     }
 
@@ -359,6 +355,9 @@ public sealed class NativeSetupFlowTests
         public Func<CancellationToken, Task<bool>>? Adapt;
         public Task<NativeSetupInspection> InspectAsync(CancellationToken cancellation) { Calls.Add("inspect"); return Task.FromResult(Inspection); }
         public Task<IReadOnlyList<Receiver>> DiscoverAsync(CancellationToken cancellation) { Calls.Add("discover"); return Task.FromResult(Receivers); }
+        public Task<NativeDriverInstallOutcome> InstallDriverAsync(CancellationToken cancellation) => Task.FromResult(NativeDriverInstallOutcome.VerificationRequired);
+        public Task PrepareOutputAsync(Receiver receiver, CancellationToken cancellation) => Task.CompletedTask;
+        public Task PlayConfirmationAsync(CancellationToken cancellation) => Task.CompletedTask;
         public Task StartPreviewAsync(Receiver receiver, CancellationToken cancellation) { Calls.Add("preview"); PreviewReceiver = receiver; return Preview?.Invoke(cancellation) ?? Task.CompletedTask; }
         public Task CompleteAsync(CancellationToken cancellation) { Calls.Add("complete"); return Complete?.Invoke(cancellation) ?? Task.CompletedTask; }
         public Task<bool> TryAdaptMusicAsync(CancellationToken cancellation) { Calls.Add("adapt"); return Adapt?.Invoke(cancellation) ?? Task.FromResult(false); }

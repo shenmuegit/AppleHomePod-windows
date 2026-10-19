@@ -35,7 +35,7 @@ internal static class NativeVolumeCalibration
             || live.AdapterInstanceId != binding.Endpoint.AdapterInstanceId || live.MixFormat != binding.Endpoint.MixFormat)
             throw new InvalidOperationException("The bound virtual output or its format changed. Revalidate it before calibration.");
         if (binding.Calibration is null && live.EndpointLabel == live.PinName && live.FriendlyName != binding.AssignedName)
-            throw new InvalidOperationException("Complete the first-time Windows output naming before calibration.");
+            throw new InvalidOperationException("Automatic output naming has not been verified. Retry AppleHome setup before calibration.");
         if (!WindowsNativeBinding.RebootedSincePreinstall())
             throw new InvalidOperationException("Complete the independent driver's required reboot before capture or calibration.");
         return binding;
@@ -220,7 +220,7 @@ internal static class NativeVolumeCalibration
         }
     }
 
-    private static AudioSessionControl FindSourceSession(MMDevice device, int sourcePid)
+    internal static AudioSessionControl FindSourceSession(MMDevice device, int sourcePid)
     {
         var manager=device.AudioSessionManager;
         manager.RefreshSessions();

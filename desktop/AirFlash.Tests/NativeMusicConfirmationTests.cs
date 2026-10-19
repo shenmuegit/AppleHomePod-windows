@@ -220,6 +220,9 @@ public sealed class NativeMusicConfirmationTests
         public Task<NativeSetupInspection> InspectAsync(CancellationToken cancellation)
             => Task.FromResult(new NativeSetupInspection(true, true, Binding.Endpoint, Binding, false));
         public Task<IReadOnlyList<Receiver>> DiscoverAsync(CancellationToken cancellation) => Task.FromResult<IReadOnlyList<Receiver>>([Mini]);
+        public Task<NativeDriverInstallOutcome> InstallDriverAsync(CancellationToken cancellation) => Task.FromResult(NativeDriverInstallOutcome.VerificationRequired);
+        public Task PrepareOutputAsync(Receiver receiver, CancellationToken cancellation) => Task.CompletedTask;
+        public Task PlayConfirmationAsync(CancellationToken cancellation) => Task.CompletedTask;
         public Task StartPreviewAsync(Receiver receiver, CancellationToken cancellation) => Task.CompletedTask;
         public async Task CompleteAsync(CancellationToken cancellation)
         {

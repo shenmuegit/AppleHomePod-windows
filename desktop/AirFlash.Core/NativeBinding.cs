@@ -59,7 +59,7 @@ public static class NativeBindingPolicy
             throw new InvalidOperationException("Remove the existing binding before replacing its receiver or adapter.");
         var desired = candidate.EndpointLabel == requestedName || candidate.FriendlyName == requestedName;
         if (previous?.Calibration is null && !desired && (candidate.EndpointLabel is null || Same(candidate.EndpointLabel, candidate.PinName)))
-            throw new InvalidOperationException("First name this output in Windows sound device properties. Application property writes are not supported.");
+            throw new InvalidOperationException("Automatic output naming has not been verified. Retry AppleHome setup before binding.");
         var name = desired ? requestedName : candidate.EndpointLabel ?? candidate.FriendlyName;
         var calibration = previous?.Endpoint.MixFormat == candidate.MixFormat ? previous.Calibration : null;
         var binding = new NativeBinding(1, receiverId, candidate, previous?.OriginalName ?? candidate.FriendlyName, name, calibration,

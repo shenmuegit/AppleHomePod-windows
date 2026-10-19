@@ -72,7 +72,8 @@ public partial class App : Application
             {
                 _instance = new("Setup");
                 if (!_instance.IsOwner) { await _instance.NotifyExistingAsync(); await _instance.DisposeAsync(); _instance = null; Shutdown(); return; }
-                var setup = new NativeSetupWindow(new NativeSetupFlow(new NativeSetupPlatform()));
+                var setup = new NativeSetupWindow(new NativeSetupFlow(new NativeSetupPlatform()),
+                    verifyExistingConnection: args.Args.Contains("--setup-connection-check"));
                 MainWindow = setup;
                 _instance.Listen(() => Dispatcher.BeginInvoke(() => { if (setup.WindowState == WindowState.Minimized) setup.WindowState = WindowState.Normal; setup.Activate(); }));
                 setup.Closed += (_, _) => Quit(); setup.Show();

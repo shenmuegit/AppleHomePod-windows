@@ -6,17 +6,17 @@
 
 详细结果见 [兼容矩阵](docs/COMPATIBILITY.md)、[验证记录](docs/VALIDATION.md)。调研、已审阅规格和实施计划保存在 `docs/research/` 与 `docs/superpowers/`。
 
-当前交付快照为 `dist/AppleHome-61992a2-current-mini-20261019.zip`，保留已验证的同一EXE和引擎，附对应源码、许可、校验和及验收状态。解压后双击 `AppleHome.exe` 打开[首次安装与连接向导](docs/first-run.md)：按引导独立安装官方驱动、完成必要的重启和系统命名、选择 HomePod，并用正常音乐确认。日常只通过 Windows 选择输出、调节音量与静音，无需日常窗口或托盘。新的首次安装完整流程、名称跨重启、真实登录和卸载重装仍待验收，准备步骤见[本机首次安装验证](docs/validation/clean-first-install.md)。最新结果见[原生输出验收记录](docs/validation/windows-native-homepod-output.md)。
+保留的实机验收快照为 `dist/AppleHome-61992a2-current-mini-20261019.zip`，当前可用后台继续使用该程序。新的自动安装候选位于 `dist/automatic-setup-20261019/AppleHome.exe`：[向导](docs/first-run.md)自动安装原厂驱动、命名和选择 Windows 输出、准备连接并播放确认音频，用户只确认“听到了 / 没听到”；多只 HomePod 时还需选择目标，Windows 要求的安装许可和驱动重启保留。新自动流程的完整实机资格独立记录，不能继承旧手动向导的通过结论。最新结果见[原生输出验收记录](docs/validation/windows-native-homepod-output.md)。
 
 ## Windows 原生输出候选
 
 首次设置请使用上述带向导的当前交付包并先打开应用，按界面步骤继续。旧的 `dist/native-output-level-fix/`、`dist/startup-61992a2-30min/` 等目录保留其生成时快照，不作为当前安装入口。未完成驱动身份、重启、命名或校准检查时，应用会明确停止设置。
 
-1. 在向导中打开 [VB-Audio 官方页面](https://vb-audio.com/Cable/)，独立安装普通 VB-CABLE Pack45 并按厂商要求重启。驱动不嵌入本应用。
-2. 重启后打开向导，选择 HomePod；如需命名，向导会打开 Windows 声音设置并提供输出名称，不要求使用命令行。
-3. 向导只在虚拟端点内做本地采样校验，接收端参考通过无媒体握手读取；真正出声确认使用正常音乐。
-4. 在 Windows 选择该输出并播放音乐，明确确认听到后才保存校准和启用登录后台。已有可用安装在重新连接时复用原程序，向导不自动升级二进制。
-5. 日常用 Windows 输出、音量、静音和应用混音器；无需打开向导。后台不改物理输出静音或其他应用的路由。
+1. 打开新候选。程序校验内附的原始 VB-CABLE ZIP 与全部文件，仅在缺少驱动且安装检查允许时调用原厂安装器。按 Windows 要求允许安装并完成必要重启。
+2. 程序发现 HomePod；唯一合格设备自动连接，多只时选择目标。名称、Windows 默认播放输出和连接参数均自动配置。
+3. 程序自动播放一次有限提示音；点击“听到了”完成，点击“没听到”执行有限诊断与重试。不需要手动改名、切输出、启动音乐或填写参数。
+4. 明确确认后才保存可听参考和校准，启用登录后台。已有可用安装在重新连接时复用原程序，向导不自动升级二进制。
+5. 日常用 Windows 输出、音量、静音和应用混音器；无需打开向导。安装仅设置默认播放角色，后台不改物理输出静音、录音设备或各应用的独立路由。
 
 首轮原生模式仅允许自动发现的单只 HomePod mini `AudioAccessory5,1 / 27.0`，采用已验证的 NTP/ALAC 路径。当前这只设备有自己的已验证100ms请求记录；它不是所有设备的固定默认、已测出的声学下限或总延迟。没有记录时，程序按接收端合法边界和严格匹配的设备档案选择候选；普通音乐确认后才保存参考，未匹配的候选和自动调稳不等于任意设备均已支持。正常音乐30分钟已通过，首次安装、登录及名称跨重启仍待验收；断网测试暂缓。
 
@@ -97,6 +97,7 @@ pwsh -NoProfile -File scripts/dotnet.ps1 run --project AirFlash.App -- --ui-smok
 
 ```powershell
 $CheckoutRoot = (Get-Location).Path
+pwsh -NoProfile -File scripts/prepare-native-driver.ps1
 pwsh -NoProfile -File scripts/dotnet.ps1 publish AirFlash.App -c Release -r win-x64 --self-contained true -p:RestoreLockedMode=true -p:PublishTrimmed=false -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false "-p:PathMap=$CheckoutRoot=/_/" -o ../artifacts/native-output-publish
 if ($LASTEXITCODE -ne 0) { throw 'Publish failed' }
 $Audit = Get-Content artifacts/compatibility/bundle-audit.json -Raw | ConvertFrom-Json

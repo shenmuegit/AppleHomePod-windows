@@ -8,7 +8,7 @@ internal static class Program
 {
     internal static bool IsDiagnostic(string[] args) => args.Any(a => a.EndsWith("-check", StringComparison.Ordinal)
         || a is "--ui-smoke" or "--tray-smoke" or "--ui-perf" or "--discovery-perf" or "--setup-smoke")
-        || NativeOutputCheck.IsCommand(args) || NativeVolumeCalibration.IsSourceCommand(args);
+        || NativeOutputCheck.IsCommand(args) || NativeVolumeCalibration.IsSourceCommand(args) || NativeSetupAudioSource.IsSourceCommand(args);
     [STAThread]
     public static int Main(string[] args)
     {
@@ -32,6 +32,8 @@ internal static class Program
             if (!WindowsCapabilities.Current.Supported) throw new PlatformNotSupportedException(WindowsCompatibility.Requirement);
             if (NativeVolumeCalibration.IsSourceCommand(args))
                 return NativeVolumeCalibration.RunSourceAsync(args).GetAwaiter().GetResult();
+            if (NativeSetupAudioSource.IsSourceCommand(args))
+                return NativeSetupAudioSource.RunSourceAsync(args).GetAwaiter().GetResult();
             if (NativeOutputCheck.IsCommand(args))
             {
                 stage = "native-setup";
