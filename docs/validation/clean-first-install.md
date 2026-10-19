@@ -20,7 +20,7 @@
 | 4. 独立卸载驱动 | 核对普通VB-CABLE Pack45及其端点未被其他软件使用，用原厂安装器卸载；不处理Voicemeeter或其他驱动 | 设备和端点移除已核验；随后导出并清理精确匹配原厂INF的未使用oem47.inf包，Voicemeeter保留 |
 | 5. 卸载后重启 | 按原厂要求重启，核对驱动和端点确已移除；仅退出/重新打开安装器不算完成 | 用户报告已重启，但WMI、uptime推算和Kernel-General事件仍为旧启动；内核重启未获证据，单独保留未验证 |
 | 6. 首次打开向导 | 必须先打开新包，再安装驱动，取得“安装前无驱动”的证明；无旧绑定、校准和缓冲记录 | 通过：真实无参数向导显示第1步，2026-10-19 12:30:56自行生成零适配器证明；不是模拟UI或恢复旧证明 |
-| 7. 独立安装驱动并重启 | 使用原厂完整Pack45，不嵌入AppleHome；管理员安装，按要求重启；身份/版本/签名匹配 | 重新安装已观察到3.3.1.7、签名驱动、新端点；真实向导显示“完成驱动重启”“无需再次安装驱动”，重启门槛通过；用户暂不能重启，重启后资格待核验 |
+| 7. 独立安装驱动并重启 | 使用原厂完整Pack45，不嵌入AppleHome；管理员安装，按要求重启；身份/版本/签名匹配 | 重新安装已观察到3.3.1.7、签名驱动、新端点；真实向导显示“完成驱动重启”“无需再次安装驱动”，未重启时的阻断行为已核验；用户暂不能重启，重启后资格待核验 |
 | 8. 选择与命名 | 向导发现合格mini，按需通过Windows属性命名普通播放端点；不选16ch或录音设备 | 待执行 |
 | 9. 普通音乐确认 | Windows选HomePod输出，常用播放器正常音乐；程序自动适配，用户不填毫秒数；未确认前不保存可听参考 | 待执行 |
 | 10. 保存与再次使用 | 明确确认后保存设备指纹、实际应用值与校准，核对当前用户任务和已安装EXE；关闭向导仍能播放 | 待执行 |
@@ -40,7 +40,7 @@
 
 原厂安装器哈希和签名复核后启动，由用户完成独立安装。12:33已观察到VB-CABLE3.3.1.7、签名状态和重新出现的端点，用户回复“暂时不能重启”。此时只有向导进程，无引擎、后台任务、绑定、校准和可听参考；没有普通音乐或短音发送。保留证明等待Windows实际重启，不能提前开启采集或用旧100ms补齐结果。驱动重新使用oem47编号不代表旧包未清理，移除与新增分别有前后证据。
 
-证据包括post-uninstall-reboot.json、boot-evidence-after-uninstall.json、driver-store-removal.json、unused-driver-package-removal.txt、clean-before-real-wizard.json、real-first-run-driver-step.json、real-wizard-reboot-page.txt和waiting-for-install-reboot.json。最后再次校验安装前证明哈希未变、无绑定/校准/任务/引擎，确认真实向导阻止了未重启的后续流程；这里“重启门槛通过”指阻止提前继续的行为通过，不指重启已经完成。卸载后的独立内核重启尚未证实；日后一次安装后重启不能追认这一缺项。
+证据包括post-uninstall-reboot.json、boot-evidence-after-uninstall.json、driver-store-removal.json、unused-driver-package-removal.txt、clean-before-real-wizard.json、real-first-run-driver-step.json、real-wizard-reboot-page.txt和waiting-for-install-reboot.json。最后再次校验安装前证明哈希未变、无绑定/校准/任务/引擎，确认真实向导阻止了未重启的后续流程，这不表示重启已经完成。卸载后的独立内核重启尚未证实；日后一次安装后重启不能追认这一缺项。
 
 不通过时记录实际阶段、错误和时长，不能把模拟UI、驱动枚举、握手成功或发送包数当作已出声。必要回退只恢复本轮明确归属的程序和私有备份，不移除别的软件，不提升或关闭系统安全策略。驱动安装及其许可由用户在原厂界面完成。
 
