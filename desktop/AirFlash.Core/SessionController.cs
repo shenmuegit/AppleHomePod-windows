@@ -176,7 +176,8 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
     public SessionSnapshot Snapshot { get { lock (_sync) return _snapshot; } }
     public event Action<SessionSnapshot>? Changed;
     public bool Muted => _muted;
-    private int? Latency(Receiver receiver, AppSettings settings) => factory is NativeEngineHost host ? host.VerifiedBufferMs : settings.Latency(receiver);
+    private int? Latency(Receiver receiver, AppSettings settings) => factory is NativeEngineHost host
+        ? host.VerifiedBufferFor(receiver, int.Parse(settings.StreamSampleRate)) : settings.Latency(receiver);
     private string Signature(Receiver receiver, AppSettings settings) => $"{(factory is NativeEngineHost ? receiver.Id : "")}|{receiver.TransportKey}|{receiver.PrefersNtpAlac}|{settings.EffectiveEndpoint}|{Latency(receiver, settings)}|{settings.StreamSampleRate}";
     public async Task StartAsync(Receiver receiver, AppSettings settings)
     {
@@ -374,7 +375,18 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
                             lock (_sync) { if (epoch != _generation) continue; _diagnostics = _diagnostics with { Latency = latency }; }
                             log?.Invoke("Native latency negotiated: " + JsonSerializer.Serialize(latency));
                             PublishCurrent(epoch);
-                            if (latency.AppliedMs is null) { applyCandidate = latency.SelectedMs; reoffer = true; break; }
+                            if (latency.AppliedMs is null)
+                            {
+                                applyCandidate = latency.SelectedMs;
+                                if (factory is NativeEngineHost host && latency.PreferredMs is null
+                                    && latency.ReceiverMinSamples is null or 0 && latency.ReceiverMaxSamples is null or 0)
+                                {
+                                    var choice = NativeLatencyAdaptation.SelectUnreported(receiver, (int)requestedRate, host.UnverifiedFallbackMs);
+                                    applyCandidate = choice.Milliseconds;
+                                    log?.Invoke("Native latency candidate (not audible verification): " + JsonSerializer.Serialize(choice));
+                                }
+                                reoffer = true; break;
+                            }
                         }
                         else if (kind == "device_volume" && startedAt != 0 && item.Text("host") == volumeHost)
                         {

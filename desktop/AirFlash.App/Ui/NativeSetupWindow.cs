@@ -89,9 +89,9 @@ public sealed class NativeSetupWindow : Window
                 break;
             case NativeSetupStep.Listening:
                 Text("连接已准备好。请在 Windows 声音输出中选择“" + OutputName() + "”，用你常用的播放器播放正常音乐，并用 Windows 音量调到舒适的位置。");
-                Text("确认 HomePod 正常出声、音量可以调整后，点击完成。首次本地校验只在虚拟端点内进行，不向 HomePod 播放参考短音。");
+                Text("让正常音乐连续播放片刻，确认 HomePod 出声且音量可以调整后，点击完成。如果无声或断续，可让程序调稳连接，再继续听同一首音乐；不需要填写参数。");
                 AsyncAction("能正常听到音乐，完成设置", _flow.ConfirmMusicAsync);
-                AsyncAction("没有出声，返回检查", _flow.RejectMusicAsync);
+                AsyncAction("没有声音或有断续，自动调稳", _flow.RejectMusicAsync);
                 break;
             case NativeSetupStep.Ready:
                 Text("HomePod 输出已准备好。以后在 Windows 声音输出中选择“" + OutputName() + "”，直接播放音乐或视频即可。");

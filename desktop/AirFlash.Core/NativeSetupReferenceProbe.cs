@@ -26,7 +26,7 @@ public static class NativeSetupReferenceProbe
         await connection.SendAsync(session, "probe", new {
             peers = new[] { new { host, port = receiver.Port, codecs = new[] { 1 } } },
             source = "loopback", duration_ms = 1, gain = .1, timing = "ntp", sample_rate = 44100,
-            handshake_only = true, latency_policy = "negotiate", latency_ms = binding.VerifiedBufferMs
+            handshake_only = true, latency_policy = "negotiate", latency_ms = NativeLatencyAdaptation.VerifiedPreference(binding, receiver, 44100)
         }, timeout.Token).ConfigureAwait(false);
         for (var count = 0; count < 64; count++)
         {

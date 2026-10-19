@@ -8,6 +8,7 @@ public interface INativeSetupPlatform : IAsyncDisposable
     Task<NativeSetupInspection> InspectAsync(CancellationToken cancellation);
     Task<IReadOnlyList<Receiver>> DiscoverAsync(CancellationToken cancellation);
     Task StartPreviewAsync(Receiver receiver, CancellationToken cancellation);
+    Task<bool> TryAdaptMusicAsync(CancellationToken cancellation) => Task.FromResult(false);
     Task CompleteAsync(CancellationToken cancellation);
     Task StopPreviewAsync(CancellationToken cancellation);
 }
@@ -27,9 +28,16 @@ public sealed class NativeSetupFlow(INativeSetupPlatform platform) : IAsyncDispo
         await StopPreviewAsync(token).ConfigureAwait(false);
         var inspection = await platform.InspectAsync(token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
         if (!CheckInspection(inspection)) return;
-        if (inspection.Binding?.Calibration is not null && inspection.AgentReady) { Step = NativeSetupStep.Ready; return; }
+        if (inspection.Binding is { Calibration: not null, VerifiedBufferMs: not null, VerifiedBufferProfile: null } && inspection.AgentReady)
+        { Step = NativeSetupStep.Ready; return; }
         var receivers = await platform.DiscoverAsync(token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
         Receivers = receivers.ToArray();
+        if (inspection.Binding is { Calibration: not null } binding && inspection.AgentReady)
+        {
+            var bound = Receivers.SingleOrDefault(receiver => SameReceiver(receiver.Id, binding.ReceiverId));
+            if (bound is not null && NativeLatencyAdaptation.VerifiedPreference(binding, bound, 44100) is not null)
+            { SelectedReceiver = bound; Step = NativeSetupStep.Ready; return; }
+        }
         if (SelectedReceiver is { } previous)
             SelectedReceiver = Receivers.FirstOrDefault(receiver => SameReceiver(receiver.Id, previous.Id));
         Step = NativeSetupStep.Receiver;
@@ -68,6 +76,8 @@ public sealed class NativeSetupFlow(INativeSetupPlatform platform) : IAsyncDispo
 
     public Task RejectMusicAsync(CancellationToken cancellation) => RunAsync(async token => {
         if (Step != NativeSetupStep.Listening) return;
+        if (await platform.TryAdaptMusicAsync(token).ConfigureAwait(false))
+        { token.ThrowIfCancellationRequested(); Step = NativeSetupStep.Listening; return; }
         await StopPreviewAsync(token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
         Step = NativeSetupStep.Receiver;
     }, cancellation);
@@ -126,6 +136,10 @@ public sealed class NativeSetupFlow(INativeSetupPlatform platform) : IAsyncDispo
             try { await StopPreviewAsync(CancellationToken.None).ConfigureAwait(false); }
             catch (Exception error) { Block(error.Message); }
             throw;
+        }
+        catch (NativeSetupPendingException error) when (_preview)
+        {
+            Error = DiagnosticText.Protect(error.Message); Step = NativeSetupStep.Listening;
         }
         catch (Exception error)
         {

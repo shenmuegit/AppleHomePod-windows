@@ -42,6 +42,15 @@ public sealed class NativeSetupReferenceProbeTests
         await using var wire = new ProbeWire([Volume(99) with { Session = "stale" }, Volume(31), Complete()]);
         Assert.Equal(31, await NativeSetupReferenceProbe.ReadAsync(wire, Binding, Mini, "192.0.2.12", default));
     }
+    [Fact]
+    public async Task SilentReferenceHandshakeDoesNotReuseAProfileForAnotherSampleRate()
+    {
+        await using var wire = new ProbeWire([Volume(), Complete()]);
+        var binding = Binding with { VerifiedBufferMs = 350, VerifiedBufferProfile = NativeLatencyAdaptation.ProfileKey(Mini, 48000) };
+        Assert.Equal(38, await NativeSetupReferenceProbe.ReadAsync(wire, binding, Mini, "192.0.2.12", default));
+        Assert.Null(wire.Parameters.Integer("latency_ms"));
+        Assert.True(wire.Parameters.Boolean("handshake_only"));
+    }
 
     [Theory]
     [InlineData("{\"event\":\"device_volume\",\"host\":\"192.0.2.12\",\"volume\":0,\"sequence\":0,\"status\":\"confirmed\",\"available\":true}")]

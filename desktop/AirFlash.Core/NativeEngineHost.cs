@@ -24,11 +24,16 @@ public sealed class NativeEngineHost : IEngineFactory, IAsyncDisposable
     public int ProcessId { get; }
     public ulong CaptureEpoch => Volatile.Read(ref _epoch);
     public int? VerifiedBufferMs => _binding?.VerifiedBufferMs;
+    public int? UnverifiedFallbackMs { get; }
+    public int? VerifiedBufferFor(Receiver receiver, int sampleRate)
+        => _binding is null ? null : NativeLatencyAdaptation.VerifiedPreference(_binding, receiver, sampleRate);
     public string? CaptureSessionInstanceId { get; private set; }
     public Task Completion => _completion.Task;
-    public NativeEngineHost(IEngineConnection connection, int processId)
+    public NativeEngineHost(IEngineConnection connection, int processId, int? unverifiedFallbackMs = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(processId);
+        if (unverifiedFallbackMs is < 1 or > 2000) throw new ArgumentOutOfRangeException(nameof(unverifiedFallbackMs));
+        UnverifiedFallbackMs = unverifiedFallbackMs;
         _connection = connection; ProcessId = processId;
         _close = new(() => _connection.DisposeAsync().AsTask());
         _pump = Task.Run(PumpAsync);

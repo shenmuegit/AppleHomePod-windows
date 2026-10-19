@@ -16,6 +16,8 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
     private CancellationTokenSource? _previewLifetime;
     private Task? _previewWork;
     private NativeBinding? _baseline, _provisional;
+    private Receiver? _previewReceiver;
+    private int _adaptations;
     private bool _resumeAgent, _usingExistingAgent, _completed, _cleanupFailed, _newBinding;
 
     public async Task<NativeSetupInspection> InspectAsync(CancellationToken cancellation)
@@ -88,13 +90,10 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
             throw new InvalidOperationException("This HomePod model, firmware or group has not been qualified for native output.");
         try
         {
-            _legacyGuard = new SingleInstance();
-            if (!_legacyGuard.IsOwner)
-            {
-                await _legacyGuard.DisposeAsync().ConfigureAwait(false); _legacyGuard = null;
-                throw new InvalidOperationException("Close the legacy AppleHome panel before setup so local calibration cannot be forwarded to HomePod.");
-            }
-            if (inspection.Binding is { Calibration: not null } ready && inspection.AgentReady)
+            await AcquireLegacyGuardAsync().ConfigureAwait(false);
+            _previewReceiver = current; _adaptations = 0;
+            if (inspection.Binding is { Calibration: not null } ready && inspection.AgentReady
+                && NativeLatencyAdaptation.VerifiedPreference(ready, current, 44100) is not null)
             {
                 _baseline = _provisional = ready; _usingExistingAgent = true;
                 return;
@@ -110,19 +109,36 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
                 var proposal = await NativeVolumeCalibration.MeasureForSetupAsync(_baseline, current, cancellation).ConfigureAwait(false);
                 _provisional = _baseline with { Calibration = proposal.Calibration };
             }
-            _monitor = new WindowsNativeOutput(_provisional);
-            await _monitor.GetDefaultEndpointIdAsync().WaitAsync(cancellation).ConfigureAwait(false);
-            if (!_monitor.Snapshot.BindingValid) throw new InvalidDataException("The Windows output changed before the music preview.");
-            var process = new ProcessEngineConnection(AppPaths.ExtractEngine(), AppPaths.Log);
-            _host = new NativeEngineHost(process, process.ProcessId);
-            var hello = await EngineHandshake.HelloAsync(_host, cancellation, TimeSpan.FromSeconds(3)).ConfigureAwait(false);
-            if (!hello.TryGetProperty("commands", out var commands) || !commands.EnumerateArray().Any(c => c.GetString() == "arm_capture"))
-                throw new IOException("The packaged engine does not support armed capture.");
-            await _host.ArmAsync(_provisional, cancellation).ConfigureAwait(false);
-            _session = new SessionController(_host, _monitor, AppPaths.Log);
-            _previewLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-            _previewWork = new NativeOutputController(_provisional, _monitor, _host, _session, log: AppPaths.Log)
-                .RunAsync(id => Volatile.Read(ref _receivers).SingleOrDefault(r => ReceiverIdentity.Normalize(r.Id) == id), _previewLifetime.Token);
+            await OpenPreviewAsync(current, null, cancellation).ConfigureAwait(false);
+        }
+        catch
+        {
+            await StopPreviewAsync(CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    public async Task<bool> TryAdaptMusicAsync(CancellationToken cancellation)
+    {
+        if (_usingExistingAgent || _baseline is not { } baseline || _provisional is not { } provisional
+            || _session is null || _previewReceiver is null) return false;
+        var current = CurrentPreviewReceiver();
+        var next = NativeMusicConfirmation.RecoveryCandidateMs(provisional, current, _session.Snapshot, _adaptations, 44100);
+        if (next is null) return false;
+        if (_store.Load() != baseline) throw new IOException("Device settings changed during music playback; their current contents were preserved.");
+        _adaptations++;
+        try
+        {
+            await ClosePreviewResourcesAsync().ConfigureAwait(false);
+            await AcquireLegacyGuardAsync().ConfigureAwait(false);
+            _maintenance = NativeVolumeCalibration.AcquireMaintenance();
+            if (_store.Load() != baseline) throw new IOException("Device settings changed while reconnecting; their current contents were preserved.");
+            var endpoints = await _windows.SnapshotAsync(cancellation).ConfigureAwait(false);
+            var live = endpoints.SingleOrDefault(endpoint => endpoint.EndpointId == baseline.Endpoint.EndpointId);
+            if (live is null || NativeBindingPolicy.ValidateLive(provisional, live) is { })
+                throw new IOException("The Windows output changed while reconnecting. Recheck the output before continuing.");
+            await OpenPreviewAsync(CurrentPreviewReceiver(), next, cancellation).ConfigureAwait(false);
+            return true;
         }
         catch
         {
@@ -147,8 +163,27 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
         else
         {
             if (_previewWork?.IsCompleted == true) await _previewWork.ConfigureAwait(false);
-            if (_session?.Snapshot.State != PlaybackState.Streaming)
-                throw new InvalidOperationException("Choose the HomePod output in Windows and play normal music before confirming it is audible.");
+            var current = CurrentPreviewReceiver();
+            var snapshot = _session?.Snapshot ?? throw new NativeSetupPendingException("请在 Windows 选择 HomePod 输出并持续播放正常音乐，再确认听感。");
+            if (NativeLatencyAdaptation.VerifiedPreference(provisional, current, 44100) is null)
+            {
+                int applied;
+                try { applied = NativeMusicConfirmation.ConfirmableAppliedMs(provisional, current, snapshot, 44100); }
+                catch (NativeSetupPendingException)
+                {
+                    var session = _session; var host = _host;
+                    if (session is null || host is null) throw;
+                    var epoch = host.CaptureEpoch;
+                    await Task.Delay(TimeSpan.FromSeconds(5), cancellation).ConfigureAwait(false);
+                    if (!ReferenceEquals(session, _session) || !ReferenceEquals(host, _host) || epoch != host.CaptureEpoch)
+                        throw new NativeSetupPendingException("音乐连接在确认期间重新准备，请继续播放正常音乐片刻后再完成。");
+                    current = CurrentPreviewReceiver();
+                    applied = NativeMusicConfirmation.ConfirmableAppliedMs(provisional, current, session.Snapshot, 44100, snapshot);
+                }
+                provisional = NativeLatencyAdaptation.ConfirmReference(provisional, current, 44100, applied);
+            }
+            else if (snapshot.State != PlaybackState.Streaming)
+                throw new NativeSetupPendingException("请在 Windows 选择 HomePod 输出并持续播放正常音乐，再确认听感。");
         }
         await ClosePreviewResourcesAsync().ConfigureAwait(false);
         if (_store.Load() != baseline) throw new IOException("Device settings changed during the music preview; their current contents were preserved.");
@@ -173,7 +208,45 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
     {
         await ClosePreviewResourcesAsync(discardUnconfirmed: true).ConfigureAwait(false);
         _baseline = _provisional = null; _usingExistingAgent = false; _newBinding = false;
+        _previewReceiver = null; _adaptations = 0;
         await ResumeAgentAsync().ConfigureAwait(false);
+    }
+
+    private Receiver CurrentPreviewReceiver()
+    {
+        var previous = _previewReceiver ?? throw new InvalidOperationException("Start normal music preview before confirming or reconnecting.");
+        var current = Volatile.Read(ref _receivers).SingleOrDefault(receiver => ReceiverIdentity.Normalize(receiver.Id) == ReceiverIdentity.Normalize(previous.Id));
+        if (current is null || NativeLatencyAdaptation.ProfileKey(current, 44100) != NativeLatencyAdaptation.ProfileKey(previous, 44100))
+            throw new InvalidOperationException("The selected HomePod or its profile changed. Refresh devices and reconnect.");
+        NativeSetupReferenceProbe.ValidateReceiver(_provisional!, current);
+        return current;
+    }
+
+    private async Task AcquireLegacyGuardAsync()
+    {
+        _legacyGuard = new SingleInstance();
+        if (_legacyGuard.IsOwner) return;
+        await _legacyGuard.DisposeAsync().ConfigureAwait(false); _legacyGuard = null;
+        throw new InvalidOperationException("Close the legacy AppleHome panel before setup so local calibration cannot be forwarded to HomePod.");
+    }
+
+    private async Task OpenPreviewAsync(Receiver receiver, int? recoveryCandidateMs, CancellationToken cancellation)
+    {
+        var provisional = _provisional ?? throw new InvalidOperationException("The measured calibration is unavailable.");
+        _monitor = new WindowsNativeOutput(provisional);
+        await _monitor.GetDefaultEndpointIdAsync().WaitAsync(cancellation).ConfigureAwait(false);
+        if (!_monitor.Snapshot.BindingValid) throw new InvalidDataException("The Windows output changed before the music preview.");
+        var process = new ProcessEngineConnection(AppPaths.ExtractEngine(), AppPaths.Log);
+        _host = new NativeEngineHost(process, process.ProcessId, recoveryCandidateMs);
+        var hello = await EngineHandshake.HelloAsync(_host, cancellation, TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+        if (!hello.TryGetProperty("commands", out var commands) || !commands.EnumerateArray().Any(command => command.GetString() == "arm_capture"))
+            throw new IOException("The packaged engine does not support armed capture.");
+        await _host.ArmAsync(provisional, cancellation).ConfigureAwait(false);
+        _session = new SessionController(_host, _monitor, AppPaths.Log);
+        _previewReceiver = receiver;
+        _previewLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        _previewWork = new NativeOutputController(provisional, _monitor, _host, _session, log: AppPaths.Log)
+            .RunAsync(id => Volatile.Read(ref _receivers).SingleOrDefault(value => ReceiverIdentity.Normalize(value.Id) == id), _previewLifetime.Token);
     }
 
     private async Task StopOwnedAgentAsync(CancellationToken cancellation)

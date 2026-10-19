@@ -180,7 +180,9 @@ public sealed class NativeEngineHostTests
         await host.ArmAsync(Binding with { VerifiedBufferMs = 100 }, default); await host.BeginCaptureAsync(default);
         await using var session = new SessionController(host, new NativeAudio());
         await session.SetNativeGainAsync(0);
-        await session.StartAsync(new("receiver-1", "da", "127.0.0.1"), new() { CaptureMode = "endpoint", CaptureEndpoint = "endpoint-1", StreamSampleRate = "44100", MuteWhileStreaming = false, ForceReconnect = false });
+        await session.StartAsync(new("receiver-1", "da", "127.0.0.1")
+            { Model = "AudioAccessory5,1", SoftwareVersion = "27.0", IsLeader = true, Codecs = [1] },
+            new() { CaptureMode = "endpoint", CaptureEndpoint = "endpoint-1", StreamSampleRate = "44100", MuteWhileStreaming = false, ForceReconnect = false });
         await Until(() => wire.Commands.Any(c => c.Command == "start"));
         var gain = session.SetNativeGainAsync(0.3);
         releaseStart.TrySetResult();

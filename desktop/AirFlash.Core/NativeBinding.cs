@@ -7,7 +7,8 @@ public sealed record EndpointIdentity(string EndpointId, string AdapterInstanceI
     string FriendlyName, string MixFormat, int Channels, AudioEndpointKind Kind, bool Active, string? EndpointLabel = null);
 
 public sealed record NativeBinding(int SchemaVersion, string ReceiverId, EndpointIdentity Endpoint,
-    string OriginalName, string AssignedName, PcmVolumeCalibration? Calibration, int? VerifiedBufferMs = null);
+    string OriginalName, string AssignedName, PcmVolumeCalibration? Calibration, int? VerifiedBufferMs = null,
+    string? VerifiedBufferProfile = null);
 
 public static class NativeBindingPolicy
 {
@@ -62,7 +63,7 @@ public static class NativeBindingPolicy
         var name = desired ? requestedName : candidate.EndpointLabel ?? candidate.FriendlyName;
         var calibration = previous?.Endpoint.MixFormat == candidate.MixFormat ? previous.Calibration : null;
         var binding = new NativeBinding(1, receiverId, candidate, previous?.OriginalName ?? candidate.FriendlyName, name, calibration,
-            calibration is null ? null : previous?.VerifiedBufferMs);
+            calibration is null ? null : previous?.VerifiedBufferMs, calibration is null ? null : previous?.VerifiedBufferProfile);
         if (ValidateStored(binding) is { } error) throw new ArgumentException(error);
         return binding;
     }
@@ -78,6 +79,8 @@ public static class NativeBindingPolicy
             || calibration.MixFormat != binding.Endpoint.MixFormat))
             return "The native output calibration does not match its driver or format.";
         if (binding.VerifiedBufferMs is < 0 or > 2000) return "The verified device buffer must be within 0..2000 ms.";
+        if (binding.VerifiedBufferProfile is { } profile && (profile.Length != 64 || !profile.All(Uri.IsHexDigit)
+            || binding.VerifiedBufferMs is null)) return "The verified device profile requires its SHA-256 fingerprint and buffer.";
         return null;
     }
 

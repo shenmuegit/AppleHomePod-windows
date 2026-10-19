@@ -50,7 +50,6 @@ public sealed class NativeSetupFlowTests
     }
 
     [Theory]
-    [InlineData(null)]
     [InlineData(100)]
     public async Task ExistingQualifiedBindingIsReadyWithoutRediscoveryOrBufferChanges(int? verifiedBufferMs)
     {
@@ -61,6 +60,41 @@ public sealed class NativeSetupFlowTests
         Assert.Same(binding, flow.Inspection!.Binding);
         Assert.Equal(verifiedBufferMs, flow.Inspection.Binding!.VerifiedBufferMs);
         Assert.Equal(["inspect"], platform.Calls);
+    }
+
+    [Fact]
+    public async Task ReadyAgentWithoutReferenceStillRequiresNormalMusicConfirmation()
+    {
+        var platform = new Fake { Inspection = new(true, true, Endpoint, Binding(), true) };
+        await using var flow = new NativeSetupFlow(platform); await flow.RefreshAsync(default);
+        Assert.Equal(NativeSetupStep.Receiver, flow.Step); Assert.Equal(["inspect", "discover"], platform.Calls);
+        await flow.ConnectAsync(Mini, default);
+        Assert.Equal(NativeSetupStep.Listening, flow.Step); Assert.DoesNotContain("complete", platform.Calls);
+        await flow.ConfirmMusicAsync(default); Assert.Equal(NativeSetupStep.Ready, flow.Step);
+    }
+
+    [Fact]
+    public async Task TaggedReferenceIsReadyOnlyAfterItsCurrentReceiverProfileMatches()
+    {
+        var binding = Binding(100) with { VerifiedBufferProfile = NativeLatencyAdaptation.ProfileKey(Mini, 44100) };
+        var platform = new Fake { Inspection = new(true, true, Endpoint, binding, true) };
+        await using var flow = new NativeSetupFlow(platform); await flow.RefreshAsync(default);
+        Assert.Equal(NativeSetupStep.Ready, flow.Step); Assert.Equal(["inspect", "discover"], platform.Calls);
+        Assert.Same(binding, flow.Inspection!.Binding);
+    }
+
+    [Theory]
+    [InlineData("firmware")]
+    [InlineData("group")]
+    [InlineData("rate")]
+    public async Task StaleTaggedReferenceCannotBypassCurrentProfileDiscovery(string changed)
+    {
+        var binding = Binding(100) with { VerifiedBufferProfile = NativeLatencyAdaptation.ProfileKey(Mini, changed == "rate" ? 48000 : 44100) };
+        var receiver = changed switch { "firmware" => Mini with { SoftwareVersion = "26.0" }, "group" => Mini with { GroupId = "tv" }, _ => Mini };
+        var platform = new Fake { Inspection = new(true, true, Endpoint, binding, true), Receivers = [receiver] };
+        await using var flow = new NativeSetupFlow(platform); await flow.RefreshAsync(default);
+        Assert.Equal(NativeSetupStep.Receiver, flow.Step); Assert.Equal(["inspect", "discover"], platform.Calls);
+        Assert.Same(binding, flow.Inspection!.Binding); Assert.DoesNotContain("complete", platform.Calls);
     }
 
     [Theory]
@@ -191,6 +225,36 @@ public sealed class NativeSetupFlowTests
     }
 
     [Fact]
+    public async Task ExplicitNegativeMusicFeedbackKeepsPreviewOnlyWhenAdaptationStarted()
+    {
+        var binding = Binding();
+        var platform = new Fake { Inspection = new(true, true, Endpoint, binding, false), Adapt = _ => Task.FromResult(true) };
+        await using var flow = new NativeSetupFlow(platform); await flow.RefreshAsync(default); await flow.ConnectAsync(Mini, default);
+        platform.Calls.Clear();
+        await flow.RejectMusicAsync(default);
+        Assert.Equal(NativeSetupStep.Listening, flow.Step); Assert.Equal(["adapt"], platform.Calls);
+        Assert.Same(binding, platform.Inspection.Binding); Assert.Null(binding.VerifiedBufferMs);
+        platform.Adapt = _ => Task.FromResult(false);
+        await flow.RejectMusicAsync(default);
+        Assert.Equal(NativeSetupStep.Receiver, flow.Step); Assert.Equal(["adapt", "adapt", "stop"], platform.Calls);
+        Assert.DoesNotContain("complete", platform.Calls);
+    }
+
+    [Fact]
+    public async Task EvidenceStillPendingKeepsNormalMusicPreviewAndCanBeConfirmedLater()
+    {
+        var platform = new Fake { Complete = _ => Task.FromException(new NativeSetupPendingException("请继续播放正常音乐，片刻后再确认。")) };
+        await using var flow = new NativeSetupFlow(platform); await flow.RefreshAsync(default); await flow.ConnectAsync(Mini, default);
+        await flow.ConfirmMusicAsync(default);
+        Assert.Equal(NativeSetupStep.Listening, flow.Step); Assert.Contains("正常音乐", flow.Error);
+        Assert.DoesNotContain("stop", platform.Calls); Assert.Null(platform.Inspection.Binding);
+        platform.Complete = null;
+        await flow.ConfirmMusicAsync(default);
+        Assert.Equal(NativeSetupStep.Ready, flow.Step); Assert.Null(flow.Error);
+        Assert.Equal(2, platform.Calls.Count(call => call == "complete"));
+    }
+
+    [Fact]
     public async Task RefreshStopsUnconfirmedPreviewBeforeInspectingAgain()
     {
         var platform = new Fake(); await using var flow = new NativeSetupFlow(platform); await flow.RefreshAsync(default); await flow.ConnectAsync(Mini, default);
@@ -292,10 +356,12 @@ public sealed class NativeSetupFlowTests
         public readonly List<string> Calls = [];
         public Receiver? PreviewReceiver;
         public Func<CancellationToken, Task>? Preview, Complete;
+        public Func<CancellationToken, Task<bool>>? Adapt;
         public Task<NativeSetupInspection> InspectAsync(CancellationToken cancellation) { Calls.Add("inspect"); return Task.FromResult(Inspection); }
         public Task<IReadOnlyList<Receiver>> DiscoverAsync(CancellationToken cancellation) { Calls.Add("discover"); return Task.FromResult(Receivers); }
         public Task StartPreviewAsync(Receiver receiver, CancellationToken cancellation) { Calls.Add("preview"); PreviewReceiver = receiver; return Preview?.Invoke(cancellation) ?? Task.CompletedTask; }
         public Task CompleteAsync(CancellationToken cancellation) { Calls.Add("complete"); return Complete?.Invoke(cancellation) ?? Task.CompletedTask; }
+        public Task<bool> TryAdaptMusicAsync(CancellationToken cancellation) { Calls.Add("adapt"); return Adapt?.Invoke(cancellation) ?? Task.FromResult(false); }
         public Task StopPreviewAsync(CancellationToken cancellation) { Calls.Add("stop"); return Task.CompletedTask; }
         public ValueTask DisposeAsync() { Calls.Add("dispose"); return ValueTask.CompletedTask; }
     }

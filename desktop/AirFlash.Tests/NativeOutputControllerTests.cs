@@ -5,6 +5,62 @@ namespace AirFlash.Tests;
 
 public sealed class NativeOutputControllerTests
 {
+    [Fact]
+    public async Task MissingRecordAndBoundsUseModelCandidateWithoutInventingVerification()
+    {
+        await using var f = await Fixture.Create(bufferMs: null);
+        f.Monitor.Select(true); f.Start();
+        await Until(() => f.Session.Snapshot.State == PlaybackState.Streaming);
+        Assert.Equal(100, f.Session.Snapshot.TargetLatency);
+        Assert.Null(f.Host.VerifiedBufferMs);
+        Assert.Null(f.Starts.First().Params.Number("latency_ms"));
+        Assert.Equal("apply", f.Starts.Last().Params.Text("latency_policy"));
+        Assert.Null(f.Starts.Last().Params.Number("latency_reference_ms"));
+        Assert.Equal("negotiated_request", f.Session.Snapshot.Diagnostics!.Latency!.Source);
+        f.Wire.Event(f.StreamId, new { @event = "transport_metrics", session_uptime_ms = 20000,
+            members = new[] { new { host = "127.0.0.1", media = new { packets_sent = 2000, nonzero_pcm_packets_sent = 2000 },
+                health = new { feedback_successes = 20, feedback_rtt_ms = 2, feedback_failures = 0 } } } });
+        await Until(() => f.Session.Snapshot.Diagnostics?.Transport is not null);
+        Assert.Equal(2, f.Starts.Count);
+        Assert.Equal(100, f.Session.Snapshot.TargetLatency);
+        Assert.Null(f.Host.VerifiedBufferMs);
+    }
+    [Fact]
+    public async Task ExplicitNormalMusicRecoveryStaysUnverifiedAndUsesAFixedActualRequest()
+    {
+        await using var f = await Fixture.Create(bufferMs: null, fallbackMs: 400);
+        f.Monitor.Select(true); f.Start();
+        await Until(() => f.Session.Snapshot.State == PlaybackState.Streaming);
+        Assert.Equal(400, f.Session.Snapshot.TargetLatency);
+        Assert.Null(f.Starts.First().Params.Number("latency_ms"));
+        Assert.Null(f.Starts.Last().Params.Number("latency_reference_ms"));
+        Assert.Equal(400, f.Starts.Last().Params.Number("latency_ms"));
+        Assert.Contains(f.Logs, message => message.Contains("music_recovery", StringComparison.Ordinal));
+        Assert.Null(f.Host.VerifiedBufferMs);
+    }
+    [Fact]
+    public async Task PositiveReceiverBoundsRemainAuthoritativeOverARecoveryHint()
+    {
+        await using var f = await Fixture.Create(bufferMs: null, fallbackMs: 400); f.Wire.StreamReplies = false;
+        f.Monitor.Select(true); f.Start(); await Until(() => f.Starts.Count == 1);
+        var item = Negotiation(null, 200); var data = item["latency_negotiation"]!.AsObject();
+        data["receiver_min_samples"] = 8820; data["receiver_max_samples"] = 13230;
+        f.Wire.Event(f.StreamId, item); await Until(() => f.Starts.Count == 2);
+        Assert.Equal(200, f.Starts.Last().Params.Number("latency_ms"));
+        Assert.Null(f.Starts.Last().Params.Number("latency_reference_ms"));
+        Assert.DoesNotContain(f.Logs, message => message.Contains("music_recovery", StringComparison.Ordinal));
+    }
+    [Fact]
+    public async Task StaleProfileRecordDoesNotBecomeTheReferenceForANewContext()
+    {
+        await using var f = await Fixture.Create(bufferMs: 350, verifiedProfile: new string('a', 64));
+        f.Monitor.Select(true); f.Start();
+        await Until(() => f.Session.Snapshot.State == PlaybackState.Streaming);
+        Assert.Null(f.Starts.First().Params.Number("latency_ms"));
+        Assert.Null(f.Starts.Last().Params.Number("latency_reference_ms"));
+        Assert.Equal(100, f.Session.Snapshot.TargetLatency);
+        Assert.Equal(350, f.Host.VerifiedBufferMs);
+    }
     [Theory]
     [InlineData(null)]
     [InlineData(75)]
@@ -18,7 +74,7 @@ public sealed class NativeOutputControllerTests
         var start = f.Starts.First().Params;
         Assert.Equal("negotiate", start.Text("latency_policy"));
         Assert.Equal(preference, start.Number("latency_ms"));
-        Assert.Equal(preference ?? 250, f.Session.Snapshot.TargetLatency);
+        Assert.Equal(preference ?? 100, f.Session.Snapshot.TargetLatency);
         Assert.Equal(preference is null ? 2 : 1, f.Starts.Count);
     }
     [Fact]
@@ -50,17 +106,18 @@ public sealed class NativeOutputControllerTests
         Assert.DoesNotContain(f.Gates, c => c.Params.Boolean("open") == true);
         Assert.DoesNotContain(f.Wire.Commands, c => c.Command == "set_device_volume");
         var apply = f.Starts.Last().Params;
-        Assert.Equal("apply", apply.Text("latency_policy")); Assert.Equal(250, apply.Number("latency_ms"));
+        Assert.Equal("apply", apply.Text("latency_policy")); Assert.Equal(100, apply.Number("latency_ms"));
         Assert.Equal(System.Text.Json.JsonValueKind.Null, apply.GetProperty("latency_reference_ms").ValueKind);
         Assert.Equal(2, apply.Integer("capture_epoch"));
         Assert.Equal(f.Starts.First().Params.Text("capture_id"), apply.Text("capture_id"));
         Assert.Equal(f.Starts.First().Params.GetProperty("peers").GetRawText(), apply.GetProperty("peers").GetRawText());
         Assert.Equal(44100, apply.Integer("sample_rate"));
         Assert.Contains(observations, s => s.Diagnostics?.Latency?.SelectedMs == 250 && s.Diagnostics.Latency.AppliedMs is null && s.TargetLatency is null);
-        metadata["policy"] = "apply"; metadata["offered_max_ms"] = 250; metadata["applied_ms"] = 250; metadata["source"] = "negotiated_request";
+        metadata["policy"] = "apply"; metadata["offered_min_ms"] = 100; metadata["offered_max_ms"] = 100;
+        metadata["selected_ms"] = 100; metadata["applied_ms"] = 100; metadata["source"] = "negotiated_request";
         f.Wire.Event(f.StreamId, item); f.Wire.Event(f.StreamId, new { @event = "streaming" }); f.Wire.Volume(f.StreamId, 38, 0);
         await Until(() => f.Gates.Any(c => c.Params.Boolean("open") == true));
-        Assert.Equal(250, f.Session.Snapshot.TargetLatency); Assert.Equal(0, f.Session.Snapshot.Diagnostics!.ReconnectCount);
+        Assert.Equal(100, f.Session.Snapshot.TargetLatency); Assert.Equal(0, f.Session.Snapshot.Diagnostics!.ReconnectCount);
         Assert.Equal(2, f.Starts.Count); Assert.Null(f.Host.VerifiedBufferMs);
         f.Wire.StreamReplies = true; f.Wire.Event(f.StreamId, new { @event = "error", message = "network disconnected", retryable = true });
         await Until(() => f.Starts.Count == 4 && f.Session.Snapshot.State == PlaybackState.Streaming);
@@ -183,7 +240,7 @@ public sealed class NativeOutputControllerTests
         Assert.Equal(100, f.Session.Snapshot.TargetLatency);
     }
     [Theory]
-    [InlineData(null, 250, "compatibility_fallback")]
+    [InlineData(null, 100, "compatibility_fallback")]
     [InlineData(100, 100, "verified_reference")]
     public async Task ReceiverWithoutBoundsReportsFallbackOrItsVerifiedReference(int? preference, int selected, string source)
     {
@@ -208,7 +265,10 @@ public sealed class NativeOutputControllerTests
         await Until(() => f.Session.Snapshot.State == PlaybackState.Streaming);
         f.Wire.Event(f.StreamId, Negotiation()); await Until(() => f.Session.Snapshot.TargetLatency == 100);
         await f.Session.UpdateReceiverAsync(f.Receiver with { Id = "replacement-receiver" }, settings);
-        await Until(() => f.Starts.Count == 2);
+        await Until(() => f.Starts.Count == 3 && f.Session.Snapshot.State == PlaybackState.Streaming);
+        Assert.Null(f.Starts[1].Params.Number("latency_ms"));
+        Assert.Null(f.Starts[2].Params.Number("latency_reference_ms"));
+        Assert.Null(f.Session.Snapshot.Diagnostics!.Latency!.PreferredMs);
     }
     [Fact]
     public async Task NativeMasterWritesReceiverWithoutRepeatingWindowsAttenuationInPcm()
@@ -569,17 +629,19 @@ public sealed class NativeOutputControllerTests
         public List<NativeEngineHostTests.Sent> Starts => Wire.Commands.Where(c => c.Command == "start").ToList();
         public List<NativeEngineHostTests.Sent> Gates => Wire.Commands.Where(c => c.Command == "set_capture_gate").ToList();
         public string StreamId => Starts.Last().Session;
-        public static async Task<Fixture> Create(int? initialVolume = 38, bool masterInPcm = false, int referenceVolume = 38, int? bufferMs = 100)
+        public static async Task<Fixture> Create(int? initialVolume = 38, bool masterInPcm = false, int referenceVolume = 38, int? bufferMs = 100,
+            int? fallbackMs = null, string? verifiedProfile = null)
         {
             var f = new Fixture(); f.Wire.InitialVolume = initialVolume; f.Wire.VolumeReplies = true;
             var binding = NativeEngineHostTests.Binding;
             binding = binding with { Calibration = binding.Calibration! with { MasterInPcm = masterInPcm, ResumeDeviceVolume = referenceVolume } };
             var document = System.Text.Json.JsonSerializer.SerializeToNode(binding, AppSettings.JsonOptions)!.AsObject();
             document["verified_buffer_ms"] = bufferMs;
+            document["verified_buffer_profile"] = verifiedProfile;
             binding = System.Text.Json.JsonSerializer.Deserialize<NativeBinding>(document, AppSettings.JsonOptions)!;
             f.Calibration = binding.Calibration!;
-            f.Host = new(f.Wire, 42); await f.Host.ArmAsync(binding, default);
-            f.Session = new(f.Host, f.Monitor);
+            f.Host = new(f.Wire, 42, fallbackMs); await f.Host.ArmAsync(binding, default);
+            f.Session = new(f.Host, f.Monitor, f.Logs.Enqueue);
             f.Controller = new(binding, f.Monitor, f.Host, f.Session, f.Time, f.Logs.Enqueue);
             return f;
         }

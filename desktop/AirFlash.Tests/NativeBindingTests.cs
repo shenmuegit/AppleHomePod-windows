@@ -95,6 +95,44 @@ public sealed class NativeBindingTests
         Assert.Null(changed.Calibration); Assert.Null(changed.VerifiedBufferMs);
     }
 
+    [Fact]
+    public void RebindingPreservesScopedReferenceOnlyWhileCalibrationIsRetained()
+    {
+        var previous = Binding with { VerifiedBufferMs = 100, VerifiedBufferProfile = new string('a', 64) };
+        var same = NativeBindingPolicy.PrepareBinding(Candidate, previous.ReceiverId, previous.AssignedName, previous, new HashSet<string>());
+        Assert.Equal(previous.VerifiedBufferProfile, same.VerifiedBufferProfile);
+        var changed = NativeBindingPolicy.PrepareBinding(Candidate with { MixFormat = "48000/2/32/3" }, previous.ReceiverId, previous.AssignedName, previous, new HashSet<string>());
+        Assert.Null(changed.VerifiedBufferProfile);
+    }
+
+    [Theory]
+    [InlineData("", 100)]
+    [InlineData("not-a-fingerprint", 100)]
+    [InlineData("gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg", 100)]
+    [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", null)]
+    public void ScopedReferenceMustContainBothFingerprintAndBuffer(string profile, int? buffer)
+        => Assert.NotNull(NativeBindingPolicy.ValidateStored(Binding with { VerifiedBufferMs = buffer, VerifiedBufferProfile = profile }));
+
+    [Fact]
+    public async Task OldJsonAndScopedReferenceRoundTripWithoutMigratingUserRecords()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "applehome-profile-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            var old = System.Text.Json.JsonSerializer.SerializeToNode(Binding with { VerifiedBufferMs = 100 }, AppSettings.JsonOptions)!.AsObject();
+            old.Remove("verified_buffer_profile");
+            File.WriteAllText(path, old.ToJsonString());
+            var before = File.ReadAllBytes(path);
+            var store = new NativeBindingStore(path);
+            Assert.Null(store.Load()!.VerifiedBufferProfile);
+            Assert.Equal(before, File.ReadAllBytes(path));
+            var scoped = Binding with { VerifiedBufferMs = 125, VerifiedBufferProfile = new string('b', 64) };
+            await store.SaveAsync(scoped, default);
+            Assert.Equal(scoped, store.Load());
+        }
+        finally { File.Delete(path); }
+    }
+
     [Theory]
     [InlineData("192.0.2.1:7000")]
     [InlineData("auto-endpoint:192.0.2.1:7000")]
