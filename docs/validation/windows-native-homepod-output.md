@@ -16,9 +16,9 @@
 
 上述稳定性条件通过后已更新原有后台。当前安装EXE与候选4d811dea完全一致，实际运行引擎为ba3cea74；仅一个agent和一个所属engine。正式后台首次采集p95为32.404ms，随后三个15秒样本32.867/33.458/33.647ms，最大队列年龄34.770ms，没有恢复数百毫秒启动积压。启动任务XML原值不变、已有100ms参考保持，私有绑定SHA256仍为 `75c6514385cba4cbe20a8df42d586bca875f796883fa2a9e84d0a80c99f264b9`。原EXE与启动凭据备份、测试日志、构建缓存和临时程序均在所属项目内，未创建项目外工作树。
 
-Windows原生音量和15秒静音恢复的最终用户反馈待补录。未播放短音、录音或保存PCM；未做断网、精确音画计时、其他设备/Windows11及新版本30分钟长播。
+更新后台后，用户按说明使用Windows原生音量调低、调回舒适位置，并静音至少15秒后取消静音，最终集中确认：“全部正常，音乐连续，音量和静音恢复正常”。据此将本轮正常音乐、原生音量变化及静音恢复记为当前Windows10/单只HomePod mini27.0上的实机通过。静音时长来自用户按说明操作的确认，本轮没有独立毫秒计时。未播放短音、录音或保存PCM；未做断网、精确音画计时、其他设备/Windows11及新版本30分钟长播。
 
-证据目录 `artifacts/validation/native-output/startup-capture-20261019/`，其中 `cold-start-acceptance.json` 保存即时用户原话与统计，`deployment/` 保存受控更新和回退证据。
+证据目录 `artifacts/validation/native-output/startup-capture-20261019/`，其中 `cold-start-acceptance.json` 保存即时用户原话与统计，`native-controls-acceptance.json` 保存本轮最终用户确认，`deployment/` 保存受控更新和回退证据。验收确认版交付包更新文档和清单，程序与当前已安装EXE保持相同，不重复构建、安装或试听。
 
 ## 2026-10-19 无设备记录、无接收边界的有来源适配
 
