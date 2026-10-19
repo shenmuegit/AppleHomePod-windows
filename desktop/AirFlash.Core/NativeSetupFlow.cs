@@ -87,16 +87,29 @@ public sealed class NativeSetupFlow(INativeSetupPlatform platform) : IAsyncDispo
         Step = NativeSetupStep.Listening;
     }
 
+    public Task ReplayConfirmationAsync(CancellationToken cancellation) => RunAsync(async token => {
+        if (!await CheckPreviewAsync(token).ConfigureAwait(false)) return;
+        Step = NativeSetupStep.Testing;
+        await platform.PlayConfirmationAsync(token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
+        Step = NativeSetupStep.Listening;
+    }, cancellation);
+
     public Task ConfirmMusicAsync(CancellationToken cancellation) => RunAsync(async token => {
-        if (Step != NativeSetupStep.Listening || !_preview || SelectedReceiver is null) return;
-        var inspection = await platform.InspectAsync(token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
-        if (!CheckInspection(inspection)) { await StopPreviewAsync(token).ConfigureAwait(false); return; }
-        if (!SameEndpoint(inspection.Endpoint!, _previewEndpoint!) || inspection.Binding is { } binding
-            && !SameReceiver(binding.ReceiverId, SelectedReceiver.Id))
-            throw new InvalidOperationException("The selected output or HomePod changed during music playback. Refresh and connect again.");
+        if (!await CheckPreviewAsync(token).ConfigureAwait(false)) return;
         await platform.CompleteAsync(token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
         _preview = false; _previewEndpoint = null; Step = NativeSetupStep.Ready;
     }, cancellation);
+
+    private async Task<bool> CheckPreviewAsync(CancellationToken token)
+    {
+        if (Step != NativeSetupStep.Listening || !_preview || SelectedReceiver is null) return false;
+        var inspection = await platform.InspectAsync(token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
+        if (!CheckInspection(inspection)) { await StopPreviewAsync(token).ConfigureAwait(false); return false; }
+        if (!SameEndpoint(inspection.Endpoint!, _previewEndpoint!) || inspection.Binding is { } binding
+            && !SameReceiver(binding.ReceiverId, SelectedReceiver.Id))
+            throw new InvalidOperationException("The selected output or HomePod changed during audio verification. Reconnect before continuing.");
+        return true;
+    }
 
     public Task RejectMusicAsync(CancellationToken cancellation) => RunAsync(async token => {
         if (Step != NativeSetupStep.Listening) return;

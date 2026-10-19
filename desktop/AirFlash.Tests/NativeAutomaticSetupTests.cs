@@ -5,6 +5,51 @@ namespace AirFlash.Tests;
 public sealed class NativeAutomaticSetupTests
 {
     [Fact]
+    public async Task ReplayUsesTheCurrentConnectionWithoutAdaptingOrCompletingSetup()
+    {
+        var platform = new Fake(); await using var setup = new NativeSetupFlow(platform);
+        await setup.StartAutomaticAsync(default); platform.Calls.Clear();
+        await setup.ReplayConfirmationAsync(default); await setup.ReplayConfirmationAsync(default);
+        Assert.Equal(["inspect", "play", "inspect", "play"], platform.Calls);
+        Assert.Equal(NativeSetupStep.Listening, setup.Step);
+    }
+
+    [Fact]
+    public async Task ReplayBeforeConnectionDoesNotPlayOrInstallAnything()
+    {
+        var platform = new Fake(); await using var setup = new NativeSetupFlow(platform);
+        await setup.ReplayConfirmationAsync(default);
+        Assert.Empty(platform.Calls);
+    }
+
+    [Fact]
+    public async Task ConcurrentReplayAndConfirmationCannotOverlapPlayback()
+    {
+        var platform = new Fake(); await using var setup = new NativeSetupFlow(platform);
+        await setup.StartAutomaticAsync(default); platform.Calls.Clear();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        platform.Play = _ => { entered.SetResult(); return release.Task; };
+        var playing = setup.ReplayConfirmationAsync(default); await entered.Task;
+        await setup.ReplayConfirmationAsync(default); await setup.ConfirmMusicAsync(default);
+        Assert.Equal(["inspect", "play"], platform.Calls); Assert.Equal(NativeSetupStep.Testing, setup.Step);
+        release.SetResult(); await playing;
+        Assert.Equal(NativeSetupStep.Listening, setup.Step);
+    }
+
+    [Fact]
+    public async Task CancellingReplayStopsThePreviewAndCannotCompleteSetup()
+    {
+        var platform = new Fake(); await using var setup = new NativeSetupFlow(platform);
+        await setup.StartAutomaticAsync(default); platform.Calls.Clear();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        platform.Play = token => { entered.SetResult(); return Task.Delay(Timeout.Infinite, token); };
+        using var cancellation = new CancellationTokenSource();
+        var playing = setup.ReplayConfirmationAsync(cancellation.Token); await entered.Task;
+        cancellation.Cancel(); await Assert.ThrowsAnyAsync<OperationCanceledException>(() => playing);
+        Assert.Contains("stop", platform.Calls); Assert.DoesNotContain("complete", platform.Calls);
+    }
+    [Fact]
     public async Task SingleHomePodAutomaticallyConfiguresAndPlaysBeforeAskingOnlyForHearing()
     {
         var platform = new Fake(); await using var setup = new NativeSetupFlow(platform);
@@ -70,6 +115,7 @@ public sealed class NativeAutomaticSetupTests
     {
         public bool Driver = true, Reboot = true, Multiple, FailPrepare, CanAdapt = true;
         public Task? Browse;
+        public Func<CancellationToken, Task>? Play;
         public readonly List<string> Calls = [];
         private readonly Receiver _receiver = new("9efd9099abd6", "da", "192.0.2.10")
             { Model = "AudioAccessory5,1", SoftwareVersion = "27.0", IsLeader = true, Codecs = [1] };
@@ -84,7 +130,7 @@ public sealed class NativeAutomaticSetupTests
         public Task PrepareOutputAsync(Receiver receiver, CancellationToken token)
         { Calls.Add("prepare"); return FailPrepare ? Task.FromException(new IOException("name denied")) : Task.CompletedTask; }
         public Task StartPreviewAsync(Receiver receiver, CancellationToken token) { Calls.Add("preview"); return Task.CompletedTask; }
-        public Task PlayConfirmationAsync(CancellationToken token) { Calls.Add("play"); return Task.CompletedTask; }
+        public Task PlayConfirmationAsync(CancellationToken token) { Calls.Add("play"); return Play?.Invoke(token) ?? Task.CompletedTask; }
         public Task<bool> TryAdaptMusicAsync(CancellationToken token) { Calls.Add("adapt"); return Task.FromResult(CanAdapt); }
         public Task CompleteAsync(CancellationToken token) { Calls.Add("complete"); return Task.CompletedTask; }
         public Task StopPreviewAsync(CancellationToken token) { Calls.Add("stop"); return Task.CompletedTask; }
