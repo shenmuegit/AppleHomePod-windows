@@ -30,4 +30,4 @@
 - **HomePod 没有出现或连接失败：** 确认通电、同网及 HomePod 的 AirPlay 访问设置。当前向导对要求额外 PIN 的设备会报认证错误，尚未提供 PIN 输入流程。
 - **没有声音或有断续：** 在 Windows 确认选择了向导显示的输出，播放器正在播放，主音量与应用音量未静音。使用向导的自动调稳；达到有界尝试次数后重新检查连接，不要手动修改缓冲数字。
 
-当前已完成的实机项目和未验证项目以 [验收记录](validation/windows-native-homepod-output.md) 为准。断网测试暂缓；不会使用麦克风或录制用户音乐。
+当前交付快照为 `AppleHome-61992a2-current-mini-20261019.zip`，已验证当前mini的正常音乐30分钟、原生音量/静音恢复及约5分钟视频主观同步。完整首次安装和本机卸载重装仍待验收，执行边界与步骤见[首次安装验证](validation/clean-first-install.md)。已完成和未验证项目以[验收记录](validation/windows-native-homepod-output.md)为准。断网测试暂缓；不会使用麦克风或录制用户音乐。

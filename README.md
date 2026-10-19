@@ -2,15 +2,15 @@
 
 面向 Windows 10/11 x64 的原生 HomePod 音频发送项目，采用 .NET 后台、Rust 音频引擎和 GPLv3+ 开源许可，保留 WPF 诊断界面，基于 Ding-Kyoma 的 [AirFlash](https://github.com/Ding-Kyoma/AirFlash)。
 
-**当前为测试候选：Windows 10 Pro 22H2（19045）到单只 HomePod mini 27.0 的正常音乐、五分钟持续播放、音量、暂停和静音恢复已由用户实机确认。** 缓冲按设备记录和接收端回包自动处理，不要求用户填写时间参数；当前设备沿用自己的已验证记录。Windows 11、其他型号、其他固件和立体声对均待实机验证。
+**当前为限定设备的测试候选：Windows 10 Pro 22H2（19045）到单只 HomePod mini 27.0，已通过正常音乐30分钟连续播放、Windows主音量与静音恢复、暂停恢复，以及约5分钟正常视频的主观嘴型同步和无明显漂移。** 缓冲按设备记录、匹配的设备档案和接收端回包自动处理，不要求用户填写毫秒数。视频开始采样为1倍速、末次读取为0.8倍速，未测量精确音画偏差。Windows 11、其他型号、其他固件和立体声对尚未取得实机资格；原生向导目前只开放上述单只 mini 配置。
 
 详细结果见 [兼容矩阵](docs/COMPATIBILITY.md)、[验证记录](docs/VALIDATION.md)。调研、已审阅规格和实施计划保存在 `docs/research/` 与 `docs/superpowers/`。
 
-双击发布包中的 `AppleHome.exe` 打开[首次安装与连接向导](docs/first-run.md)：按引导独立安装官方驱动、完成必要的重启和系统命名、选择 HomePod，并用正常音乐确认。日常通过 Windows 选择 HomePod、调节音量与静音，后台自动发送，不显示日常窗口或托盘。完整30分钟、名称跨重启及真实登录验收仍待完成。最新结果见[原生输出验收记录](docs/validation/windows-native-homepod-output.md)。
+当前交付快照为 `dist/AppleHome-61992a2-current-mini-20261019.zip`，保留已验证的同一EXE和引擎，附对应源码、许可、校验和及验收状态。解压后双击 `AppleHome.exe` 打开[首次安装与连接向导](docs/first-run.md)：按引导独立安装官方驱动、完成必要的重启和系统命名、选择 HomePod，并用正常音乐确认。日常只通过 Windows 选择输出、调节音量与静音，无需日常窗口或托盘。新的首次安装完整流程、名称跨重启、真实登录和卸载重装仍待验收，准备步骤见[本机首次安装验证](docs/validation/clean-first-install.md)。最新结果见[原生输出验收记录](docs/validation/windows-native-homepod-output.md)。
 
 ## Windows 原生输出候选
 
-首次设置请使用带向导的新候选包并先打开应用，按界面步骤继续。旧的 `dist/native-output-level-fix/` 等目录只保留作历史回退，不作为最新安装入口。未完成驱动身份、重启、命名或校准检查时，应用会明确停止设置。
+首次设置请使用上述带向导的当前交付包并先打开应用，按界面步骤继续。旧的 `dist/native-output-level-fix/`、`dist/startup-61992a2-30min/` 等目录保留其生成时快照，不作为当前安装入口。未完成驱动身份、重启、命名或校准检查时，应用会明确停止设置。
 
 1. 在向导中打开 [VB-Audio 官方页面](https://vb-audio.com/Cable/)，独立安装普通 VB-CABLE Pack45 并按厂商要求重启。驱动不嵌入本应用。
 2. 重启后打开向导，选择 HomePod；如需命名，向导会打开 Windows 声音设置并提供输出名称，不要求使用命令行。
@@ -18,23 +18,23 @@
 4. 在 Windows 选择该输出并播放音乐，明确确认听到后才保存校准和启用登录后台。已有可用安装在重新连接时复用原程序，向导不自动升级二进制。
 5. 日常用 Windows 输出、音量、静音和应用混音器；无需打开向导。后台不改物理输出静音或其他应用的路由。
 
-首轮原生模式仅允许自动发现的单只 HomePod mini `AudioAccessory5,1 / 27.0`，采用已验证的 NTP/ALAC 路径。目标值按每设备记录或协商回包选择，不能当作总声学延迟。新机器的完整首次安装、真实30分钟、登录及名称跨重启继续保留待验收状态；断网测试暂缓。
+首轮原生模式仅允许自动发现的单只 HomePod mini `AudioAccessory5,1 / 27.0`，采用已验证的 NTP/ALAC 路径。当前这只设备有自己的已验证100ms请求记录；它不是所有设备的固定默认、已测出的声学下限或总延迟。没有记录时，程序按接收端合法边界和严格匹配的设备档案选择候选；普通音乐确认后才保存参考，未匹配的候选和自动调稳不等于任意设备均已支持。正常音乐30分钟已通过，首次安装、登录及名称跨重启仍待验收；断网测试暂缓。
 
 无参数入口打开首次设置或当前状态；登录任务使用明确的无窗口后台入口，旧面板保留为 `--legacy-panel`。健康后台无日常托盘，不保存密码、不创建系统服务；用户修改过的任务或安装 EXE 会被保留。以下命令仅供维护，普通用户使用向导即可。
 
 只读检查和撤销：
 
 ```powershell
-.\AppleHome.exe --native-check --output "$env:TEMP\applehome-native-check.json"
+.\AppleHome.exe --native-check --output "G:\code\applehome\artifacts\reports\applehome-native-check.json"
 .\AppleHome.exe --native-disable
-.\AppleHome.exe --native-unbind --output "$env:TEMP\applehome-unbind.json"
+.\AppleHome.exe --native-unbind --output "G:\code\applehome\artifacts\reports\applehome-unbind.json"
 ```
 
 `disable` 先移除仍属本应用的登录任务，再优雅停止后台。`unbind` 再移除本应用绑定；保留用户设备名称、应用文件和文件所有权证明，不卸载第三方驱动。驱动卸载使用厂商工具，留在用户明确安排的撤销窗口。诊断检查不自动长播、录音或启用任务。
 
-## 使用旧版面板基线
+## 历史诊断面板
 
-便携文件为 `dist/AppleHome.exe`。它包含 .NET 运行时和 Rust 引擎，使用 x64 Windows，无需另外安装开发工具。当前包未签名，也没有自动更新渠道。
+`dist/AppleHome.exe` 及下述主动开始/停止流程属于历史面板基线，仅作诊断和回退；当前向导与Windows原生输出请使用前面的交付入口。旧面板可通过 `--legacy-panel` 打开。当前交付EXE未签名，也没有自动更新渠道。
 
 1. 使用已经在 Apple 家庭 App 中初始化的 HomePod，让 Windows PC 与它位于可互通的同一局域网。先确认 iPhone AirPlay 到同一设备能正常出声。
 2. 启动 AppleHome。启动保持停止；已有的旧自动连接设置不会启动音频采集。
@@ -44,9 +44,9 @@
 6. 点击停止结束会话。关闭面板会留在托盘；从设置或托盘选择退出才关闭应用。
 7. 如需断线后重试，在设置中勾选“连接中断后自动重连”并应用。该选项默认关闭；真实断网验收本轮由用户选择暂缓。
 
-接收端音量与本机增益独立。当前预览不把 HomePod 安装为 Windows 输出设备，也不默认安装虚拟音频驱动。独占音频、受保护内容、麦克风、跨网段和视频口型同步没有可用性保证。缓冲值为目标值，端到端声学延迟尚未测量。
+以下边界仅描述历史面板：接收端音量与本机增益独立，不提供原生输出端点。当前原生模式通过独立VB-CABLE提供Windows输出，日常无需面板。独占音频、受保护内容、跨网段和精确端到端声学延迟仍未验证，麦克风不属于系统音频采集范围。
 
-自动发现的单只 HomePod mini（AudioAccessory5,1、27.0、无立体声或 Apple TV 分组）当前采用已出声的 NTP/ALAC 和 2 秒目标缓冲；200 毫秒目标在本机实测无声。界面显示实际使用的目标值，较低缓冲设置不能覆盖该已验证配置。手动地址缺少所需型号、固件和分组信息，不能据此自动启用该配置。其他型号和固件仍保留原路径，需逐项验证。
+旧面板曾使用NTP/ALAC与2秒目标，其200ms无声记录属于当时的版本和音源条件，不能套用到当前原生模式。后续100ms可听、自动适配、采集积压修复和正常音乐/视频的结果以最新验收记录为准。原生向导需要发现提供的完整型号、固件与分组信息，不能只凭手动地址放行未验证设备。
 
 家庭 App 的自定义密码、PIN 持久配对和仅家庭成员访问需要分别验收。认证失败时应核对访问设置与设备，不关闭服务端证明或身份验证。
 
