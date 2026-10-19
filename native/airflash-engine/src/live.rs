@@ -30,6 +30,8 @@ use windows::{
     },
     core::Interface,
 };
+const TARGET_MS: usize = 20;
+const IDLE_MS: usize = 100;
 #[derive(Clone, Copy)]
 pub struct Frame {
     pub left: f32,
@@ -66,10 +68,11 @@ pub struct CaptureQueue {
     min_qpc: u64,
     overflow: bool,
     dropped: u64,
+    has_opened: bool,
 }
 impl CaptureQueue {
     pub fn legacy(rate: u32) -> Self {
-        Self { frames: VecDeque::new(), rate, phase: Phase::Legacy, epoch: 1, min_qpc: 0, overflow: false, dropped: 0 }
+        Self { frames: VecDeque::new(), rate, phase: Phase::Legacy, epoch: 1, min_qpc: 0, overflow: false, dropped: 0, has_opened: false }
     }
     pub fn armed(rate: u32) -> Self { Self { phase: Phase::Idle, ..Self::legacy(rate) } }
     pub fn epoch(&self) -> u64 { self.epoch }
@@ -97,16 +100,33 @@ impl CaptureQueue {
         let next = self.epoch.checked_add(1).context("capture epoch exhausted")?;
         self.frames.clear();
         self.overflow = false;
+        self.has_opened = false;
         self.epoch = next;
         self.min_qpc = min_qpc;
         self.phase = Phase::Idle;
         Ok(())
     }
     pub fn set_gate(&mut self, epoch: u64, open: bool, clear_pending: bool) -> Result<()> {
+        self.set_gate_at(epoch, open, clear_pending, qpc_ns())
+    }
+    fn set_gate_at(&mut self, epoch: u64, open: bool, clear_pending: bool, now: u64) -> Result<()> {
         self.check_epoch(epoch)?;
         self.check()?;
         ensure!(matches!(self.phase, Phase::Buffering { .. }), "capture has not begun");
         if clear_pending { self.frames.clear(); }
+        else if open && !self.has_opened {
+            let target = self.rate as usize * TARGET_MS / 1000;
+            let recent = self.frames.back().is_some_and(|f| now.abs_diff(f.qpc) <= IDLE_MS as u64 * 1_000_000);
+            if recent && self.frames.len() > target && self.frames.iter().rev().take(target).any(|f| f.left != 0.0 || f.right != 0.0) {
+                // Live playback must not replay RTSP/volume setup time.
+                // shortcut: silence or stale timestamps preserve ended sounds; explicit source timing is needed to distinguish pauses.
+                let excess = self.frames.len() - target;
+                drop(self.frames.drain(..excess));
+                self.dropped += excess as u64;
+                self.min_qpc = self.min_qpc.max(self.frames.front().unwrap().qpc);
+            }
+        }
+        self.has_opened |= open;
         self.phase = Phase::Buffering { open };
         Ok(())
     }
@@ -116,7 +136,7 @@ impl CaptureQueue {
     }
     pub fn push(&mut self, frame: Frame) {
         if self.overflow || frame.qpc < self.min_qpc { return; }
-        let capacity = match self.phase { Phase::Legacy => self.rate as usize * 60 / 1000, Phase::Idle => self.rate as usize / 10, Phase::Buffering { .. } => self.rate as usize * 2 };
+        let capacity = match self.phase { Phase::Legacy => self.rate as usize * 60 / 1000, Phase::Idle => self.rate as usize * IDLE_MS / 1000, Phase::Buffering { .. } => self.rate as usize * 2 };
         if self.frames.len() >= capacity {
             if matches!(self.phase, Phase::Buffering { .. }) { self.overflow = true; return; }
             self.frames.pop_front();
@@ -193,7 +213,7 @@ impl Loopback {
         Self::create(Some(endpoint), rate, equalizer, Some(capture_id))
     }
     fn create(endpoint: Option<String>, rate: u32, equalizer: crate::equalizer::Control, capture_id: Option<String>) -> Result<Self> {
-        let target = rate as usize * 20 / 1000;
+        let target = rate as usize * TARGET_MS / 1000;
         let state = Arc::new(Mutex::new(State {
             equalizer: crate::equalizer::Processor::new(equalizer.initial(), rate),
             queue: if capture_id.is_some() { CaptureQueue::armed(rate) } else { CaptureQueue::legacy(rate) },
@@ -688,6 +708,70 @@ mod tests {
         source
     }
     #[test]
+    fn first_open_catches_up_continuous_music_without_replaying_handshake_backlog() {
+        let source = armed_source();
+        let count = crate::rtp::RATE as usize * 9 / 10;
+        {
+            let mut s = source.state.lock().unwrap();
+            for i in 0..count { s.push_frame(Frame { left: 0.02, right: -0.02, qpc: i as u64 + 1 }); }
+        }
+        assert!(source.packet_if_open(1.0).unwrap().is_none());
+        source.state.lock().unwrap().queue.set_gate_at(1, true, false, count as u64).unwrap();
+        {
+            let mut s = source.state.lock().unwrap();
+            assert_eq!(s.queue.len(), TARGET, "900ms of live preroll must not become permanent playback delay");
+            assert_eq!(s.queue.dropped_frames(), (count - TARGET) as u64);
+            s.push_frame(Frame { left: 0.03, right: 0.0, qpc: (count - TARGET) as u64 });
+            assert_eq!(s.queue.len(), TARGET, "an older in-flight resampler batch must stay rejected");
+        }
+        let (pcm, marker) = source.packet(1.0).unwrap();
+        assert_eq!(&pcm[..4], &[2, 143, 253, 113]);
+        assert_eq!(marker, Some((count - TARGET + 1) as u64));
+    }
+    #[test]
+    fn first_open_catchup_occurs_once_per_epoch_and_never_on_later_unmute() {
+        let mut queue = CaptureQueue::armed(crate::rtp::RATE);
+        for epoch in 1..=2 {
+            queue.begin(epoch).unwrap();
+            for i in 0..8820 { queue.push(Frame { left: 0.02, right: 0.0, qpc: i + 1 }); }
+            assert!(queue.set_gate(epoch + 1, true, false).is_err());
+            queue.set_gate_at(epoch, true, false, 10000).unwrap();
+            assert_eq!(queue.len(), TARGET);
+            let dropped = queue.dropped_frames();
+            queue.set_gate(epoch, false, false).unwrap();
+            for i in 0..8820 { queue.push(Frame { left: 0.03, right: 0.0, qpc: i + 10000 }); }
+            queue.set_gate(epoch, true, false).unwrap();
+            assert_eq!(queue.len(), TARGET + 8820);
+            assert_eq!(queue.dropped_frames(), dropped);
+            queue.reset(epoch, 0).unwrap();
+        }
+    }
+    #[test]
+    fn first_open_catchup_does_not_treat_quiet_or_right_channel_music_as_silence() {
+        for (left, right) in [(0.02, 0.0), (0.0, 0.02), (f32::MIN_POSITIVE, 0.0)] {
+            let mut queue = CaptureQueue::armed(crate::rtp::RATE);
+            queue.begin(1).unwrap();
+            for i in 0..TARGET * 2 { queue.push(Frame { left, right, qpc: i as u64 + 1 }); }
+            queue.set_gate_at(1, true, false, (TARGET * 2) as u64).unwrap();
+            assert_eq!(queue.len(), TARGET);
+            assert_eq!(queue.dropped_frames(), TARGET as u64);
+        }
+    }
+    #[test]
+    fn first_open_preserves_ended_sound_when_silent_endpoint_stops_delivering_packets() {
+        let mut queue = CaptureQueue::armed(crate::rtp::RATE);
+        queue.begin(1).unwrap();
+        let stopped = qpc_ns().saturating_sub(800_000_000);
+        let start = stopped.saturating_sub(100_000_000);
+        for i in 0..4410 {
+            queue.push(Frame { left: 0.02, right: 0.0, qpc: start + i * 1_000_000_000 / crate::rtp::RATE as u64 });
+        }
+        queue.set_gate(1, true, false).unwrap();
+        assert_eq!(queue.len(), 4410, "no new packets must not erase an ended startup notification");
+        assert_eq!(queue.dropped_frames(), 0);
+        assert_eq!(queue.pop().unwrap().unwrap().qpc, start);
+    }
+    #[test]
     fn armed_packet_keeps_closed_preroll_then_trims_open_silence_to_target() {
         let source = armed_source();
         let count = crate::rtp::RATE as usize;
@@ -729,8 +813,10 @@ mod tests {
         assert_eq!(source.metrics().dropped_frames, count as u64);
     }
     #[test]
-    fn armed_recovery_and_packet_consumption_never_drop_nonzero_preroll() {
+    fn armed_recovery_and_packet_consumption_preserve_nonzero_audio_after_first_open() {
         let source = armed_source();
+        source.set_gate(1, true, false).unwrap();
+        source.set_gate(1, false, false).unwrap();
         {
             let mut s = source.state.lock().unwrap();
             for i in 0..8820 { s.push_frame(Frame { left: 0.01, right: -0.01, qpc: i + 1 }); }
@@ -774,6 +860,8 @@ mod tests {
         let mut queue = CaptureQueue::armed(crate::rtp::RATE);
         assert_eq!(queue.resample_correction(TARGET), 0.0);
         queue.begin(1).unwrap();
+        queue.set_gate(1, true, false).unwrap();
+        queue.set_gate(1, false, false).unwrap();
         for i in 0..52920 { queue.push(Frame { left: 0.02, right: -0.02, qpc: i + 1 }); }
         assert_eq!(queue.resample_correction(TARGET), 0.0);
         queue.set_gate(1, true, false).unwrap();
@@ -817,8 +905,8 @@ mod tests {
         let initial = rate as usize * 12 / 10;
         let mut queue = CaptureQueue::armed(rate);
         queue.begin(1).unwrap();
-        for i in 0..initial { queue.push(Frame { left: 0.02, right: -0.02, qpc: i as u64 + 1 }); }
         queue.set_gate(1, true, false).unwrap();
+        for i in 0..initial { queue.push(Frame { left: 0.02, right: -0.02, qpc: i as u64 + 1 }); }
         let mut resampler = capture_resampler(rate, rate).unwrap();
         let input = vec![vec![0.02; chunk], vec![-0.02; chunk]];
         let mut produced = 0;

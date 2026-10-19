@@ -28,13 +28,23 @@ Legacy start/probe commands remain available when capture is disarmed.
 
 While the volume gate is closed, PCM is retained (maximum 2000 ms / 88,200 frames),
 and volume/control events continue. Overflow is a typed `capture_preroll_overflow`
-failure; buffered sound is never silently trimmed during initialization.
+failure and remains latched until the capture epoch is reset.
 `set_capture_gate {capture_id,epoch,open,clear_pending}` releases or clears the
 queue. Resolved mute clears old PCM and opens the gate with gain zero so silence
 continues to drain. The scheduler rebases before its first send. `streaming` means
 control is ready; actual send timestamps are emitted separately as `first_send`.
-Startup backlog keeps its delay at the normal playback rate and is not immediately
-shrunk to the legacy 60 ms capacity; clock drift/long playback need real qualification.
+On the first open without `clear_pending` in each epoch, a recent nonzero tail
+identifies live audio: if the last frame timestamp is within the existing 100 ms
+idle-history window and either channel has nonzero data in the last 20 ms, the queue
+keeps only those latest 20 ms. Reclaimed frames are counted and their timestamp
+floor rejects older in-flight resampler output. This prevents RTSP and volume
+setup time from becoming permanent live-playback latency; it does not change the
+receiver buffer request. A silent tail or stale last timestamp retains ended
+startup sounds, including endpoints that stop producing packets when silent.
+This heuristic can crop a short sound still reaching the recent tail, and a music
+pause at the first open can preserve backlog. Later gate reopen and explicit-clear
+semantics are unchanged; normal playback uses bounded resampling correction rather
+than repeated nonzero queue trimming. Clock drift/long playback need real qualification.
 
 After acknowledged transport stop, `reset_capture {capture_id,epoch}` clears the
 queue and increments the epoch with overflow checking; stale resampler batches are
