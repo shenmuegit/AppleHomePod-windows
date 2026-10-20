@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Globalization;
 using System.Windows.Controls;
 using System.Windows.Automation.Peers;
 using System.Windows.Automation.Provider;
@@ -28,11 +29,11 @@ internal static class NativeSetupSmoke
                 platform.Installed = true;
                 await flow.StartAutomaticAsync(default);
                 window.RefreshView();
-                window.Title = "AppleHome · 界面预览";
+                window.Title = "AppleHome · " + L.Get("UI preview");
                 var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 window.Closed += (_, _) => closed.TrySetResult();
                 window.Show();
-                await Capture("preview-listening", "听到声音了吗");
+                await Capture("preview-listening", "Did you hear it?");
                 App.WriteOutput(args, new { ok = true, preview_only = true, audio_sent = false, hardware_used = false,
                     production_state_modified = false, state = flow.Step.ToString(), data_directory = AppPaths.DataDirectory });
                 await closed.Task;
@@ -40,26 +41,26 @@ internal static class NativeSetupSmoke
             }
             await flow.RefreshAsync(default);
             window.RefreshView(); window.Show();
-            await Capture("driver", "正在安装音频驱动");
+            await Capture("driver", "Installing the audio driver…");
             platform.Installed = true;
             await flow.RefreshAsync(default); window.RefreshView();
-            await Capture("receiver", "选择要连接的 HomePod");
-            var connect = Descendants(window).OfType<Button>().Single(button => Equals(button.Content, "连接"));
+            await Capture("receiver", "Choose a HomePod to connect.");
+            var connect = Descendants(window).OfType<Button>().Single(button => Equals(button.Content, L.Get("Connect")));
             ((IInvokeProvider)new ButtonAutomationPeer(connect).GetPattern(PatternInterface.Invoke)).Invoke();
             await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
-            if (!Descendants(window).OfType<TextBlock>().Any(text => text.Text.Contains("请先选择", StringComparison.Ordinal)))
+            if (!Descendants(window).OfType<TextBlock>().Any(text => text.Text.Contains(L.Get("Select a HomePod to connect."), StringComparison.Ordinal)))
                 throw new InvalidOperationException("An empty device selection must keep an actionable message visible.");
             checks.Add("empty-selection-remains-visible");
             await flow.ConnectAsync(platform.Receiver, default); window.RefreshView();
-            await Capture("listening", "听到声音了吗");
+            await Capture("listening", "Did you hear it?");
             var choices = Descendants(window).OfType<Button>().Select(button => button.Content).ToArray();
-            if (!choices.OrderBy(value => value).SequenceEqual(new[] { "关于", "再播放一次", "听到了", "没听到" }.OrderBy(value => value)))
+            if (!choices.OrderBy(value => value).SequenceEqual(new[] { "About", "Play again", "I heard it", "No audio" }.Select(L.Get).OrderBy(value => value)))
                 throw new InvalidOperationException("Confirmation must contain replay, the two hearing choices and About only.");
             if (Descendants(window).OfType<TextBlock>().Sum(text => text.Text.Length) > 100)
                 throw new InvalidOperationException("The confirmation screen contains unnecessary explanatory text.");
             var liveStatus = (TextBlock)window.FindName("StepText");
             if (AutomationProperties.GetLiveSetting(liveStatus) != AutomationLiveSetting.Polite
-                || !AutomationProperties.GetName(liveStatus).Contains("听到声音", StringComparison.Ordinal))
+                || !AutomationProperties.GetName(liveStatus).Contains(L.Get("Did you hear it?"), StringComparison.Ordinal))
                 throw new InvalidOperationException("State changes must have one polite, meaningful automation announcement.");
             checks.Add("state-announcement-is-polite-and-current");
             checks.Add("confirmation-keeps-only-essential-content");
@@ -85,27 +86,27 @@ internal static class NativeSetupSmoke
             await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
             if (!replay.IsKeyboardFocused || ((Border)replay.Template.FindName("FocusRing", replay)).Opacity != 1)
                 throw new InvalidOperationException("Keyboard focus needs a visible ring outside the button.");
-            await Capture("keyboard-focus", "听到声音了吗");
+            await Capture("keyboard-focus", "Did you hear it?");
             checks.Add("keyboard-focus-ring-visible");
             var beforeReplay = platform.PlayCount;
             var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             platform.Playback = finished.Task;
-            Invoke("再播放一次");
+            Invoke("Play again");
             await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
             if (flow.Step != NativeSetupStep.Testing || Descendants(window).OfType<Button>()
-                .Any(button => !Equals(button.Content, "关于") && button.IsEnabled))
+                .Any(button => !Equals(button.Content, L.Get("About")) && button.IsEnabled))
                 throw new InvalidOperationException("Playback must disable replay and confirmation until it finishes.");
-            await Capture("playing", "正在播放");
+            await Capture("playing", "Playing audio…");
             finished.SetResult();
             await UntilIdle();
             platform.Playback = null;
-            Invoke("再播放一次"); await UntilIdle();
+            Invoke("Play again"); await UntilIdle();
             if (platform.PlayCount != beforeReplay + 2 || platform.Completed)
                 throw new InvalidOperationException("The replay button must play again without completing setup.");
             checks.Add("replay-button-twice-and-no-overlap");
             window.Width = window.MinWidth;
             window.Height = window.MinHeight;
-            await Capture("compact-confirmation", "听到声音了吗");
+            await Capture("compact-confirmation", "Did you hear it?");
             var compactReplay = replay.TransformToAncestor(window).TransformBounds(new Rect(0, 0, replay.ActualWidth, replay.ActualHeight));
             var compactPrimary = primary.TransformToAncestor(window).TransformBounds(new Rect(0, 0, primary.ActualWidth, primary.ActualHeight));
             if (compactReplay.Bottom + 4 > compactPrimary.Top)
@@ -113,7 +114,7 @@ internal static class NativeSetupSmoke
             window.Width = 560; window.Height = 464;
             if (platform.Completed) throw new InvalidOperationException("Setup completed before the user confirmed music.");
             await flow.ConfirmMusicAsync(default); window.RefreshView();
-            await Capture("ready", "已准备好");
+            await Capture("ready", "Ready to play");
             platform.RenamedExisting = true;
             await flow.RefreshAsync(default); window.RefreshView();
             await Capture("renamed-ready", "客厅 HomePod");
@@ -123,28 +124,28 @@ internal static class NativeSetupSmoke
             await flow.StartAutomaticAsync(default); window.RefreshView();
             if (flow.Step != NativeSetupStep.Listening || !platform.Configured || !platform.AudioPlayed || platform.Completed)
                 throw new InvalidOperationException("A single HomePod must automatically configure and play before the only functional confirmation.");
-            await Capture("automatic-confirmation", "听到声音了吗");
+            await Capture("automatic-confirmation", "Did you hear it?");
             checks.Add("single-device-needs-no-manual-route-name-or-player");
             platform.DiscoveryError = new IOException("设备发现失败：网络不存在或尚未启动。可手动添加接收器。");
             await flow.RefreshAsync(default); window.RefreshView();
-            await Capture("discovery-unavailable", "暂时无法查找 HomePod");
+            await Capture("discovery-unavailable", "Can't find HomePod");
             if (Descendants(window).OfType<TextBlock>().Any(text => text.Text.Contains("接收器", StringComparison.Ordinal)
                 || text.Text.Contains("手动添加", StringComparison.Ordinal) || text.Text.Contains("网络不存在", StringComparison.Ordinal)))
                 throw new InvalidOperationException("Discovery errors must use HomePod language and supported recovery only.");
             platform.DiscoveryError = null;
-            Invoke("重新查找");
+            Invoke("Find HomePod");
             await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
             if (flow.Step != NativeSetupStep.Listening)
                 throw new InvalidOperationException("Search recovery must retry the automatic HomePod connection.");
             checks.Add("discovery-failure-retries-without-manual-device-setup");
             platform.Receiver = platform.Receiver with { Name = new string('长', 160) };
             await flow.StartAutomaticAsync(default); window.RefreshView();
-            await Capture("long-device-name", "听到声音了吗");
+            await Capture("long-device-name", "Did you hear it?");
             var title = (TextBlock)window.FindName("HeaderTitle");
             if (title.Text.Length > 96 || title.TextTrimming != TextTrimming.CharacterEllipsis)
                 throw new InvalidOperationException("Long device names must remain bounded and visibly trimmed.");
             window.ApplyHighContrastPalette(); window.RefreshView();
-            await Capture("system-colors", "听到声音了吗");
+            await Capture("system-colors", "Did you hear it?");
             if (!ReferenceEquals(window.Resources["SetupReplayFill"], SystemColors.WindowBrush)
                 || !ReferenceEquals(window.Resources["SetupReplayInk"], SystemColors.WindowTextBrush)
                 || !ReferenceEquals(window.Resources["SetupAccentText"], SystemColors.HighlightTextBrush)
@@ -152,7 +153,11 @@ internal static class NativeSetupSmoke
                 || ((FrameworkElement)window.FindName("GenericArtwork")).Visibility != Visibility.Visible)
                 throw new InvalidOperationException("System contrast colors must replace the pale artwork and control palette.");
             checks.Add("system-palette-and-monochrome-artwork");
-            App.WriteOutput(args, new { ok = true, checks, audio_sent = false, hardware_used = false, production_state_modified = false });
+            if (!string.Equals(window.Language.IetfLanguageTag, CultureInfo.CurrentUICulture.Name, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Setup accessibility language must follow the selected Windows UI language.");
+            checks.Add("setup-language-follows-ui-culture");
+            App.WriteOutput(args, new { ok = true, checks, language = CultureInfo.CurrentUICulture.Name, layout_language = window.Language.IetfLanguageTag,
+                system_default = !args.Contains("--ui-language"), audio_sent = false, hardware_used = false, production_state_modified = false });
             return 0;
         }
         catch (Exception error) { App.WriteOutput(args, new { ok = false, checks, error = error.ToString() }); return 1; }
@@ -160,7 +165,7 @@ internal static class NativeSetupSmoke
 
         void Invoke(string label)
         {
-            var button = Descendants(window).OfType<Button>().Single(value => Equals(value.Content, label));
+            var button = Descendants(window).OfType<Button>().Single(value => Equals(value.Content, L.Get(label)));
             ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
         }
         async Task UntilIdle()
@@ -169,7 +174,7 @@ internal static class NativeSetupSmoke
             {
                 await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
                 if (flow.Step == NativeSetupStep.Listening && Descendants(window).OfType<Button>()
-                    .Any(button => Equals(button.Content, "再播放一次") && button.IsEnabled)) return;
+                    .Any(button => Equals(button.Content, L.Get("Play again")) && button.IsEnabled)) return;
                 await Task.Delay(10);
             }
             throw new InvalidOperationException("Replay did not return to an enabled confirmation screen.");
@@ -177,6 +182,7 @@ internal static class NativeSetupSmoke
 
         async Task Capture(string name, string expected)
         {
+            expected = L.Get(expected);
             await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
             window.UpdateLayout();
             var elements = Descendants(window).ToArray();
@@ -191,7 +197,22 @@ internal static class NativeSetupSmoke
                 var bounds = button.TransformToAncestor(window).TransformBounds(new Rect(0, 0, button.ActualWidth, button.ActualHeight));
                 if (bounds.Left < 0 || bounds.Right > window.ActualWidth || bounds.Top < 0 || bounds.Bottom > window.ActualHeight)
                     throw new InvalidOperationException("An action is clipped or outside the compact window.");
+                if (button.Content is string label)
+                {
+                    var caption = new FormattedText(label, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
+                        new Typeface(button.FontFamily, button.FontStyle, button.FontWeight, button.FontStretch), button.FontSize,
+                        button.Foreground, VisualTreeHelper.GetDpi(button).PixelsPerDip);
+                    var glyph = ReferenceEquals(button, window.FindName("ReplayButton")) ? 18 : 0;
+                    if (caption.WidthIncludingTrailingWhitespace + button.Padding.Left + button.Padding.Right
+                        + button.BorderThickness.Left + button.BorderThickness.Right + glyph > button.ActualWidth + 1)
+                        throw new InvalidOperationException("A translated action label is clipped.");
+                }
             }
+            if (CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "en"
+                && new[] { "TaskTitle", "StepText", "StatusText" }.Select(id => ((TextBlock)window.FindName(id)).Text)
+                    .Concat(elements.OfType<Button>().Select(button => button.Content?.ToString() ?? ""))
+                    .Any(text => text.Any(character => character is >= '\u4e00' and <= '\u9fff')))
+                throw new InvalidOperationException("English setup must not leak hardcoded Chinese UI text.");
             var client = (FrameworkElement)window.Content;
             var bitmap = new RenderTargetBitmap((int)Math.Ceiling(client.ActualWidth), (int)Math.Ceiling(client.ActualHeight), 96, 96, PixelFormats.Pbgra32);
             bitmap.Render(client);

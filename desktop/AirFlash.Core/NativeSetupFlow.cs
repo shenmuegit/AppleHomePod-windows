@@ -43,7 +43,7 @@ public sealed class NativeSetupFlow(INativeSetupPlatform platform) : IAsyncDispo
             var outcome = await platform.InstallDriverAsync(token).ConfigureAwait(false);
             inspection = await platform.InspectAsync(token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
             if (outcome == NativeDriverInstallOutcome.RestartRequired) { Inspection = inspection; Step = NativeSetupStep.Restart; return; }
-            if (!inspection.DriverInstalled) throw new IOException("驱动安装后未通过 Windows 设备核验。请重新运行安装程序。");
+            if (!inspection.DriverInstalled) throw new IOException("Windows could not verify the installed audio driver. Run setup again.");
         }
         if (!CheckInspection(inspection)) return;
         if (inspection.Binding is { Calibration: not null, VerifiedBufferMs: not null, VerifiedBufferProfile: null } && inspection.AgentReady)
@@ -131,7 +131,7 @@ public sealed class NativeSetupFlow(INativeSetupPlatform platform) : IAsyncDispo
             Step = NativeSetupStep.Listening; return;
         }
         await StopPreviewAsync(token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
-        Block("自动检查与重试后仍未确认出声，尚未完成安装。请检查 HomePod 已通电且未被其他设备占用，再重新检查。");
+        Block("Audio is still unconfirmed after retrying. Setup is not complete. Check that HomePod is on and not in use by another device, then try again.");
     }, cancellation);
 
     public static string OutputName(Receiver receiver)

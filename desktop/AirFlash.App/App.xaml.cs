@@ -44,7 +44,7 @@ public partial class App : Application
     {
         // Initialize before any windows, view models or static choice labels are created.
         var languageIndex = Array.IndexOf(args.Args, "--ui-language");
-        var smokeLanguage = (args.Args.Contains("--ui-smoke") || args.Args.Contains("--tray-smoke") || args.Args.Contains("--ui-perf")) && languageIndex >= 0 && languageIndex + 1 < args.Args.Length
+        var smokeLanguage = (args.Args.Contains("--ui-smoke") || args.Args.Contains("--tray-smoke") || args.Args.Contains("--ui-perf") || args.Args.Contains("--setup-smoke")) && languageIndex >= 0 && languageIndex + 1 < args.Args.Length
             ? new[] { args.Args[languageIndex + 1] } : null;
         try
         {

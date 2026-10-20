@@ -23,6 +23,7 @@ The PC and HomePod are on the same local network. The currently qualified hardwa
 - App name: AppleHome; GPLv3+ application, using an unmodified VB-CABLE package with its vendor notices and donationware information.
 - Installation automatically names and selects the verified ordinary playback endpoint; users never enter buffer milliseconds.
 - The confirmation screen offers playback/replay and explicit heard/not-heard feedback. Replaying is a listening action, not a completed installation or an adaptation attempt.
+- Native setup reads Windows preferred UI languages at startup, reusing English, Simplified Chinese and Traditional Chinese resources. There is no setup language selector; unmatched preferences fall back to English. Device names remain unchanged.
 - The user specifically reports a long wait between pressing replay and first sound. Preserve the finite confirmation clip; reduce the work on that click path.
 - Daily use remains Windows native controls. No microphone recording, physical-speaker fallback, or network-disconnection tests in this work.
 - Project worktrees, caches, reports, builds and deliveries stay within the owning project. The application itself uses its normal Windows user install/config paths; a developer's local workspace path is not a product dependency.

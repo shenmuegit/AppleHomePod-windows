@@ -6,6 +6,23 @@ namespace AirFlash.Tests;
 public sealed class LocalizationTests
 {
     [Theory]
+    [InlineData("Play again", "再播放一次", "再播放一次")]
+    [InlineData("Did you hear it?", "听到声音了吗？", "聽到聲音了嗎？")]
+    [InlineData("I heard it", "听到了", "聽到了")]
+    [InlineData("No audio", "没听到", "沒聽到")]
+    [InlineData("About AppleHome", "关于 AppleHome", "關於 AppleHome")]
+    public void SetupLabelsHaveBothChineseTranslations(string english, string simplified, string traditional)
+    {
+        foreach (var (resource, expected) in new[] { ("zh", simplified), ("zh-TW", traditional) })
+        {
+            using var stream = typeof(L).Assembly.GetManifestResourceStream($"AirFlash.Core.Strings.{resource}.json")!;
+            var translations = JsonSerializer.Deserialize<Dictionary<string, string>>(stream)!;
+            Assert.True(translations.TryGetValue(english, out var actual), $"Missing {resource} setup translation: {english}");
+            Assert.Equal(expected, actual);
+        }
+    }
+
+    [Theory]
     [InlineData("zh-CN", "zh")]
     [InlineData("zh-TW", "zh-TW")]
     [InlineData("zh-HK", "zh-TW")]

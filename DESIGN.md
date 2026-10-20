@@ -153,6 +153,8 @@ Segoe UI with Microsoft YaHei UI fallback is inherited throughout. Device and ta
 
 The device title and detail use character ellipsis. Task, instruction and status text wrap. Ordinary steps show task-title above body. Testing/listening hide the separate task title and promote the instruction to listening. Receiver names retain the existing control-character filter and length bound.
 
+Setup text follows the Windows preferred UI language at startup through the existing shared localization resources. English is the source and fallback language; Simplified and Traditional Chinese use their catalogs. The window's accessibility language matches the selected UI culture. Device names are user content and are not translated. Keep the same typography and button roles across locales, allowing longer labels to grow from their minimum width.
+
 ## Layout
 
 The native window opens centered at (560 × 464 DIP), with minimum (440 × 380 DIP). A flexible vertically scrollable body sits above an automatically sized pinned footer; horizontal scrolling is disabled. Body margins are left/top/right/bottom (26, 0, 26, 12 DIP). Footer padding is horizontal/vertical (26, 17 DIP).

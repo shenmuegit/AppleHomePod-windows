@@ -270,9 +270,9 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
             await WaitForCurrentBindingAsync(monitor, cancellation).ConfigureAwait(false);
         }
         catch (OperationCanceledException error) when (!cancellation.IsCancellationRequested)
-        { throw new IOException("自动音频准备未在限定时间内就绪，尚未完成安装。请重新检查 HomePod 连接。", error); }
+        { throw new IOException("Audio preparation timed out. Setup is not complete. Check the HomePod connection and try again.", error); }
         catch (TimeoutException error)
-        { throw new IOException("自动音频准备超时，尚未完成安装。请重新检查 HomePod 连接。", error); }
+        { throw new IOException("Audio preparation timed out. Setup is not complete. Check the HomePod connection and try again.", error); }
     }
 
     public async Task PlayConfirmationAsync(CancellationToken cancellation)
@@ -302,9 +302,9 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
             }
         }
         catch (OperationCanceledException error) when (!cancellation.IsCancellationRequested)
-        { throw new IOException("自动音频验证未在限定时间内就绪，尚未完成安装。请重新检查 HomePod 连接。", error); }
+        { throw new IOException("Audio verification timed out. Setup is not complete. Check the HomePod connection and try again.", error); }
         catch (TimeoutException error)
-        { throw new IOException("自动音频验证超时，尚未完成安装。请重新检查 HomePod 连接。", error); }
+        { throw new IOException("Audio verification timed out. Setup is not complete. Check the HomePod connection and try again.", error); }
     }
 
     private async Task WaitForCurrentBindingAsync(WindowsNativeOutput monitor, CancellationToken cancellation)
@@ -379,7 +379,7 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
         {
             if (_previewWork?.IsCompleted == true) await _previewWork.ConfigureAwait(false);
             var current = CurrentPreviewReceiver();
-            var snapshot = _session?.Snapshot ?? throw new NativeSetupPendingException("请在 Windows 选择 HomePod 输出并持续播放正常音乐，再确认听感。");
+            var snapshot = _session?.Snapshot ?? throw new NativeSetupPendingException("Keep playing normal music through the Windows HomePod output, then confirm what you hear.");
             if (NativeLatencyAdaptation.VerifiedPreference(provisional, current, 44100) is null)
             {
                 int applied;
@@ -391,14 +391,14 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
                     var epoch = host.CaptureEpoch;
                     await Task.Delay(TimeSpan.FromSeconds(5), cancellation).ConfigureAwait(false);
                     if (!ReferenceEquals(session, _session) || !ReferenceEquals(host, _host) || epoch != host.CaptureEpoch)
-                        throw new NativeSetupPendingException("音乐连接在确认期间重新准备，请继续播放正常音乐片刻后再完成。");
+                        throw new NativeSetupPendingException("Audio was reinitialized during confirmation. Keep playing normal music briefly before finishing.");
                     current = CurrentPreviewReceiver();
                     applied = NativeMusicConfirmation.ConfirmableAppliedMs(provisional, current, session.Snapshot, 44100, snapshot);
                 }
                 provisional = NativeLatencyAdaptation.ConfirmReference(provisional, current, 44100, applied);
             }
             else if (snapshot.State != PlaybackState.Streaming)
-                throw new NativeSetupPendingException("请在 Windows 选择 HomePod 输出并持续播放正常音乐，再确认听感。");
+                throw new NativeSetupPendingException("Keep playing normal music through the Windows HomePod output, then confirm what you hear.");
         }
         await ClosePreviewResourcesAsync().ConfigureAwait(false);
         if (_store.Load() != baseline) throw new IOException("Device settings changed during the music preview; their current contents were preserved.");

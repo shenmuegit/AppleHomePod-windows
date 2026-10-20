@@ -69,6 +69,7 @@
     },
     "nativeAccessibility": {
       "liveSetting": "Polite",
+      "language": "Window.Language follows the selected Windows preferred UI culture at startup; English fallback and existing Simplified/Traditional Chinese catalogs share the same layout. Device names are not translated.",
       "announcement": "The main instruction's accessible name includes visible status; unchanged announcements are suppressed and LiveRegionChanged is raised when listeners exist."
     },
     "nativeSizing": {

@@ -29,6 +29,8 @@ FINISH: Review at artifacts/minimal-ui-implementation-20261020/review/impeccable
 
 ## Evidence and limits
 
+The localized development build reuses Windows preferred UI languages and the shared English/Simplified Chinese/Traditional Chinese catalogs at startup. No language selector or new daily controls are added. Own UI text and About are localized; device names remain untouched. Mock captures under artifacts/setup-localization-20261020 cover all three languages plus system-default startup, with label-width checks and the existing compact/focus/error states. This is presentation verification without hardware or audio activation.
+
 Existing compiled-WPF client captures with a mock platform under artifacts/minimal-ui-implementation-20261020/:
 
 - setup-listening.png — normal hearing-confirmation composition.

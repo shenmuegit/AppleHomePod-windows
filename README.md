@@ -49,6 +49,8 @@ A full first-install test, including driver setup and the required restart, is s
 
 ## In Preview 2
 
+**In development:** setup now follows the Windows preferred display language automatically, with English, Simplified Chinese and Traditional Chinese. This localization change is not included in the Preview 2 download linked above.
+
 The setup window now puts HomePod at the center, with a quieter replay button, clear hearing choices and visible keyboard focus. Controls remain accessible at the minimum window size.
 
 A startup fix prevents device discovery from filling the capture queue before a connection can start. It preserves the existing per-device timing record and queue limit. See the [release notes](docs/releases/v0.2.0-preview.2.md) for validation details.

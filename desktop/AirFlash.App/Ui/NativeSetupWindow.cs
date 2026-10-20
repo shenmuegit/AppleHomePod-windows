@@ -1,8 +1,10 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Markup;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using AirFlash.App.Services;
@@ -19,6 +21,7 @@ public partial class NativeSetupWindow : Window
     {
         _flow = flow;
         InitializeComponent();
+        Language = XmlLanguage.GetLanguage(CultureInfo.CurrentUICulture.Name);
         if (SystemParameters.HighContrast) ApplyHighContrastPalette();
         SizeChanged += (_, _) => RefreshPresentation();
         AppIconService.Track(this);
@@ -71,28 +74,28 @@ public partial class NativeSetupWindow : Window
         var step = _flow.Step;
         var listening = step is NativeSetupStep.Testing or NativeSetupStep.Listening;
         HeaderTitle.Text = _flow.SelectedReceiver is { } boundReceiver ? DisplayName(boundReceiver.Name) : "HomePod";
-        TaskTitle.Text = step switch {
-            NativeSetupStep.Driver => "安装音频驱动", NativeSetupStep.Restart => "重启后继续",
-            NativeSetupStep.Ready => "已准备好", NativeSetupStep.Blocked => "连接未完成",
-            NativeSetupStep.DiscoveryUnavailable => "暂时无法查找 HomePod",
-            _ when listening => "测试声音", _ => "连接设备"
-        };
+        TaskTitle.Text = L.Get(step switch {
+            NativeSetupStep.Driver => "Install audio driver", NativeSetupStep.Restart => "Restart to continue",
+            NativeSetupStep.Ready => "Ready to play", NativeSetupStep.Blocked => "Connection incomplete",
+            NativeSetupStep.DiscoveryUnavailable => "Can't find HomePod",
+            _ when listening => "Check audio", _ => "Connect HomePod"
+        });
         DeviceText.Text = step == NativeSetupStep.Ready ? OutputName() : _flow.SelectedReceiver is { } selected
-            ? (selected.Model == "AudioAccessory5,1" ? "HomePod mini" : "Windows 音频输出")
-            : "Windows 音频输出";
-        StepText.Text = _confirming ? "正在保存设置…" : step switch {
-            NativeSetupStep.Driver => "正在安装音频驱动…",
-            NativeSetupStep.Restart => "保存工作，重启 Windows 后重新打开 AppleHome。",
-            NativeSetupStep.Receiver when _flow.Receivers.Count == 0 => "未发现 HomePod，请确认设备已通电并与电脑同网。",
-            NativeSetupStep.Receiver => "选择要连接的 HomePod。",
-            NativeSetupStep.Configuring => "正在准备连接和声音…",
-            NativeSetupStep.Testing => "正在播放，请留意 HomePod。",
-            NativeSetupStep.Listening => "听到声音了吗？",
-            NativeSetupStep.Ready => "已可播放音乐和视频。",
-            NativeSetupStep.Blocked => "请检查下方原因，然后重试。",
-            NativeSetupStep.DiscoveryUnavailable => "请确认 HomePod 已通电，并与电脑连接同一网络。",
-            _ => "正在检查设备…"
-        };
+            ? (selected.Model == "AudioAccessory5,1" ? "HomePod mini" : L.Get("Windows audio output"))
+            : L.Get("Windows audio output");
+        StepText.Text = L.Get(_confirming ? "Saving settings…" : step switch {
+            NativeSetupStep.Driver => "Installing the audio driver…",
+            NativeSetupStep.Restart => "Save your work, restart Windows, then reopen AppleHome.",
+            NativeSetupStep.Receiver when _flow.Receivers.Count == 0 => "No HomePod found. Check that it's on and connected to the same network.",
+            NativeSetupStep.Receiver => "Choose a HomePod to connect.",
+            NativeSetupStep.Configuring => "Preparing the connection and audio…",
+            NativeSetupStep.Testing => "Playing audio…",
+            NativeSetupStep.Listening => "Did you hear it?",
+            NativeSetupStep.Ready => "Ready for music and video.",
+            NativeSetupStep.Blocked => "Check the details below, then try again.",
+            NativeSetupStep.DiscoveryUnavailable => "Check that HomePod is on and connected to the same network as this PC.",
+            _ => "Checking devices…"
+        });
         Preparation.Visibility = _busy && step is not (NativeSetupStep.Testing or NativeSetupStep.Listening)
             ? Visibility.Visible : Visibility.Collapsed;
         Preparation.IsIndeterminate = SystemParameters.ClientAreaAnimation && !SystemParameters.HighContrast;
@@ -105,7 +108,7 @@ public partial class NativeSetupWindow : Window
             foreach (var receiver in _flow.Receivers)
             {
                 var qualified = receiver.Online && receiver.PrefersNtpAlac;
-                var item = new ListBoxItem { Content = DisplayName(receiver.Name) + (qualified ? "" : " · 暂不支持"),
+                var item = new ListBoxItem { Content = DisplayName(receiver.Name) + (qualified ? "" : " · " + L.Get("Not supported yet")),
                     Tag = receiver, Padding = new(10), IsEnabled = qualified };
                 ReceiverPicker.Items.Add(item);
                 if (receiver.Id == previous) ReceiverPicker.SelectedItem = item;
@@ -113,19 +116,19 @@ public partial class NativeSetupWindow : Window
         }
         ReplayButton.Visibility = listening ? Visibility.Visible : Visibility.Collapsed;
         SecondaryButton.Visibility = listening || step == NativeSetupStep.Receiver ? Visibility.Visible : Visibility.Collapsed;
-        SecondaryButton.Content = listening ? "没听到" : "重新搜索";
-        PrimaryButton.Content = step switch {
-            NativeSetupStep.Driver => "开始设置", NativeSetupStep.Restart => "重新检查",
-            NativeSetupStep.Receiver => "连接", NativeSetupStep.Ready => "完成",
-            NativeSetupStep.Blocked => "重试", NativeSetupStep.DiscoveryUnavailable => "重新查找", _ => "听到了"
-        };
+        SecondaryButton.Content = L.Get(listening ? "No audio" : "Search again");
+        PrimaryButton.Content = L.Get(step switch {
+            NativeSetupStep.Driver => "Start setup", NativeSetupStep.Restart => "Check again",
+            NativeSetupStep.Receiver => "Connect", NativeSetupStep.Ready => "Done",
+            NativeSetupStep.Blocked => "Retry", NativeSetupStep.DiscoveryUnavailable => "Find HomePod", _ => "I heard it"
+        });
         PrimaryButton.Visibility = listening || step is NativeSetupStep.Driver or NativeSetupStep.Restart or NativeSetupStep.Ready or NativeSetupStep.Blocked
             or NativeSetupStep.DiscoveryUnavailable
             || showReceivers ? Visibility.Visible : Visibility.Collapsed;
         var enabled = !_busy && !_closing;
         ReplayButton.IsEnabled = enabled; PrimaryButton.IsEnabled = enabled; SecondaryButton.IsEnabled = enabled;
         ReceiverPicker.IsEnabled = enabled;
-        StatusText.Text = _operationError ?? _flow.Error ?? (step == NativeSetupStep.Driver ? "如 Windows 提示，请允许安装。" : "");
+        StatusText.Text = L.Get(_operationError ?? _flow.Error ?? (step == NativeSetupStep.Driver ? "Allow installation if Windows asks." : ""));
         StatusText.Visibility = StatusText.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         RefreshPresentation();
         AnnounceState(StatusText.Text.Length == 0 ? StepText.Text : StepText.Text + " " + StatusText.Text);
@@ -161,7 +164,7 @@ public partial class NativeSetupWindow : Window
         }
         if (_flow.Step == NativeSetupStep.Receiver)
             await RunAsync(token => ReceiverPicker.SelectedItem is ListBoxItem { Tag: Receiver receiver }
-                ? _flow.ConnectAsync(receiver, token) : Task.FromException(new InvalidOperationException("请先选择一只可连接的 HomePod。")), PrimaryButton);
+                ? _flow.ConnectAsync(receiver, token) : Task.FromException(new InvalidOperationException(L.Get("Select a HomePod to connect."))), PrimaryButton);
         else await RunAsync(_flow.StartAutomaticAsync, PrimaryButton);
     }
     private async Task RunAsync(Func<CancellationToken, Task> action, Button? focusAfter = null)
@@ -191,12 +194,12 @@ public partial class NativeSetupWindow : Window
     private string OutputName() => _flow.Inspection?.Endpoint?.EndpointLabel ?? _flow.Inspection?.Binding?.AssignedName ?? "HomePod";
     private void AboutClicked(object sender, RoutedEventArgs args)
     {
-        var about = new Window { Title = "关于 AppleHome", Owner = this, Width = 400, SizeToContent = SizeToContent.Height,
+        var about = new Window { Title = L.Get("About AppleHome"), Owner = this, Width = 400, SizeToContent = SizeToContent.Height,
             ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            Background = Background, Foreground = Foreground, FontFamily = FontFamily, FontSize = 14 };
+            Background = Background, Foreground = Foreground, FontFamily = FontFamily, FontSize = 14, Language = Language };
         var body = new StackPanel { Margin = new(24) };
-        body.Children.Add(new TextBlock { Text = "AppleHome · GPLv3+\n\n音频驱动：VB-CABLE · VB-Audio Software\nDonationware", TextWrapping = TextWrapping.Wrap, Margin = new(0, 0, 0, 16) });
-        var license = new Button { Content = "驱动许可与捐助", Style = (Style)FindResource("SetupButton"), HorizontalAlignment = HorizontalAlignment.Left };
+        body.Children.Add(new TextBlock { Text = L.Get("AppleHome · GPLv3+\n\nAudio driver: VB-CABLE · VB-Audio Software\nDonationware"), TextWrapping = TextWrapping.Wrap, Margin = new(0, 0, 0, 16) });
+        var license = new Button { Content = L.Get("Driver license and donations"), Style = (Style)FindResource("SetupButton"), HorizontalAlignment = HorizontalAlignment.Left };
         license.Click += (_, _) => {
             try { Process.Start(new ProcessStartInfo("https://vb-audio.com/Services/licensing.htm") { UseShellExecute = true }); }
             catch (Exception error) { MessageBox.Show(about, DiagnosticText.Protect(error.Message)); }

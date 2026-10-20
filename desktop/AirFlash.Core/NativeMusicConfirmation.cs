@@ -96,6 +96,6 @@ public static class NativeMusicConfirmation
             throw new InvalidOperationException("The normal-music evidence belongs to a different receiver, connection or sample rate. Reconnect before confirming.");
     }
 
-    private static NativeSetupPendingException Pending() => new("请保持 Windows 的 HomePod 输出，继续播放正常音乐片刻，再确认能否连续听到；当前连接记录还不完整，尚未保存设置。");
+    private static NativeSetupPendingException Pending() => new("Keep playing normal music through the Windows HomePod output. Connection evidence is still incomplete; settings have not been saved.");
     private static bool KnownHost(string host) => !string.IsNullOrWhiteSpace(host) && host != "—";
 }
