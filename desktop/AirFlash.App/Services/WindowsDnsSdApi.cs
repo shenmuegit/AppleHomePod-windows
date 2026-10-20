@@ -14,13 +14,29 @@ internal interface IDnsSdApi
 
 // Result notifications do not end native queries. Retain cancellation buffers
 // until explicit cancellation returns, including when callbacks arrive early.
-internal sealed class WindowsDnsSdApi(IWindowsDnsApi? native = null) : IDnsSdApi
+internal sealed class WindowsDnsSdApi(IWindowsDnsApi? native = null, IDnsSdApi? fallback = null, Action<string>? log = null) : IDnsSdApi
 {
     private readonly IWindowsDnsApi _native = native ?? new WindowsDnsApi();
+    private readonly IDnsSdApi _fallback = fallback ?? new ManagedDnsSdApi();
+    private readonly ConcurrentDictionary<uint, byte> _managedInterfaces = new();
     public IDisposable Browse(string type, uint index, Action<uint, IReadOnlyList<DnsSdService>> callback, Action<string> failed)
-        => Start(type, index, false, (status, result) => callback(status, result == IntPtr.Zero ? [] : _native.ReadBrowse(result)), failed);
+        => WithFallback(index, () => Start(type, index, false, (status, result) => callback(status, result == IntPtr.Zero ? [] : _native.ReadBrowse(result)
+            .Where(service => service.Instance.TrimEnd('.').EndsWith("." + type, StringComparison.OrdinalIgnoreCase)).ToArray()), failed),
+            () => _fallback.Browse(type, index, callback, failed));
     public IDisposable Resolve(string instance, string type, uint index, Action<uint, ServiceRecord?> callback, Action<string> failed)
-        => Start(instance, index, true, (status, result) => callback(status, result == IntPtr.Zero ? null : _native.ReadResolve(instance, type, result)), failed);
+        => WithFallback(index, () => Start(instance, index, true, (status, result) => callback(status, result == IntPtr.Zero ? null : _native.ReadResolve(instance, type, result)), failed),
+            () => _fallback.Resolve(instance, type, index, callback, failed));
+    private IDisposable WithFallback(uint index, Func<IDisposable> primary, Func<IDisposable> managed)
+    {
+        if (_managedInterfaces.ContainsKey(index)) return managed();
+        try { return primary(); }
+        catch (Win32Exception error) when (error.NativeErrorCode == 1222)
+        {
+            _managedInterfaces.TryAdd(index, 0);
+            log?.Invoke($"Windows DNS-SD returned no network (1222); using managed mDNS on interface {index}.");
+            return managed();
+        }
+    }
     private IDisposable Start(string name, uint index, bool resolve, Action<uint, IntPtr> callback, Action<string> failed)
     {
         var operation = new Operation(_native, name, index, resolve, callback, failed);

@@ -6,12 +6,14 @@ AppleHome modifications are licensed under GNU GPL version 3 or later.
 The upstream commercial option does not grant a commercial license for
 these modifications.
 
-VB-CABLE (independent installation)
+VB-CABLE (vendor driver)
 
-VB-CABLE is a separate driver from VB-Audio Software. Its package and
-installer are not included, embedded, redistributed, or automatically
-run by AppleHome. Obtain the original from https://vb-audio.com/Cable/
-and follow the vendor's separate installation and licensing terms.
+VB-CABLE is a separate Donationware driver from VB-Audio Software.
+This setup includes the unmodified original Pack45 ZIP and delegates
+installation to the vendor's installer. Windows installation permission
+and any required reboot still apply. The driver is not licensed under
+AppleHome's GPL. Preserve its original readme and follow the vendor's
+separate terms at https://vb-audio.com/Services/licensing.htm
 
 AirFlash
 

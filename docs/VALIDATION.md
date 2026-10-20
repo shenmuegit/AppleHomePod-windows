@@ -4,7 +4,7 @@
 
 ## 当前交付与资格
 
-当前安装候选另见`dist/homepod-discovery-setup-20261020/AppleHome.exe`，不替换下面的已验收后台快照。10月20日错误页与重新查找修订完整.NET755项、模拟向导16项通过；当前机器Windows设备搜索仍失败，旧后台04:20退出，真实连接未恢复。10月19日真实NAudio零PCM探针在健康绑定下，本地检查到首次provider读取为9.15–9.66ms；故障后重新创建播放器的独立一次为8.90ms。该历史探针仅测调度与生命周期，没有播放、录制或测量HomePod实际出声时间。先前Windows10自动改名及友好名称读回已做真实往返探针。新自动流程的完整原厂安装/UAC/重启仍待独立验收，具体范围见[原生输出记录](validation/windows-native-homepod-output.md)。
+当前安装候选另见`dist/auto-discovery-20261020/AppleHome.exe`，不替换下面的已验收后台快照。10月20日自动发现修订完整.NET769项、模拟向导16项通过；原错误及解析单独失败的后备分支均在真实网络中约0.52秒找到当前mini，连接进入Streaming。旧后台04:20退出尚无新的过夜资格。10月19日真实NAudio零PCM探针在健康绑定下，本地检查到首次provider读取为9.15–9.66ms；故障后重新创建播放器的独立一次为8.90ms。该历史探针仅测调度与生命周期，没有播放、录制或测量HomePod实际出声时间。先前Windows10自动改名及友好名称读回已做真实往返探针。新自动流程的完整原厂安装/UAC/重启仍待独立验收，具体范围见[原生输出记录](validation/windows-native-homepod-output.md)。
 
 交付文件 `dist/AppleHome-61992a2-current-mini-20261019.zip` 保留程序代码 `61992a2c72063045cd6ff8327d8e680a9d2fd7ff` 的同一可执行文件，EXE SHA256 `4d811deafc1e77d7610f7d2b86760211cf38e6c8f71320d791d31278f0f1cff6`，引擎SHA256 `ba3cea74a809fc4d165d3f26926f494e5b3e5717b5025178a60f53ce5ffb30e6`。仅同步文档、源码留档与资格元数据，没有重编程序。
 

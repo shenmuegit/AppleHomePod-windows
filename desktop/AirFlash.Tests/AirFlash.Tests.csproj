@@ -17,6 +17,8 @@
     <Compile Include="../AirFlash.App/Services/TrayRegistration.cs" Link="TrayRegistration.cs"/>
     <Compile Include="../AirFlash.App/Services/WindowsDiscovery.cs" Link="WindowsDiscovery.cs"/>
     <Compile Include="../AirFlash.App/Services/WindowsDnsSdApi.cs" Link="WindowsDnsSdApi.cs"/>
+    <Compile Include="../AirFlash.App/Services/ManagedDnsSdApi.cs" Link="ManagedDnsSdApi.cs"/>
+    <Compile Include="../AirFlash.App/Services/MdnsPacket.cs" Link="MdnsPacket.cs"/>
     <Compile Include="../AirFlash.App/Services/WindowsCapabilities.cs" Link="WindowsCapabilities.cs"/>
     <Compile Include="../AirFlash.App/Services/AppPaths.cs" Link="AppPaths.cs"/>
     <Compile Include="../AirFlash.App/Services/SingleInstance.cs" Link="SingleInstance.cs"/>

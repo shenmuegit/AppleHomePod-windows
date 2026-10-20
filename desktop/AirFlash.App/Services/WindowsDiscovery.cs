@@ -30,7 +30,7 @@ public sealed class WindowsDiscovery : IDiscoveryService
     public bool IsCurrentSnapshot(IReadOnlyList<Receiver> snapshot)
     { lock (_sync) return !_disposed && ReferenceEquals(_latestSnapshot, snapshot); }
     public WindowsDiscovery(Func<IReadOnlyList<DiscoveryAdapter>>? adapters = null, Action<string>? log = null, Func<bool>? dnsAvailable = null)
-        : this(new WindowsDnsSdApi(), adapters, log, dnsAvailable: dnsAvailable ?? (() => WindowsCapabilities.Current.DnsSdAvailable)) { }
+        : this(new WindowsDnsSdApi(log: log), adapters, log, dnsAvailable: dnsAvailable ?? (() => WindowsCapabilities.Current.DnsSdAvailable)) { }
     internal WindowsDiscovery(IDnsSdApi api, Func<IReadOnlyList<DiscoveryAdapter>>? adapters = null, Action<string>? log = null, TimeProvider? time = null, Func<bool>? dnsAvailable = null)
     {
         _api = api; _dnsAvailable = dnsAvailable ?? (() => true); _adapters = adapters ?? NetworkAdapterCatalog.List; _log = log ?? (_ => { }); _time = time ?? TimeProvider.System;
