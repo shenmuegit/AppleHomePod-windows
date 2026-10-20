@@ -25,7 +25,7 @@ The PC and HomePod are on the same local network. The currently qualified hardwa
 - The confirmation screen offers playback/replay and explicit heard/not-heard feedback. Replaying is a listening action, not a completed installation or an adaptation attempt.
 - The user specifically reports a long wait between pressing replay and first sound. Preserve the finite confirmation clip; reduce the work on that click path.
 - Daily use remains Windows native controls. No microphone recording, physical-speaker fallback, or network-disconnection tests in this work.
-- Project worktrees, caches, reports, builds and deliveries stay within G:/code/applehome. The application itself has explicit approval to use its normal Windows install/config paths.
+- Project worktrees, caches, reports, builds and deliveries stay within the owning project. The application itself uses its normal Windows user install/config paths; a developer's local workspace path is not a product dependency.
 
 ## Brand Commitments
 

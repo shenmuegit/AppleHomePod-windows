@@ -1,24 +1,29 @@
 # Destructive installer testing is restricted to a disposable GitHub-hosted Windows runner.
+param([Parameter(Mandatory)][string]$Directory)
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'Run installer lifecycle tests only in a disposable GitHub-hosted runner.' }
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-Set-Location $root
+Set-Location -LiteralPath $root
+. (Join-Path $PSScriptRoot 'release-common.ps1')
+$delivery = Resolve-AirFlashReleasePath $root $Directory
+$exe = Resolve-AirFlashReleasePath $root (Join-Path $delivery 'AirFlash.exe')
+$runDirectory = Resolve-AirFlashReleasePath $root ('artifacts/installer-test/' + [Guid]::NewGuid().ToString('N'))
 function Find-Msi([string]$Directory) {
     $packages = @(Get-ChildItem -LiteralPath $Directory -Filter 'AirFlash*.msi' -File)
     if ($packages.Count -ne 1) { throw "Expected exactly one AirFlash MSI in $Directory; found $($packages.Count)." }
-    return $packages[0].FullName
+    return Resolve-AirFlashReleasePath $root $packages[0].FullName
 }
-$msi = Find-Msi 'dist'
-$exeHash = (Get-FileHash dist/AirFlash.exe).Hash
+$msi = Find-Msi $delivery
+$exeHash = (Get-FileHash -LiteralPath $exe).Hash
 $msiHash = (Get-FileHash $msi).Hash
 $installed = Join-Path $env:ProgramFiles 'AirFlash/AirFlash.exe'
 $data = Join-Path $env:APPDATA 'AirFlash'
 New-Item $data -ItemType Directory -Force | Out-Null
 $sentinel = Join-Path $data 'release-test-sentinel.txt'
 Set-Content $sentinel 'preserve-user-data'
-New-Item artifacts/installer-test -ItemType Directory -Force | Out-Null
+New-Item -Path $runDirectory -ItemType Directory | Out-Null
 function Run-Msi([string[]]$Arguments, [string]$Name) {
-    $log = Join-Path $root "artifacts/installer-test/$Name.log"
+    $log = Join-Path $runDirectory "$Name.log"
     $process = Start-Process msiexec.exe -ArgumentList ($Arguments + @('/qn','/norestart','/L*v',"`"$log`"")) -Wait -PassThru -WindowStyle Hidden
     if ($process.ExitCode -notin @(0,3010)) { Get-Content $log -Tail 60; throw "MSI $Name failed: $($process.ExitCode)" }
 }
@@ -41,22 +46,22 @@ if ((Test-Path $installed) -or @(Entries).Count -ne 0) { throw 'First uninstall 
 $releases = gh api repos/Ding-Kyoma/AirFlash/releases | ConvertFrom-Json
 if ($LASTEXITCODE) { throw 'Cannot inspect preceding releases.' }
 $previous = $releases | Where-Object { -not $_.draft -and -not $_.prerelease } | Select-Object -First 1
-$oldDir = Join-Path $root 'artifacts/installer-test/previous'
+$oldDir = Join-Path $runDirectory 'previous'
 New-Item $oldDir -ItemType Directory -Force | Out-Null
 if ($previous) {
     gh release download $previous.tag_name --repo Ding-Kyoma/AirFlash --pattern 'AirFlash*.msi' --dir $oldDir
     if ($LASTEXITCODE) { throw 'Cannot download previous MSI.' }
 } else {
     # WiX can hardlink its output from obj. Never reuse that intermediate tree for a different package.
-    $fixtureProject = Join-Path $root 'artifacts/installer-test/fixture-project'
+    $fixtureProject = Join-Path $runDirectory 'fixture-project'
     New-Item $fixtureProject -ItemType Directory -Force | Out-Null
     foreach ($file in @('AirFlash.Package.wixproj','Installer.props','Package.wxs','License.rtf')) {
         Copy-Item (Join-Path $root "installer/$file") (Join-Path $fixtureProject $file)
     }
-    & ./scripts/dotnet.ps1 build (Join-Path $fixtureProject 'AirFlash.Package.wixproj') -c Release '-p:ProductVersion=0.2.3' "-p:AppExe=$root/dist/AirFlash.exe" "-p:AppIcon=$root/desktop/AirFlash.App/Assets/app.ico" "-p:UiLicenseFile=$root/installer/License.rtf" "-p:OutputPath=$oldDir/" '-p:DebugType=none'
+    & ./scripts/dotnet.ps1 build (Join-Path $fixtureProject 'AirFlash.Package.wixproj') -c Release '-p:ProductVersion=0.2.3' "-p:AppExe=$exe" "-p:AppIcon=$root/desktop/AirFlash.App/Assets/app.ico" "-p:UiLicenseFile=$root/installer/License.rtf" "-p:OutputPath=$oldDir/" '-p:DebugType=none'
     if ($LASTEXITCODE) { throw 'Cannot build upgrade fixture.' }
 }
-if ((Get-FileHash $msi).Hash -ne $msiHash -or (Get-FileHash dist/AirFlash.exe).Hash -ne $exeHash) { throw 'Fixture build changed release assets.' }
+if ((Get-FileHash $msi).Hash -ne $msiHash -or (Get-FileHash -LiteralPath $exe).Hash -ne $exeHash) { throw 'Fixture build changed release assets.' }
 $oldMsi = Find-Msi $oldDir
 Run-Msi @('/i',"`"$oldMsi`"") 'old-install'
 $oldCode = (Entries).PSChildName
@@ -69,11 +74,11 @@ Run-Msi @('/x',"`"$msi`"") 'final-uninstall'
 if ((Test-Path $installed) -or @(Entries).Count -ne 0) { throw 'Uninstall left application or registration.' }
 # After distributing a preview, the next stable MSI must upgrade it cleanly.
 if ($env:RELEASE_CHANNEL -eq 'stable') {
-    $fileInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo((Resolve-Path dist/AirFlash.exe))
+    $fileInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($exe)
     $current = [Version]('{0}.{1}.{2}' -f $fileInfo.FileMajorPart,$fileInfo.FileMinorPart,$fileInfo.FileBuildPart)
     $preview = $releases | Where-Object { $_.prerelease -and $_.tag_name -match '^v(\d+\.\d+\.\d+)-rc\.1$' -and [Version]$Matches[1] -lt $current } | Select-Object -First 1
     if ($preview) {
-        $previewDir = Join-Path $root 'artifacts/installer-test/preview'
+        $previewDir = Join-Path $runDirectory 'preview'
         New-Item $previewDir -ItemType Directory -Force | Out-Null
         gh release download $preview.tag_name --repo Ding-Kyoma/AirFlash --pattern 'AirFlash*.msi' --dir $previewDir
         if ($LASTEXITCODE) { throw 'Cannot download preceding preview MSI.' }

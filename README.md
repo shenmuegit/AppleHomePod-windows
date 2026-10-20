@@ -4,7 +4,7 @@
 
 **当前为限定设备的测试候选：Windows 10 Pro 22H2（19045）到单只 HomePod mini 27.0，已通过正常音乐30分钟连续播放、Windows主音量与静音恢复、暂停恢复，以及约5分钟正常视频的主观嘴型同步和无明显漂移。** 缓冲按设备记录、匹配的设备档案和接收端回包自动处理，不要求用户填写毫秒数。视频开始采样为1倍速、末次读取为0.8倍速，未测量精确音画偏差。Windows 11、其他型号、其他固件和立体声对尚未取得实机资格；原生向导目前只开放上述单只 mini 配置。
 
-详细结果见 [兼容矩阵](docs/COMPATIBILITY.md)、[验证记录](docs/VALIDATION.md)。调研、已审阅规格和实施计划保存在 `docs/research/` 与 `docs/superpowers/`。
+详细结果见 [兼容矩阵](docs/COMPATIBILITY.md)、[验证记录](docs/VALIDATION.md)。模块、入口和数据归属见[当前架构](docs/architecture.md)，构建及交付约定见[打包指南](docs/packaging.md)。调研、已审阅规格和实施计划保存在 `docs/research/` 与 `docs/superpowers/`。
 
 保留的实机验收快照为 `dist/AppleHome-61992a2-current-mini-20261019.zip`。新的安装候选位于 `dist/auto-discovery-20261020/AppleHome.exe`：[向导](docs/first-run.md)自动安装原厂驱动、命名和选择 Windows 输出、准备连接并播放确认音频，用户可点“再播放一次”，再确认“听到了 / 没听到”。界面参考 Apple Devices 的浅灰层次、设备标识和简洁操作区；不依赖 Apple Devices。连接阶段预先准备音源，健康连接下重播复用同一播放器，不再每次启动子进程和固定等待2秒。多只 HomePod 时选择目标，Windows 要求的安装许可和驱动重启保留。搜索失败时显示HomePod提示与“重新查找”，不要求用户手动添加设备。10月20日修正版已更新正式后台、自动选择Windows输出并打开“已准备好”窗口，用户确认正常音乐连续播放；没有播放测试短音，也没有要求填写IP或选择网卡。新自动流程的完整安装及长期资格按独立实机记录确认。最新结果见[原生输出验收记录](docs/validation/windows-native-homepod-output.md)。
 
@@ -93,21 +93,15 @@ uv run ruff check .
 pwsh -NoProfile -File scripts/dotnet.ps1 run --project AirFlash.App -- --ui-smoke --output ../artifacts/validation/ui-smoke.json
 ```
 
-构建独立原生候选，保留旧便携包：
+构建独立原生候选时，将发布输出放入本轮 `artifacts` staging；使用受版本管理的打包器生成新版本目录，保留历史交付物：
 
 ```powershell
-$CheckoutRoot = (Get-Location).Path
-pwsh -NoProfile -File scripts/prepare-native-driver.ps1
-pwsh -NoProfile -File scripts/dotnet.ps1 publish AirFlash.App -c Release -r win-x64 --self-contained true -p:RestoreLockedMode=true -p:PublishTrimmed=false -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false "-p:PathMap=$CheckoutRoot=/_/" -o ../artifacts/native-output-publish
-if ($LASTEXITCODE -ne 0) { throw 'Publish failed' }
-$Audit = Get-Content artifacts/compatibility/bundle-audit.json -Raw | ConvertFrom-Json
-if (!$Audit.ok) { throw 'Compatibility audit failed' }
-New-Item -ItemType Directory -Force dist/native-output | Out-Null
-Copy-Item artifacts/native-output-publish/AirFlash.exe dist/native-output/AppleHome.exe
-Get-FileHash dist/native-output/AppleHome.exe -Algorithm SHA256
+python -m scripts.package_release --help
 ```
 
-内部程序集名保留 `AirFlash`；最终可执行文件名为 `AppleHome.exe`。完整 MSI/版本预留/外部发布流水线不属于本轮构建。
+完整发布命令及来源、验证 JSON 字段见[打包指南](docs/packaging.md)。打包器关联干净源码提交、发布 EXE、厂商原始输入和验证记录，生成源码 ZIP、manifest 和 SHA256SUMS；资格结论原样保存，不由软件检查推断。产物放入 `dist/<版本>-<完整commit>/`，目标已存在时拒绝覆盖。
+
+内部程序集名保留 `AirFlash`；最终文件名为 `AppleHome.exe`。可选旧 MSI 工具链输出到 `dist/legacy-msi/<版本>-<完整commit>/`。合并源码不会移动被忽略的历史包；上面的2026-10-20可用快照仍保留在 `.worktrees/applehome-native/dist/`，新打包流程以当前 checkout 的 `dist/` 为输出。
 
 候选应附代码提交、文档提交、EXE/引擎 SHA256、对应源码和资格状态 manifest。内嵌引擎必须来自本次构建；若实机验收后改了代码，需要新包和受影响验收。历史 `scripts/e2e_stream.py` 和模拟回归均不能代替当前候选的 Windows 原生选择及听音验收。
 

@@ -6,6 +6,7 @@ using System.Windows.Automation;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using AirFlash.App.Services;
 using AirFlash.App.Ui;
 using AirFlash.Core;
 namespace AirFlash.App.Verification;
@@ -14,7 +15,7 @@ internal static class NativeSetupSmoke
 {
     internal static async Task<int> RunAsync(string[] args)
     {
-        var output = Path.GetFullPath(NativeOutputCheck.Argument(args, "--output"));
+        var output = Path.GetFullPath(NativeOutputMaintenance.Argument(args, "--output"));
         var directory = Path.GetDirectoryName(output)!; Directory.CreateDirectory(directory);
         var platform = new SimulatedPlatform();
         await using var flow = new NativeSetupFlow(platform);

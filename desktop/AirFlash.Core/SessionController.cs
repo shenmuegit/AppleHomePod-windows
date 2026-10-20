@@ -6,7 +6,7 @@ namespace AirFlash.Core;
 
 public enum PlaybackState { Idle, Connecting, Streaming, Standby, Pairing, Error }
 public sealed record StreamMetrics(double? CaptureToSendP95 = null, double? MaxQueueAge = null, long? Underruns = null, long? DroppedFrames = null, int? InputRate = null);
-public sealed record SessionSnapshot(PlaybackState State, Receiver? Receiver = null, string Message = "", StreamMetrics? Metrics = null, int? TargetLatency = null, PlaybackDiagnostics? Diagnostics = null, int StreamRate = 0, DeviceVolumeState? DeviceVolume = null)
+public sealed record SessionSnapshot(PlaybackState State, Receiver? Receiver = null, string Message = "", StreamMetrics? Metrics = null, int? TargetLatency = null, PlaybackDiagnostics? Diagnostics = null, int StreamRate = 0, DeviceVolumeState? DeviceVolume = null, bool MediaStarted = false)
 {
     public bool IsActive => State is PlaybackState.Connecting or PlaybackState.Streaming or PlaybackState.Standby or PlaybackState.Pairing;
 }
@@ -27,6 +27,7 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
     private Receiver? _receiver;
     private long _generation;
     private bool _muted;
+    private bool _mediaStarted;
     private double? _nativeGain;
     private readonly SemaphoreSlim _localMuteGate = new(1, 1);
     private LocalMuteGuard _localMuteGuard = new();
@@ -324,7 +325,7 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
                 SetConnection(connection, session);
                 try
                 {
-                    lock (_sync) { if (epoch == _generation) { _diagnostics = _diagnostics with { Transport = null, Warnings = [], Latency = null }; _warnings.Clear(); _deviceVolume = new(); _volumeEdit?.Cancel(); _snapshot = _snapshot with { Metrics = null }; } }
+                    lock (_sync) { if (epoch == _generation) { _diagnostics = _diagnostics with { Transport = null, Warnings = [], Latency = null }; _warnings.Clear(); _deviceVolume = new(); _volumeEdit?.Cancel(); _mediaStarted = false; _snapshot = _snapshot with { Metrics = null, MediaStarted = false }; } }
                     Publish(epoch, PlaybackState.Connecting, attempts > 0 ? L.Format("Reconnecting ({0}/{1})", attempts, settings.MaxReconnectAttempts) : L.Get("Connecting…"));
                     var deadline = DateTime.UtcNow + _timing.Connect;
                     await _equalizerWriter.WaitAsync(cancellation).ConfigureAwait(false);
@@ -411,6 +412,11 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
                             }
                             log?.Invoke($"Engine warning: {item}");
                             var current = Snapshot; Publish(epoch, current.State, current.Message);
+                        }
+                        else if (kind == "first_send" && startedAt != 0 && item.Integer("first_send_qpc_ns") > 0)
+                        {
+                            lock (_sync) { if (epoch != _generation) continue; _mediaStarted = true; }
+                            PublishCurrent(epoch);
                         }
                         else if (kind == "transport_metrics" && startedAt != 0)
                         {
@@ -561,7 +567,8 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
         lock (_sync)
         {
             if (epoch != _generation) return;
-            snapshot = new(state, _receiver, message, metrics ?? _snapshot.Metrics, _receiver is null ? null : factory is NativeEngineHost ? _diagnostics.Latency?.AppliedMs : Latency(_receiver, _settings), _diagnostics, int.TryParse(_settings.StreamSampleRate, out var streamRate) ? streamRate : 0, _deviceVolume);
+            snapshot = new(state, _receiver, message, metrics ?? _snapshot.Metrics, _receiver is null ? null : factory is NativeEngineHost ? _diagnostics.Latency?.AppliedMs : Latency(_receiver, _settings), _diagnostics, int.TryParse(_settings.StreamSampleRate, out var streamRate) ? streamRate : 0, _deviceVolume,
+                state is PlaybackState.Streaming or PlaybackState.Standby && _mediaStarted);
             _snapshot = snapshot;
         }
         Changed?.Invoke(snapshot);

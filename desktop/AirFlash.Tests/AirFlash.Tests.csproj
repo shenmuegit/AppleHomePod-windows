@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <IsTestProject>true</IsTestProject>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
@@ -13,16 +13,6 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <ProjectReference Include="../AirFlash.Core/AirFlash.Core.csproj"/>
-    <Compile Include="../AirFlash.App/Ui/VolumeSliderMath.cs" Link="VolumeSliderMath.cs"/>
-    <Compile Include="../AirFlash.App/Services/TrayRegistration.cs" Link="TrayRegistration.cs"/>
-    <Compile Include="../AirFlash.App/Services/WindowsDiscovery.cs" Link="WindowsDiscovery.cs"/>
-    <Compile Include="../AirFlash.App/Services/WindowsDnsSdApi.cs" Link="WindowsDnsSdApi.cs"/>
-    <Compile Include="../AirFlash.App/Services/ManagedDnsSdApi.cs" Link="ManagedDnsSdApi.cs"/>
-    <Compile Include="../AirFlash.App/Services/MdnsPacket.cs" Link="MdnsPacket.cs"/>
-    <Compile Include="../AirFlash.App/Services/WindowsCapabilities.cs" Link="WindowsCapabilities.cs"/>
-    <Compile Include="../AirFlash.App/Services/AppPaths.cs" Link="AppPaths.cs"/>
-    <Compile Include="../AirFlash.App/Services/SingleInstance.cs" Link="SingleInstance.cs"/>
-    <Compile Include="../AirFlash.App/Services/NetworkAdapterCatalog.cs" Link="NetworkAdapterCatalog.cs"/>
-    <Compile Include="../AirFlash.App/Verification/NativeSetupAudioLifetime.cs" Link="NativeSetupAudioLifetime.cs"/>
+    <ProjectReference Include="../AirFlash.App/AirFlash.App.csproj"/>
   </ItemGroup>
 </Project>

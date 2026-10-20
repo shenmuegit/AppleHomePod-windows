@@ -8,14 +8,11 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 Set-Location -LiteralPath $repoRoot
 
-function Resolve-RepoPath([string]$Path) {
-    if ([IO.Path]::IsPathRooted($Path)) { return [IO.Path]::GetFullPath($Path) }
-    return [IO.Path]::GetFullPath((Join-Path $repoRoot $Path))
-}
-
-$publishRoot = Resolve-RepoPath $PublishPath
-$outputRoot = Resolve-RepoPath $OutputPath
-$appExe = Join-Path $publishRoot 'AirFlash.exe'
+. (Join-Path $PSScriptRoot 'release-common.ps1')
+$publishRoot = Resolve-AirFlashReleasePath $repoRoot $PublishPath
+$outputRoot = Resolve-AirFlashReleasePath $repoRoot $OutputPath
+if (Test-Path -LiteralPath $outputRoot) { throw "Installer delivery already exists: $outputRoot" }
+$appExe = Resolve-AirFlashReleasePath $repoRoot (Join-Path $publishRoot 'AirFlash.exe')
 if (-not (Test-Path -LiteralPath $appExe -PathType Leaf)) { throw "Published application missing: $appExe" }
 
 $fileVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($appExe)
@@ -29,7 +26,7 @@ if ($fileVersion.FileMajorPart -gt 255 -or $fileVersion.FileMinorPart -gt 255 -o
 $dotnetContext = Get-AirFlashDotnetContext -RepoRoot $repoRoot -DotnetPath $DotnetPath
 $null = Assert-AirFlashDotnetSdk -Context $dotnetContext
 
-New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $outputRoot | Out-Null
 $outputWithSlash = $outputRoot.TrimEnd('\') + '\'
 $arguments = @(
     '-c', 'Release',

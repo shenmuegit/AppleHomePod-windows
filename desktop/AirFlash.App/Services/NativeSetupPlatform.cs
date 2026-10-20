@@ -1,4 +1,4 @@
-using AirFlash.App.Verification;
+using AirFlash.App.Services.Setup;
 using AirFlash.Core;
 using System.Diagnostics;
 using System.Text.Json;
@@ -19,6 +19,9 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
     private byte[]? _previewReceipt;
     private NativeEngineHost? _host;
     private SessionController? _session;
+    private NativeOutputController? _previewController;
+    private long? _transportGeneration;
+    private Guid? _transportInstanceId;
     private CancellationTokenSource? _previewLifetime;
     private Task? _previewWork;
     private NativeBinding? _baseline, _provisional;
@@ -263,18 +266,7 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
             _confirmation = new NativeSetupAudioPlayer(_provisional ?? throw new InvalidOperationException("The measured calibration is unavailable."),
                 () => monitor.IsBindingCurrent && monitor.Snapshot.Generation == generation);
             await _confirmation.Ready.WaitAsync(TimeSpan.FromSeconds(6), cancellation).ConfigureAwait(false);
-            if (_usingExistingAgent)
-            {
-                if (!await NativeAutostart.QueryReadyAsync(cancellation).ConfigureAwait(false)) throw new IOException("The native output background is unavailable.");
-                // shortcut: installed-agent readiness omits transport status; retain this first-route settle until its IPC reports it.
-                await Task.Delay(TimeSpan.FromSeconds(2), cancellation).ConfigureAwait(false);
-            }
-            else
-            {
-                await WaitForPreviewStreamAsync(cancellation).ConfigureAwait(false);
-                // Let the native controller apply the receiver's volume before the first finite confirmation clip.
-                await Task.Delay(500, cancellation).ConfigureAwait(false);
-            }
+            await WaitForPreviewStreamAsync(cancellation).ConfigureAwait(false);
             await WaitForCurrentBindingAsync(monitor, cancellation).ConfigureAwait(false);
         }
         catch (OperationCanceledException error) when (!cancellation.IsCancellationRequested)
@@ -292,7 +284,7 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
             if (!monitor.IsBindingCurrent || monitor.Snapshot.Generation != _previewGeneration)
                 throw new IOException("The monitored output changed before confirmation playback. Reconnect before continuing.");
             _ = CurrentPreviewReceiver();
-            if (!_usingExistingAgent) await WaitForPreviewStreamAsync(cancellation).ConfigureAwait(false);
+            await WaitForPreviewStreamAsync(cancellation).ConfigureAwait(false);
             await _confirmation.PlayAsync(cancellation).WaitAsync(TimeSpan.FromSeconds(6), cancellation).ConfigureAwait(false);
             AppPaths.Log($"Setup confirmation enqueue_to_provider_ms={_confirmation.LastDispatchDelay?.TotalMilliseconds:F1}; clip_ms=1500; acoustic_latency=unmeasured");
             if (!_usingExistingAgent)
@@ -330,13 +322,14 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
 
     private async Task WaitForPreviewStreamAsync(CancellationToken cancellation)
     {
-        using var ready = CancellationTokenSource.CreateLinkedTokenSource(cancellation); ready.CancelAfter(TimeSpan.FromSeconds(12));
-        while (_session?.Snapshot.State != PlaybackState.Streaming)
-        {
+        var receiver = CurrentPreviewReceiver();
+        var status = await NativeAgentStatus.WaitForTransportAsync(async token => {
+            if (_usingExistingAgent) return await NativeAutostart.QueryStatusAsync(token).ConfigureAwait(false);
             if (_previewWork?.IsCompleted == true) { await _previewWork.ConfigureAwait(false); throw new IOException("The native output preview stopped."); }
-            if (_session?.Snapshot.State == PlaybackState.Error) throw new IOException(_session.Snapshot.Message);
-            await Task.Delay(50, ready.Token).ConfigureAwait(false);
-        }
+            return _previewController?.Status;
+        }, receiver.Id, cancellation, _transportGeneration, expectedInstanceId: _transportInstanceId).ConfigureAwait(false);
+        _transportGeneration ??= status.Generation;
+        _transportInstanceId ??= status.InstanceId;
     }
 
     public async Task<bool> TryAdaptMusicAsync(CancellationToken cancellation)
@@ -479,8 +472,8 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
         _session = new SessionController(_host, _monitor, AppPaths.Log);
         _previewReceiver = receiver;
         _previewLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        _previewWork = new NativeOutputController(provisional, _monitor, _host, _session, log: AppPaths.Log)
-            .RunAsync(id => Volatile.Read(ref _receivers).SingleOrDefault(value => ReceiverIdentity.Normalize(value.Id) == id), _previewLifetime.Token);
+        _previewController = new NativeOutputController(provisional, _monitor, _host, _session, log: AppPaths.Log);
+        _previewWork = _previewController.RunAsync(id => Volatile.Read(ref _receivers).SingleOrDefault(value => ReceiverIdentity.Normalize(value.Id) == id), _previewLifetime.Token);
     }
 
     private async Task StopOwnedAgentAsync(CancellationToken cancellation)
@@ -526,7 +519,7 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
         if (_session is not null) await Cleanup(async () => await _session.DisposeAsync().ConfigureAwait(false)).ConfigureAwait(false);
         if (_host is not null) await Cleanup(async () => await _host.DisposeAsync().ConfigureAwait(false)).ConfigureAwait(false);
         if (_monitor is not null) await Cleanup(async () => await _monitor.DisposeAsync().ConfigureAwait(false)).ConfigureAwait(false);
-        _previewLifetime?.Dispose(); _previewLifetime = null; _previewWork = null; _session = null; _host = null; _monitor = null;
+        _previewLifetime?.Dispose(); _previewLifetime = null; _previewWork = null; _previewController = null; _transportGeneration = null; _transportInstanceId = null; _session = null; _host = null; _monitor = null;
         if (errors.Count == 0 && discardUnconfirmed && _newBinding && _baseline is { Calibration: null } temporary)
         {
             try { _store.DiscardUnconfirmed(temporary); }

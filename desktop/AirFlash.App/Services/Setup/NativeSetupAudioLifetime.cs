@@ -1,4 +1,4 @@
-namespace AirFlash.App.Verification;
+namespace AirFlash.App.Services.Setup;
 
 internal sealed class NativeSetupAudioLifetime(Action<Exception> failed)
 {

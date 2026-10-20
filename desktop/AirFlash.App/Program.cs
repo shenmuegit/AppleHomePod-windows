@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using AirFlash.App.Services;
+using AirFlash.App.Services.Setup;
 using AirFlash.App.Verification;
 using AirFlash.Core;
 namespace AirFlash.App;
@@ -8,7 +9,8 @@ internal static class Program
 {
     internal static bool IsDiagnostic(string[] args) => args.Any(a => a.EndsWith("-check", StringComparison.Ordinal)
         || a is "--ui-smoke" or "--tray-smoke" or "--ui-perf" or "--discovery-perf" or "--setup-smoke")
-        || NativeOutputCheck.IsCommand(args) || NativeVolumeCalibration.IsSourceCommand(args) || NativeSetupAudioSource.IsSourceCommand(args);
+        || NativeOutputCheck.IsCommand(args) || NativeOutputMaintenance.IsCommand(args)
+        || NativeVolumeCalibration.IsSourceCommand(args) || NativeSetupAudioSource.IsSourceCommand(args);
     [STAThread]
     public static int Main(string[] args)
     {
@@ -20,7 +22,7 @@ internal static class Program
         try
         {
             if (args.Contains("--native-check") && args.Contains("--data-directory"))
-                AppPaths.DataDirectory = Path.GetFullPath(NativeOutputCheck.Argument(args, "--data-directory"));
+                AppPaths.DataDirectory = Path.GetFullPath(NativeOutputMaintenance.Argument(args, "--data-directory"));
             // The collector gets isolated logs, including failures before WPF initialization.
             if (args.Contains("--compat-check"))
             {
@@ -34,6 +36,11 @@ internal static class Program
                 return NativeVolumeCalibration.RunSourceAsync(args).GetAwaiter().GetResult();
             if (NativeSetupAudioSource.IsSourceCommand(args))
                 return NativeSetupAudioSource.RunSourceAsync(args).GetAwaiter().GetResult();
+            if (NativeOutputMaintenance.IsCommand(args))
+            {
+                stage = "native-setup";
+                return NativeOutputMaintenance.RunAsync(args).GetAwaiter().GetResult();
+            }
             if (NativeOutputCheck.IsCommand(args))
             {
                 stage = "native-setup";

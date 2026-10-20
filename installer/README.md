@@ -1,5 +1,7 @@
 # Installer
 
+> **Optional legacy MSI toolchain.** AppleHome's current native-output candidate uses the first-run guide in [README.md](../README.md) and [docs/first-run.md](../docs/first-run.md). This directory preserves the upstream MSI path; its checks do not qualify the complete automatic driver/HomePod setup. Current candidate packaging is documented in [docs/packaging.md](../docs/packaging.md).
+
 The installer is built with WiX Toolset 6.0.2.
 
 - `AirFlash-X.Y.Z.msi` is a standalone per-machine installer.

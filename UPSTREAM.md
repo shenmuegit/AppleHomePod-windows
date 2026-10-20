@@ -33,7 +33,13 @@ Build tools and caches are local/ignored or reused from an existing toolchain.
 The desktop deliverable is self-contained; those developer tools are not
 runtime requirements. No baseline test sent audio to a HomePod.
 
-## AppleHome adaptation and diagnostic status
+## Historical AppleHome adaptation and diagnostic snapshot
+
+The remaining sections preserve earlier implementation and qualification evidence.
+Their buffer targets, UI paths and test counts describe those snapshots, not the
+current release. Current behavior and hardware scope are documented in
+[README.md](README.md), [COMPATIBILITY.md](docs/COMPATIBILITY.md) and
+[VALIDATION.md](docs/VALIDATION.md).
 
 AppleHome now uses its own data/cache/credentials/tray/single-instance identity,
 requires an explicit user action before capture, bounds JSONL reads while reading,
@@ -55,7 +61,7 @@ choices across reconnect and persistence failures, reject invalid manual IDs,
 redact secret-label variants and free-form exported details, and reject stale
 discovery snapshots after interface changes. Each finding has RED-to-GREEN coverage.
 
-Current software checks: .NET 270 passed, Rust 53 passed / 2 explicitly ignored,
+Software checks in that snapshot: .NET 270 passed, Rust 53 passed / 2 explicitly ignored,
 Python 95 passed, Clippy and Ruff passed, UI smoke 577 checks passed. A separate
 real Windows endpoint harness passed 8 mute ownership/recovery checks without
 capturing audio or changing the volume scalar; the locked-journal failure path

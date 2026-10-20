@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using AirFlash.App.Verification;
 using AirFlash.Core;
 namespace AirFlash.App.Services;
 
@@ -17,7 +16,13 @@ internal static class NativeOutputAgent
         if (!instance.IsOwner) return;
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         var ready = false;
-        instance.Listen(command => { if (command == 2) { Volatile.Write(ref ready, false); lifetime.Cancel(); } }, () => Volatile.Read(ref ready));
+        NativeOutputController? controller = null;
+        instance.Listen(command => { if (command == 2) { Volatile.Write(ref ready, false); lifetime.Cancel(); } },
+            () => Volatile.Read(ref ready), () => {
+                var captureReady = Volatile.Read(ref ready);
+                var status = Volatile.Read(ref controller)?.Status ?? new NativeAgentStatus(1);
+                return captureReady ? status : status with { CaptureReady = false, GateOpen = false, MediaStarted = false };
+            });
         try
         {
             var binding = await NativeAutostart.ReadQualifiedBindingAsync(lifetime.Token).ConfigureAwait(false);
@@ -40,9 +45,10 @@ internal static class NativeOutputAgent
                 if (!discoveryStarted) { discoveryStarted = true; discovery.Start(); }
                 return Volatile.Read(ref receivers).SingleOrDefault(r => ReceiverIdentity.Normalize(r.Id) == id);
             }
+            controller = new NativeOutputController(binding, monitor, host, session, log: AppPaths.Log);
             Volatile.Write(ref ready, true);
             AppPaths.Log($"Native agent capture_ready cold_start_ms={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F0}; daily_windows=0 daily_tray=0");
-            await new NativeOutputController(binding, monitor, host, session, log: AppPaths.Log).RunAsync(Resolve, lifetime.Token).ConfigureAwait(false);
+            await controller.RunAsync(Resolve, lifetime.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         finally { Volatile.Write(ref ready, false); }

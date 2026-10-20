@@ -25,6 +25,7 @@
   <ItemGroup>
     <ProjectReference Include="../AirFlash.Core/AirFlash.Core.csproj"/>
     <PackageReference Include="NAudio" Version="2.2.1"/>
+    <InternalsVisibleTo Include="AirFlash.Tests"/>
   </ItemGroup>
   <ItemGroup>
     <Resource Include="Assets/PayQrcode.png"/>

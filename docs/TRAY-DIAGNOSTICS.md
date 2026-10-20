@@ -21,7 +21,7 @@ First check the taskbar's overflow menu: an icon placed there is registered, eve
 
 ## Isolated Windows desktop verification
 
-Run `pwsh scripts/test-tray.ps1` against the freshly published `dist/AirFlash.exe`. The script copies the application to two new artifact directories, uses one fresh verification GUID, and runs English/Chinese tray checks. It also exercises native HWND/icon-ID identity explicitly, regardless of whether that Windows version rejects a directory move. Add `-RequirePathRejection` only when testing an environment expected to reproduce the documented GUID restriction. Reports distinguish observed rejection from explicitly selected window identity.
+For the retained legacy tray, run `pwsh scripts/test-tray.ps1 -Executable <explicit-published-EXE>`. The current native-output background has no daily tray. The script copies the selected application to two new artifact directories, uses one fresh verification GUID, and runs English/Chinese tray checks. It also exercises native HWND/icon-ID identity explicitly, regardless of whether that Windows version rejects a directory move. Add `-RequirePathRejection` only when testing an environment expected to reproduce the documented GUID restriction. Reports distinguish observed rejection from explicitly selected window identity.
 
 The underlying `--tray-smoke` mode verifies real registration/geometry, callbacks, menu actions, deletion and language-window reconstruction with simulated audio, discovery, autostart and engine services. `--tray-guid` must use a test GUID; the production GUID is rejected. `--tray-window-id` selects native window identity for verification only. Full `--ui-smoke` includes these tray checks and always isolates its GUID.
 

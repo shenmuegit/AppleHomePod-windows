@@ -6,6 +6,45 @@ namespace AirFlash.Tests;
 public sealed class NativeOutputControllerTests
 {
     [Fact]
+    public async Task ReceiverRefreshInvalidatesReadyBeforeAwaitingSessionRestart()
+    {
+        await using var f = await Fixture.Create(); f.Monitor.Select(true); f.Start();
+        await Until(() => f.Gates.Any(command => command.Params.Boolean("open") == true));
+        f.Wire.Event(f.StreamId, new { @event = "first_send", first_send_qpc_ns = 123 });
+        await Until(() => f.Controller.Status.TransportReady);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim(); var blocked = 0;
+        void Restarting(SessionSnapshot snapshot)
+        {
+            if (snapshot.State == PlaybackState.Connecting && Interlocked.Exchange(ref blocked, 1) == 0)
+            { entered.TrySetResult(); release.Wait(TimeSpan.FromSeconds(5)); }
+        }
+        f.Session.Changed += Restarting;
+        try
+        {
+            f.Receiver = f.Receiver with { Address = "127.0.0.2" }; f.Time.Advance(TimeSpan.FromSeconds(1));
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.False(f.Controller.Status.TransportReady);
+        }
+        finally { release.Set(); f.Session.Changed -= Restarting; }
+    }
+
+    [Fact]
+    public async Task PublishedRouteStatusRequiresOpenGateAndCurrentFirstSend()
+    {
+        await using var f = await Fixture.Create(); f.Monitor.Select(true); f.Start();
+        await Until(() => f.Gates.Any(command => command.Params.Boolean("open") == true));
+        Assert.False(f.Controller.Status.TransportReady);
+        f.Wire.Event(f.StreamId, new { @event = "first_send", first_send_qpc_ns = 123 });
+        await Until(() => f.Controller.Status.TransportReady);
+        var generation = f.Controller.Status.Generation;
+        Assert.Equal(ReceiverIdentity.Normalize(f.Receiver.Id), f.Controller.Status.ReceiverId);
+        f.Monitor.Select(false);
+        await Until(() => f.Controller.Status.State == PlaybackState.Idle);
+        Assert.False(f.Controller.Status.TransportReady); Assert.True(f.Controller.Status.Generation > generation);
+    }
+
+    [Fact]
     public async Task MissingRecordAndBoundsUseModelCandidateWithoutInventingVerification()
     {
         await using var f = await Fixture.Create(bufferMs: null);

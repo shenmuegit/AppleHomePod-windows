@@ -1,4 +1,4 @@
-using AirFlash.App.Verification;
+using AirFlash.App.Services.Setup;
 using AirFlash.Core;
 using Xunit;
 namespace AirFlash.Tests;

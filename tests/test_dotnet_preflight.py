@@ -1,5 +1,6 @@
 """Run the real build entry points with fake hosts and disposable outputs."""
 
+import hashlib
 import json
 import os
 import shutil
@@ -22,6 +23,9 @@ $global:airflashTestIntegration = $env:AIRFLASH_PREFLIGHT_INTEGRATION
 $global:PSNativeCommandUseErrorActionPreference = [bool]$global:airflashTestCase.native_errors
 function global:git {
     $global:LASTEXITCODE = 0
+    if (($args -join ' ') -match 'rev-parse HEAD') {
+        return '0123456789abcdef0123456789abcdef01234567'
+    }
     if (($args -join ' ') -notmatch 'rev-parse.*--git-common-dir') {
         throw "Unexpected git operation: $args"
     }
@@ -75,6 +79,15 @@ foreach ($property in $global:airflashTestCase.hosts.PSObject.Properties) {
                 $publishRoot = $arguments[$outputIndex]
                 New-Item -ItemType Directory -Path $publishRoot -Force | Out-Null
                 Set-Content -LiteralPath (Join-Path $publishRoot 'AirFlash.exe') 'fake application'
+                $auditArgument = $arguments | Where-Object {
+                    $_.StartsWith('-p:CompatibilityArtifacts=')
+                }
+                if ($auditArgument -and -not $hostCase.no_publish_audit) {
+                    $auditRoot = $auditArgument.Substring('-p:CompatibilityArtifacts='.Length)
+                    New-Item -ItemType Directory -Path $auditRoot -Force | Out-Null
+                    $auditFile = Join-Path $auditRoot 'bundle-audit.json'
+                    Set-Content -LiteralPath $auditFile '{"ok":true}'
+                }
             }
             if ($hostCase.installer_output -and $arguments[0] -eq 'build') {
                 $versionArgument = $arguments | Where-Object { $_.StartsWith('-p:ProductVersion=') }
@@ -94,7 +107,63 @@ function global:Remove-Item {
     [CmdletBinding(SupportsShouldProcess)]
     param([string]$LiteralPath, [switch]$Recurse, [switch]$Force)
     $global:airflashTestEvents.Add([pscustomobject]@{ operation = 'cleanup'; path = $LiteralPath })
-    # A fixture spy deliberately keeps even temporary output sentinels intact.
+    $parameters = @{ LiteralPath = $LiteralPath; Recurse = $Recurse; Force = $Force }
+    Microsoft.PowerShell.Management\Remove-Item @parameters
+}
+if ($global:airflashTestCase.installer_admission) {
+    function global:Get-FileHash {
+        param($LiteralPath, $Path)
+        $target = if ($LiteralPath) { $LiteralPath } else { $Path }
+        $global:airflashTestEvents.Add([pscustomobject]@{ operation = 'hash'; path = $target })
+        throw 'Fixture stopped before installer work.'
+    }
+}
+if ($global:airflashTestCase.no_explorer) {
+    function global:Get-Process {
+        param([Parameter(Position=0)]$Name, $Id)
+        if ($Id) { [pscustomobject]@{ SessionId = 1 } }
+    }
+}
+if ($global:airflashTestCase.verification) {
+    Set-Location -LiteralPath $global:airflashTestRoot
+    $global:airflashTestRecord = [pscustomobject]@{}
+    $global:airflashTestRecord | Add-Member ScriptMethod StringData {
+        param($index)
+        $global:airflashTestCase.verify_version
+    }
+    $global:airflashTestView = [pscustomobject]@{}
+    $global:airflashTestView | Add-Member ScriptMethod Execute {}
+    $global:airflashTestView | Add-Member ScriptMethod Fetch { $global:airflashTestRecord }
+    $global:airflashTestView | Add-Member ScriptMethod Close {}
+    $global:airflashTestDatabase = [pscustomobject]@{}
+    $global:airflashTestDatabase | Add-Member ScriptMethod OpenView {
+        param($query)
+        $global:airflashTestView
+    }
+    function global:New-Object {
+        param($ComObject)
+        if ($ComObject -ne 'WindowsInstaller.Installer') { throw 'Unexpected COM request' }
+        $installer = [pscustomobject]@{}
+        $installer | Add-Member ScriptMethod OpenDatabase {
+            param($path, $mode)
+            $global:airflashTestDatabase
+        }
+        $installer
+    }
+    function global:Start-Process {
+        param($FilePath, $ArgumentList, [switch]$PassThru, [switch]$Wait, $WindowStyle)
+        $output = $ArgumentList[2].Trim('"')
+        $exitCode = 1
+        if (-not (Test-Path -LiteralPath $output -PathType Container)) {
+            @{ ok = $true; version = $global:airflashTestCase.verify_version } |
+                ConvertTo-Json | Set-Content -LiteralPath $output
+            $exitCode = 0
+        }
+        $process = [pscustomobject]@{ ExitCode = $exitCode }
+        $process | Add-Member ScriptMethod WaitForExit { param($timeout); $true }
+        $process | Add-Member ScriptMethod Kill {}
+        $process
+    }
 }
 $capturedOutput = @(); $errorMessage = $null; $capturedExit = $null; $resolved = $null
 try {
@@ -152,6 +221,13 @@ $global:airflashTestEvents.Add([pscustomobject]@{
     operation = 'installer'; path = $DotnetPath
 })
 throw 'Fixture stopped after installer admission.'
+"""
+
+INSTALLER_SUCCESS_STUB = r"""
+param($PublishPath, $OutputPath, $DotnetPath)
+New-Item -ItemType Directory -Path $OutputPath | Out-Null
+Set-Content -LiteralPath (Join-Path $OutputPath 'AirFlash-0.3.0.msi') 'fake MSI'
+$global:LASTEXITCODE = 0
 """
 
 
@@ -544,8 +620,6 @@ def test_build_keeps_the_preflight_host_when_checkout_host_appears_later(fixture
     assert operations == [
         "host",
         "reserve",
-        "cleanup",
-        "cleanup",
         "native",
         "host",
         "command",
@@ -569,7 +643,165 @@ def test_later_native_failure_prevents_publish_and_retains_its_build_error(fixtu
     assert [event["operation"] for event in result["events"]] == [
         "host",
         "reserve",
-        "cleanup",
-        "cleanup",
         "native",
     ]
+
+
+def test_failed_build_preserves_all_historical_outputs(fixture):
+    fixture.host("checkout")
+    result = fixture.run("build.ps1", native_exit=61)
+    assert result["error"] == "Native build failed"
+    for name in ("build", "dist"):
+        assert (fixture.root / name / "preserve.txt").read_text() == "keep fixture output"
+
+
+def test_build_cannot_promote_with_only_a_stale_shared_audit(fixture):
+    fixture.host("checkout", publish_output=True, no_publish_audit=True)
+    (fixture.root / "scripts" / "build-installer.ps1").write_text(
+        INSTALLER_SUCCESS_STUB, encoding="utf-8"
+    )
+    audit = fixture.root / "artifacts/compatibility/bundle-audit.json"
+    audit.parent.mkdir(parents=True, exist_ok=True)
+    audit.write_text(json.dumps({"ok": True}), encoding="utf-8")
+    result = fixture.run("build.ps1")
+    assert result["error"] == "Missing bundle compatibility audit."
+    assert not (fixture.root / "dist/legacy-msi").exists()
+
+
+def test_successful_build_promotes_new_delivery_without_replacing_history(fixture):
+    fixture.host("checkout", publish_output=True)
+    (fixture.root / "scripts" / "build-installer.ps1").write_text(
+        INSTALLER_SUCCESS_STUB, encoding="utf-8"
+    )
+    audit = fixture.root / "artifacts/compatibility/bundle-audit.json"
+    audit.parent.mkdir(parents=True, exist_ok=True)
+    audit.write_text(json.dumps({"ok": True}), encoding="utf-8")
+    result = fixture.run("build.ps1")
+    assert result["error"] is None
+    delivery = (
+        fixture.root / "dist/legacy-msi/0.3.0-0123456789abcdef0123456789abcdef01234567"
+    )
+    assert (delivery / "AirFlash.exe").is_file()
+    assert (delivery / "AirFlash-0.3.0.msi").is_file()
+    for name in ("build", "dist"):
+        assert (fixture.root / name / "preserve.txt").read_text() == "keep fixture output"
+    before = {path.name: path.read_bytes() for path in delivery.iterdir()}
+    result = fixture.run("build.ps1")
+    assert "already exists" in result["error"]
+    assert {path.name: path.read_bytes() for path in delivery.iterdir()} == before
+
+
+def test_installer_rejects_external_output_before_compilation(fixture):
+    fixture.host("checkout")
+    publish, _ = fixture.installer()
+    external = fixture.root.parent / "outside checkout"
+    result = fixture.run(
+        "build-installer.ps1", parameters={"PublishPath": str(publish), "OutputPath": str(external)}
+    )
+    assert "outside" in result["error"].lower()
+    assert not external.exists()
+    assert not any(call["arguments"][0] == "build" for call in host_calls(result))
+
+
+def test_installer_refuses_to_replace_an_existing_delivery(fixture):
+    fixture.host("checkout", installer_output=True)
+    publish, output = fixture.installer()
+    output.mkdir()
+    sentinel = output / "preserve.msi"
+    sentinel.write_bytes(b"historical MSI")
+    result = fixture.run(
+        "build-installer.ps1", parameters={"PublishPath": str(publish), "OutputPath": str(output)}
+    )
+    assert "already exists" in result["error"]
+    assert sentinel.read_bytes() == b"historical MSI"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows file symlink regression")
+def test_installer_rejects_an_exe_leaf_link_before_compilation(fixture):
+    fixture.host("checkout", installer_output=True)
+    publish = fixture.root / "published app"
+    publish.mkdir()
+    external = fixture.root.parent / "outside application.exe"
+    shutil.copyfile(sys.executable, external)
+    (publish / "AirFlash.exe").symlink_to(external)
+    output = fixture.root / "new installer output"
+    result = fixture.run(
+        "build-installer.ps1", parameters={"PublishPath": str(publish), "OutputPath": str(output)}
+    )
+    assert "linked" in (result["error"] or "")
+    assert not output.exists()
+    assert not any(call["arguments"][0] == "build" for call in host_calls(result))
+
+
+def test_installer_lifecycle_consumer_uses_the_explicit_delivery(fixture):
+    delivery, _ = fixture.installer()
+    (delivery / "AirFlash-0.3.0.msi").write_bytes(b"new delivery")
+    (fixture.root / "dist/AirFlash-0.2.0.msi").write_bytes(b"historical delivery")
+    result = fixture.run(
+        "test-installer.ps1", parameters={"Directory": str(delivery)},
+        installer_admission=True,
+        environment={"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"},
+    )
+    assert result["error"] == "Fixture stopped before installer work."
+    hashes = [event for event in result["events"] if event["operation"] == "hash"]
+    assert len(hashes) == 1
+    assert Path(hashes[0]["path"]) == delivery / "AirFlash.exe"
+
+
+def test_tray_consumer_rejects_external_output_without_running_an_exe(fixture):
+    delivery, _ = fixture.installer()
+    external = fixture.root.parent / "external tray output"
+    result = fixture.run(
+        "test-tray.ps1",
+        parameters={"Executable": str(delivery / "AirFlash.exe"), "Directory": str(external)},
+        no_explorer=True,
+    )
+    assert "outside" in result["error"]
+    assert not external.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows directory junction regression")
+def test_build_rejects_linked_artifacts_before_mutation(fixture):
+    fixture.host("integration")
+    target = fixture.root.parent / "linked artifacts target"
+    target.mkdir()
+    subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(fixture.root / "artifacts"), str(target)],
+        capture_output=True, check=True,
+    )
+    result = fixture.run("build.ps1")
+    assert "linked" in result["error"]
+    assert side_effects(result) == []
+    assert list(target.iterdir()) == []
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows version-resource metadata fixture")
+def test_verification_keeps_the_immutable_delivery_unchanged(fixture):
+    delivery, _ = fixture.installer()
+    version = subprocess.check_output(
+        [PWSH, "-NoProfile", "-NonInteractive", "-Command",
+         "$info = [Diagnostics.FileVersionInfo]::GetVersionInfo($env:AIRFLASH_TEST_EXE); "
+         "'{0}.{1}.{2}' -f $info.FileMajorPart,$info.FileMinorPart,$info.FileBuildPart"],
+        env={**os.environ, "AIRFLASH_TEST_EXE": str(delivery / "AirFlash.exe")},
+        text=True,
+    ).strip()
+    (delivery / f"AirFlash-{version}.msi").write_bytes(b"fixture MSI, never installed")
+    exe_hash = hashlib.sha256((delivery / "AirFlash.exe").read_bytes()).hexdigest()
+    audit_data = json.dumps({
+        "ok": True,
+        "published_exe_sha256": exe_hash,
+    })
+    (delivery / "bundle-audit.json").write_text(audit_data, encoding="utf-8")
+    compatibility = fixture.root / "artifacts/compatibility"
+    compatibility.mkdir(parents=True)
+    (compatibility / "bundle-audit.json").write_text(audit_data, encoding="utf-8")
+    before = {path.name: path.read_bytes() for path in delivery.iterdir()}
+    result = fixture.run(
+        "verify-release.ps1", parameters={"Version": version, "Directory": str(delivery)},
+        verification=True, verify_version=version,
+    )
+    assert result["error"] is None
+    assert {path.name: path.read_bytes() for path in delivery.iterdir()} == before
+    reports = list((fixture.root / "artifacts/verify-release").glob("*/SHA256SUMS.txt"))
+    assert len(reports) == 1
+    assert "AirFlash.exe" in reports[0].read_text()

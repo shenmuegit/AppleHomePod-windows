@@ -61,6 +61,7 @@ AGENTS.md
 
 # AppleHome local tools
 .runtime/
+.worktrees/
 
 # Design working data; durable product and token documentation stays tracked.
 .impeccable/questions/

@@ -1,4 +1,9 @@
 {
+  "The AppleHome background did not provide connection status. Reconnect, or update AppleHome if the installed background is an older version.": "无法读取 AppleHome 的连接状态。请重新连接；如果仍在使用旧版，请先更新 AppleHome。",
+  "The HomePod target changed during audio preparation. Reconnect before continuing.": "准备播放时 HomePod 已改变。请重新连接后继续。",
+  "The AppleHome background restarted during audio preparation. Reconnect before continuing.": "准备播放时 AppleHome 已重新启动连接。请重新连接后继续。",
+  "The HomePod route changed during audio preparation. Reconnect before continuing.": "音频连接已变化。请重新连接后继续。",
+  "The HomePod transport did not become ready before the audio preparation deadline.": "HomePod 的音频连接未能及时就绪。请重新连接后重试。",
   "No receivers found": "未找到接收器",
   "Discovery paused. Showing previous results.": "已暂停发现，显示上次结果。",
   "Check for updates": "检查更新",

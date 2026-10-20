@@ -1,17 +1,15 @@
 # Opt-in verification on a Windows desktop, using only isolated GUIDs and mock services.
-param([string]$Executable = 'dist/AirFlash.exe', [string]$Directory = 'artifacts/tray-test', [switch]$RequirePathRejection)
+param([Parameter(Mandatory)][string]$Executable, [string]$Directory = 'artifacts/tray-test', [switch]$RequirePathRejection)
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-function Resolve-RepoPath([string]$Path) {
-    if ([IO.Path]::IsPathRooted($Path)) { return [IO.Path]::GetFullPath($Path) }
-    return [IO.Path]::GetFullPath((Join-Path $root $Path))
-}
-$source = (Resolve-Path -LiteralPath (Resolve-RepoPath $Executable)).Path
+. (Join-Path $PSScriptRoot 'release-common.ps1')
+$source = Resolve-AirFlashReleasePath $root $Executable
+if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Application missing: $source" }
+$runDirectory = Resolve-AirFlashReleasePath $root (Join-Path $Directory ([Guid]::NewGuid().ToString('N')))
 $session = (Get-Process -Id $PID).SessionId
 if (-not (Get-Process explorer -ErrorAction SilentlyContinue | Where-Object SessionId -EQ $session)) {
     throw 'Tray verification requires an interactive Windows desktop with Explorer.'
 }
-$runDirectory = Join-Path (Resolve-RepoPath $Directory) ([Guid]::NewGuid().ToString('N'))
 $guid = [Guid]::NewGuid().ToString()
 $sourceDirectory = Split-Path $source -Parent
 foreach ($name in @('a', 'b')) {
@@ -19,6 +17,9 @@ foreach ($name in @('a', 'b')) {
     New-Item -ItemType Directory -Path $destination -Force | Out-Null
     if (Test-Path -LiteralPath (Join-Path $sourceDirectory 'AirFlash.dll')) {
         # Development builds need their runtime files; published single-file builds need only the EXE.
+        foreach ($item in Get-ChildItem -LiteralPath $sourceDirectory -Recurse -Force) {
+            $null = Resolve-AirFlashReleasePath $root $item.FullName
+        }
         Get-ChildItem -LiteralPath $sourceDirectory | Copy-Item -Destination $destination -Recurse
     } else { Copy-Item -LiteralPath $source -Destination (Join-Path $destination 'AirFlash.exe') }
 }

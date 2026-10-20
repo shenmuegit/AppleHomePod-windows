@@ -2,7 +2,7 @@ using AirFlash.App.Services;
 using AirFlash.Core;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
-namespace AirFlash.App.Verification;
+namespace AirFlash.App.Services.Setup;
 
 internal static class NativeSetupAudioSource
 {

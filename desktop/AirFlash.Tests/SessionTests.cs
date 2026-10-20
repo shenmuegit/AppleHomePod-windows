@@ -8,6 +8,33 @@ namespace AirFlash.Tests;
 public sealed class SessionTests
 {
     [Fact]
+    public async Task OnlyCurrentFirstSendMarksMediaStartedAndRestartClearsIt()
+    {
+        var first = new FakeConnection(); var second = new FakeConnection();
+        await using var controller = new SessionController(new FakeFactory(first, second), new FakeAudio(), timing: Fast);
+        await controller.StartAsync(Pod(), Settings()); await Until(() => controller.Snapshot.State == PlaybackState.Streaming);
+        Assert.False(controller.Snapshot.MediaStarted);
+        first.EmitData(new { @event = "first_send", first_send_qpc_ns = 123 }, "wrong-session");
+        first.EmitData(new { @event = "first_send", first_send_qpc_ns = 0 });
+        first.EmitData(new { @event = "transport_metrics", session_uptime_ms = 123 });
+        await Until(() => controller.Snapshot.Diagnostics?.Transport?.SessionUptimeMs == 123);
+        Assert.False(controller.Snapshot.MediaStarted);
+        first.EmitData(new { @event = "first_send", first_send_qpc_ns = 456 });
+        await Until(() => controller.Snapshot.MediaStarted);
+        var oldSession = first.Session;
+        await controller.StartAsync(Pod(), Settings()); await Until(() => controller.Snapshot.State == PlaybackState.Streaming);
+        Assert.False(controller.Snapshot.MediaStarted);
+        second.EmitData(new { @event = "first_send", first_send_qpc_ns = 789 }, oldSession);
+        second.EmitData(new { @event = "transport_metrics", session_uptime_ms = 321 });
+        await Until(() => controller.Snapshot.Diagnostics?.Transport?.SessionUptimeMs == 321);
+        Assert.False(controller.Snapshot.MediaStarted);
+        second.EmitData(new { @event = "first_send", first_send_qpc_ns = 1000 });
+        await Until(() => controller.Snapshot.MediaStarted);
+        await controller.StopAsync();
+        Assert.False(controller.Snapshot.MediaStarted);
+    }
+
+    [Fact]
     public async Task NativeGainIsValidatedRetainedAndReplacesLegacyMasterGain()
     {
         var first = new FakeConnection(); var second = new FakeConnection();

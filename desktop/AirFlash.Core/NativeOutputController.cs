@@ -52,6 +52,9 @@ public sealed class NativeOutputController
     private double _devicePcmGain = 1;
     private double? _lastGain;
     private bool _active, _begun, _gateOpen, _clearPending, _externalActive;
+    private NativeAgentStatus _status = new(1);
+    private readonly Guid _instanceId = Guid.NewGuid();
+    public NativeAgentStatus Status => Volatile.Read(ref _status);
     private int _run;
     public Guid OwnVolumeContext { get; } = Guid.NewGuid();
     public NativeOutputController(NativeBinding binding, INativeOutputMonitor monitor, NativeEngineHost host, SessionController session,
@@ -59,6 +62,7 @@ public sealed class NativeOutputController
     {
         if (NativeBindingPolicy.PlaybackQualification(binding) is { } invalid) throw new InvalidDataException(invalid);
         _binding = binding; _monitor = monitor; _host = host; _session = session; _time = timeProvider ?? TimeProvider.System; _log = log;
+        _status = new(1, ReceiverId: binding.ReceiverId, InstanceId: _instanceId);
     }
     private void Enqueue(Update value)
     {
@@ -104,7 +108,9 @@ public sealed class NativeOutputController
                     if (stream.State == PlaybackState.Error) _errorAt ??= _time.GetTimestamp();
                     else _errorAt = null;
                 }
+                PublishStatus();
                 await ReconcileAsync(resolveReceiver, cancellation).ConfigureAwait(false);
+                PublishStatus();
             }
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
@@ -112,7 +118,17 @@ public sealed class NativeOutputController
         {
             _monitor.Changed -= WindowsChanged; _session.Changed -= SessionChanged; _events.Writer.TryComplete();
             await StopRouteAsync().ConfigureAwait(false);
+            PublishStatus(false);
         }
+    }
+    private void PublishStatus(bool running = true)
+    {
+        var stream = IsCurrentStream() ? _stream : null;
+        var error = _active && stream?.State == PlaybackState.Error ? DiagnosticText.Protect(stream.Message) : null;
+        if (error?.Length > 1024) error = error[..1024];
+        Volatile.Write(ref _status, new(1, running && _windows?.BindingValid == true, _binding.ReceiverId, _routeEpoch,
+            _receiver?.Online == true, _active ? stream?.State ?? PlaybackState.Connecting : PlaybackState.Idle,
+            _active && stream is not null && _gateOpen, _active && stream?.MediaStarted == true, error, _instanceId));
     }
     private void AcceptSnapshot(NativeOutputSnapshot value)
     {
@@ -178,6 +194,7 @@ public sealed class NativeOutputController
                 return;
             }
             Interlocked.Increment(ref _routeEpoch); _active = true; _receiver = receiver; _stream = null; _remoteActual = null; _gateOpen = false; _lastGain = null; _deviceRevision = -1; _metricsAt = null;
+            PublishStatus();
             _receiverWaitAt = null;
             await _session.SetNativeGainAsync(0).ConfigureAwait(false);
             await _session.StartAsync(receiver, Settings()).ConfigureAwait(false);
@@ -185,7 +202,9 @@ public sealed class NativeOutputController
         }
         else if (receiver is not null && receiver != _receiver)
         {
-            _receiver = receiver; await _session.UpdateReceiverAsync(receiver, Settings()).ConfigureAwait(false);
+            _receiver = receiver;
+            Volatile.Write(ref _status, Status with { State = PlaybackState.Connecting, GateOpen = false, MediaStarted = false });
+            await _session.UpdateReceiverAsync(receiver, Settings()).ConfigureAwait(false);
             return; // Consume the new connection/volume snapshot before touching its capture gate.
         }
         if (receiver is not null) _receiverWaitAt = null;
@@ -306,12 +325,14 @@ public sealed class NativeOutputController
         if (_gateOpen == open && !clear) return true;
         if (!await _host.TrySetCaptureGateAsync(_streamCaptureEpoch, open, clear, cancellation).ConfigureAwait(false)) return false;
         _gateOpen = open; _clearPending = false;
+        PublishStatus();
         return true;
     }
     private async Task StopRouteAsync()
     {
         if (!_active && !_begun) return;
         Interlocked.Increment(ref _routeEpoch); _active = false;
+        PublishStatus();
         try { await _session.StopAsync().ConfigureAwait(false); await _host.ResetCaptureAsync(default).ConfigureAwait(false); }
         finally
         {

@@ -1,5 +1,7 @@
 # <img src="../desktop/AirFlash.App/Assets/app.svg" width="36" height="36" alt="" style="vertical-align:middle" /> AirFlash
 
+> **上游历史说明。** 本页保留 AirFlash 导入时的使用和功能说明，不代表 AppleHome 当前交付或支持范围。AppleHome 请使用[项目首页](../README.md)、[首次设置指南](first-run.md)及[兼容矩阵](COMPATIBILITY.md)。下文的上游下载、旧面板、立体声及采集范围不作为 AppleHome 的安装与验收指引。
+
 <p align="center">
   <a href="../README.md">English</a> ·
   <a href="README.zh-CN.md">简体中文</a>

@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text.Json;
-using AirFlash.App.Verification;
+using AirFlash.App.Services.Setup;
 using AirFlash.Core;
 using Microsoft.Win32;
 namespace AirFlash.App.Services;
@@ -48,6 +48,11 @@ internal static class NativeAutostart
     {
         await using var instance = new SingleInstance("Native");
         return !instance.IsOwner && await instance.QueryReadyAsync(cancellation).ConfigureAwait(false);
+    }
+    internal static async Task<NativeAgentStatus?> QueryStatusAsync(CancellationToken cancellation)
+    {
+        await using var instance = new SingleInstance("Native");
+        return instance.IsOwner ? null : await instance.QueryStatusAsync(cancellation).ConfigureAwait(false);
     }
     internal static Task InstallAsync(string executable, CancellationToken cancellation) => InstallCoreAsync(Path.GetFullPath(executable), cancellation);
     internal static async Task InstallForSetupAsync(string published, CancellationToken cancellation)

@@ -1,5 +1,7 @@
 # Releasing AirFlash
 
+> **Historical upstream release workflow.** This document records AirFlash's original GitHub/MSI publishing process. Its GitHub Actions workflows are not included in AppleHome. For the current local build, verification and immutable package commands, use [README.md](../README.md) and [architecture.md](architecture.md). Do not treat the upstream publication commands below as an AppleHome release instruction.
+
 Stable releases are built from `main` by the manually dispatched **Release** GitHub Actions workflow. It installs and validates the selected .NET SDK before reserving a version, then runs native/.NET/Python checks, builds fresh Windows x64 binaries, verifies versions and checksums, exercises MSI installation in a disposable runner, and publishes the release only after success.
 
 Desktop tray verification is documented in [TRAY-DIAGNOSTICS.md](TRAY-DIAGNOSTICS.md).

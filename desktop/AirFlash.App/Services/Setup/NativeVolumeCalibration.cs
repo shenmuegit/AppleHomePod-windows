@@ -7,7 +7,7 @@ using AirFlash.Core;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
-namespace AirFlash.App.Verification;
+namespace AirFlash.App.Services.Setup;
 
 internal static class NativeVolumeCalibration
 {
