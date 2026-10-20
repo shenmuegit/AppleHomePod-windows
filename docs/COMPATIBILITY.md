@@ -1,6 +1,6 @@
 # AppleHome 兼容范围
 
-更新：2026-10-20。当前为 **0.2.0 Preview 1**，二进制对应源码提交 [`5675336`](https://github.com/shenmuegit/AppleHome/commit/567533684ccd04a2cd53783debd83925fda3d2c6)。本包实测与先前版本结果分别记录。
+更新：2026-10-20。当前为 **0.2.0 Preview 1**，二进制对应源码提交 [`5675336`](https://github.com/shenmuegit/AppleHomePod-windows/commit/567533684ccd04a2cd53783debd83925fda3d2c6)。本包实测与先前版本结果分别记录。
 
 ## 系统与设备
 

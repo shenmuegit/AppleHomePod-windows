@@ -5,7 +5,7 @@
 ## 安装前
 
 - HomePod 已在 Apple“家庭”App 初始化，与电脑位于同一局域网。
-- 从 [GitHub Release](https://github.com/shenmuegit/AppleHome/releases/tag/v0.2.0-preview.1) 下载 `AppleHome-0.2.0-567533684ccd.zip`，可对照同页 `SHA256SUMS.txt` 校验文件。
+- 从 [GitHub Release](https://github.com/shenmuegit/AppleHomePod-windows/releases/tag/v0.2.0-preview.1) 下载 `AppleHome-0.2.0-567533684ccd.zip`，可对照同页 `SHA256SUMS.txt` 校验文件。
 - 应用为自包含版本，无需安装 .NET 或 Rust。
 
 ## 三步完成设置
@@ -38,4 +38,4 @@ Start-Process .\AppleHome.exe -ArgumentList '--native-enable' -Wait
 
 VB-CABLE 来自 [VB-Audio Software](https://vb-cable.com/)，采用 **Donationware** 模式，欢迎向作者捐助或支付许可。原厂 Pack45 与说明保持未修改，“关于”保留来源与许可入口；驱动遵循[厂商独立条款](https://vb-audio.com/Services/licensing.htm)，不属于 AppleHome 的 GPL 源码。AppleHome EXE 当前未签名。
 
-完整范围见[兼容矩阵](https://github.com/shenmuegit/AppleHome/blob/main/docs/COMPATIBILITY.md)，本包验证及哈希见[版本说明](https://github.com/shenmuegit/AppleHome/blob/main/docs/releases/v0.2.0-preview.1.md)。
+完整范围见[兼容矩阵](https://github.com/shenmuegit/AppleHomePod-windows/blob/main/docs/COMPATIBILITY.md)，本包验证及哈希见[版本说明](https://github.com/shenmuegit/AppleHomePod-windows/blob/main/docs/releases/v0.2.0-preview.1.md)。

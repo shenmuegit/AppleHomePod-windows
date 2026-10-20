@@ -1,57 +1,89 @@
-# AppleHome
+<p align="center">
+  <img src="desktop/AirFlash.App/Assets/app.svg" width="72" height="72" alt="AppleHomePod for Windows icon">
+</p>
 
-**让 HomePod 成为 Windows 的音频输出。**
+<h1 align="center">AppleHomePod for Windows</h1>
 
-AppleHome 将 Windows 的音乐、视频和系统声音发送到 HomePod。首次安装由向导完成设备发现、输出配置和连接确认；日常直接使用 Windows 的输出选择、音量和静音控件。无需填写 IP、选择网卡或设置缓冲毫秒数。
+<p align="center">Play your Windows audio through HomePod.</p>
 
-**当前为 0.2.0 Preview 1。已验证组合：Windows 10 Pro 22H2（19045，x64）与单只 HomePod mini 27.0。** Windows 11、其他型号、固件和立体声对尚未完成实机验证。
+<p align="center">
+  <a href="https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.1/AppleHome-0.2.0-567533684ccd.zip"><strong>Download Windows preview</strong></a>
+  &nbsp;·&nbsp; <a href="#get-started">Get started</a>
+  &nbsp;·&nbsp; <a href="#compatibility">Compatibility</a>
+  &nbsp;·&nbsp; <a href="https://github.com/shenmuegit/AppleHomePod-windows/releases/tag/v0.2.0-preview.1">Release notes</a>
+</p>
 
-[下载预发布版本](https://github.com/shenmuegit/AppleHome/releases/tag/v0.2.0-preview.1) · [安装指南](docs/first-run.md) · [兼容范围](docs/COMPATIBILITY.md) · [问题反馈](https://github.com/shenmuegit/AppleHome/issues)
+<p align="center">
+  <a href="https://github.com/shenmuegit/AppleHomePod-windows/releases/tag/v0.2.0-preview.1"><img src="https://img.shields.io/badge/release-0.2.0_preview_1-2563eb?style=flat-square" alt="Release: 0.2.0 Preview 1"></a>
+  <a href="LICENSE-GPLv3"><img src="https://img.shields.io/badge/license-GPLv3%2B-555?style=flat-square" alt="License: GPLv3 or later"></a>
+</p>
 
-## 首次安装
+AppleHomePod sends music, video and system audio from your PC to HomePod over your local network. After setup, use the Windows output menu and volume controls with the players you already have.
 
-1. 从 Release 下载 `AppleHome-0.2.0-567533684ccd.zip`，解压并打开 `AppleHome.exe`。无需另装 .NET 或 Rust。
-2. 确保 HomePod 已在 Apple“家庭”App 中初始化，并与电脑连接同一局域网；电脑使用有线网络也可以。
-3. 按向导安装所需驱动。Windows 要求管理员许可或重启时，按提示完成；重启后重新打开 AppleHome 继续。
-4. 等待自动连接并确认是否听到声音。需要重听时点击“再播放一次”，确认后完成设置。
+> **Preview:** tested on Windows 10 Pro 22H2 (build 19045, x64) with one HomePod mini running software 27.0. Other Windows versions, HomePod models and stereo pairs have not been validated.
 
-只有一只合格设备时自动连接，多只时选择目标。设备名称、Windows 播放输出与连接参数由程序配置。本包已在已有合格驱动和设备记录上验证播放；全新自动驱动安装、重启到确认的完整流程仍待独立实机验收。
+<p align="center">
+  <img src="docs/images/audio-route.svg" width="960" alt="Audio from Windows apps passes through the HomePod output in Windows to a HomePod on the local network.">
+</p>
 
-## 日常使用
+## Use Windows controls
 
-直接播放常用播放器或浏览器中的音乐、视频，使用 Windows 控件调节音量和静音。需要切回耳机或电脑扬声器时，在 Windows 输出列表切换即可。
+The setup wizard discovers HomePod, configures the output device and handles connection timing for you. Once connected, adjust volume or mute from Windows. Switch to your headphones or speakers in the same output menu when you need them.
 
-后台随当前用户登录启动，日常无需独立控制面板或托盘操作。缓冲按设备记录、接收端边界与匹配的设备档案自动处理，不要求用户填写参数，也不将单台设备的记录作为统一默认值。
+The background app starts when you sign in. Everyday playback does not require a separate mixer, control panel or tray menu. You do not need to enter an IP address, select a network adapter or choose a buffer size.
 
-## 当前兼容范围
+## Get started
 
-| 项目 | 0.2.0 Preview 1 |
+1. Set up HomePod in Apple's Home app and connect it to the same local network as your PC. The PC can use Wi-Fi or Ethernet.
+2. [Download the preview ZIP](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.1/AppleHome-0.2.0-567533684ccd.zip), extract it and open **`AppleHome.exe`**. The app is self-contained; you do not need to install .NET or Rust.
+3. Follow the setup wizard. Allow the audio driver installation when Windows asks. If a restart is required, save your work, restart Windows and open the app again.
+4. Wait for HomePod to connect, then confirm that you hear the setup audio. Use the replay button if you need to hear it again.
+
+The wizard currently uses Simplified Chinese: `听到了` means "I heard it", `没听到` means "No audio", and `再播放一次` means "Replay". With one eligible HomePod, connection is automatic; with several, choose a device. The wizard names the Windows output and selects it for you.
+
+A full first-install test, including driver setup and the required restart, is still pending. Playback in this release was verified with an existing qualified driver and device record.
+
+## Compatibility
+
+| Environment | Preview status |
 |---|---|
-| Windows 10 Pro 22H2 / 19045 / x64 + 单只 HomePod mini 27.0 | 已完成本包实机验证 |
-| 正常音乐连续播放、Windows 音量调节 | 已确认正常 |
-| 静音至少 15 秒后取消静音 | 已确认恢复正常 |
-| Windows 11、其他 HomePod 型号或固件、立体声对 | 尚未验证；向导仅开放上述单只 mini 档案 |
-| 断网恢复、过夜运行、精确音画延迟 | 尚未取得本包实机验证结果 |
+| Windows 10 Pro 22H2, build 19045, x64 + one HomePod mini on software 27.0 | Validated with normal music, Windows volume changes and recovery after at least 15 seconds of mute |
+| Other Windows 10 builds; Windows 11 x64 | Not yet validated |
+| HomePod (1st or 2nd generation); other mini firmware | Not yet validated; the current wizard does not enable these device profiles |
+| Stereo pairs and Apple TV groups | Not yet validated; not enabled by the current wizard |
 
-同一设备的早期构建曾完成 30 分钟音乐和约 5 分钟视频的主观同步验证；本包未重跑相同长测。完整的版本归属和使用边界见[兼容矩阵](docs/COMPATIBILITY.md)。
+Continuous music, volume adjustment and mute recovery were confirmed on the published binary. Earlier builds on the same device also completed a 30-minute music run and about five minutes of subjective video-sync checks; those runs were not repeated for this binary.
 
-EXE 当前未签名，没有自动更新渠道。重新打开向导会复用已安装程序，不会自动替换后台二进制；已有预览安装的维护方式见[安装指南](docs/first-run.md#已有预览安装)。
+This preview does not promise a measured end-to-end latency. Reconnection after a network outage, overnight playback, fixed-speed video drift and other Home access or PIN policies still need hardware testing. The executable is unsigned and automatic updates are not available. See the [detailed compatibility record](docs/COMPATIBILITY.md) (Chinese) for build-specific evidence.
 
-## 下载与校验
+## Downloads and integrity
 
-[Release 页面](https://github.com/shenmuegit/AppleHome/releases/tag/v0.2.0-preview.1) 提供完整安装包、对应源码包、独立安装说明、版本说明和 `SHA256SUMS.txt`。下载后可用 PowerShell 核对：
+| File | Purpose |
+|---|---|
+| [Windows preview](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.1/AppleHome-0.2.0-567533684ccd.zip) | App, original driver package, licenses and build records |
+| [Matching source archive](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.1/AppleHome-source-567533684ccd.zip) | Source and dependency locks for the published binary |
+| [SHA256SUMS.txt](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.1/SHA256SUMS.txt) | Checksums for the release attachments |
+
+Check the download in PowerShell and compare the result with `SHA256SUMS.txt`:
 
 ```powershell
 Get-FileHash .\AppleHome-0.2.0-567533684ccd.zip -Algorithm SHA256
 ```
 
-将结果与同一 Release 的校验文件比较。本包对应源码提交 [`5675336`](https://github.com/shenmuegit/AppleHome/commit/567533684ccd04a2cd53783debd83925fda3d2c6)；包内保留原始来源与封包记录，封包后的实机结果见[本版说明](docs/releases/v0.2.0-preview.1.md)。
+The release tag `v0.2.0-preview.1` points to source commit [`5675336`](https://github.com/shenmuegit/AppleHomePod-windows/commit/567533684ccd04a2cd53783debd83925fda3d2c6). The archive retains its original build records; the release notes record the listening checks completed after packaging. Reopening the setup wizard reuses an installed app; it does not upgrade its binary. Maintenance instructions for existing preview installations are in the [installation guide](docs/first-run.md#已有预览安装) (Chinese).
 
-## 开发与构建
+## Build and contribute
 
-应用由 WPF/.NET 后台、Rust 音频引擎和 WASAPI 系统音频采集组成。开发需要 Windows x64、.NET 10 SDK、Rust MSVC 工具链、Visual Studio C++ Build Tools、Python 3.12+、uv 与 PowerShell 7。SDK 版本由 `desktop/global.json` 指定。
+The app uses WPF/.NET for Windows integration, WASAPI for system-audio capture and a Rust engine for audio transport. Internal assembly names remain `AirFlash`; the distributed app is `AppleHome.exe`.
+
+<details>
+<summary>Build from source</summary>
+
+Build on Windows x64 with the .NET SDK specified in `desktop/global.json`, a Rust MSVC toolchain, Visual Studio C++ Build Tools, Python 3.12+, uv and PowerShell 7.
 
 ```powershell
+git clone https://github.com/shenmuegit/AppleHomePod-windows.git
+cd AppleHomePod-windows
 uv sync --locked --group dev
 pwsh -NoProfile -File scripts/build-native.ps1 -Check
 pwsh -NoProfile -File scripts/dotnet.ps1 restore AirFlash.sln --locked-mode
@@ -60,16 +92,15 @@ uv run pytest -q
 uv run ruff check .
 ```
 
-| 文档 | 内容 |
-|---|---|
-| [架构说明](docs/architecture.md) | 模块职责、后台入口与数据归属 |
-| [构建与打包](docs/packaging.md) | 发布输入、源码归档、校验与不可变交付 |
-| [验证记录](docs/VALIDATION.md) | 当前版本结果及历史证据 |
+Architecture, packaging and validation notes are currently in Chinese:
+[architecture](docs/architecture.md) · [packaging](docs/packaging.md) · [validation](docs/VALIDATION.md).
 
-内部程序集名保留 `AirFlash`，最终应用文件名为 `AppleHome.exe`。历史诊断面板通过 `--legacy-panel` 打开，不属于日常使用流程。
+</details>
 
-## 许可与致谢
+For a bug report, include your Windows build, HomePod model and software version, whether it is a single speaker or a pair, and the steps that reproduce the issue. Remove pairing data and device identifiers before sharing logs. Use [GitHub Issues](https://github.com/shenmuegit/AppleHomePod-windows/issues) for reports and proposals.
 
-AppleHome 基于 Ding-Kyoma 的 [AirFlash](https://github.com/Ding-Kyoma/AirFlash)，修改采用 **GPLv3 或更新版本**。上游版权、许可和第三方声明均予保留，详见 [UPSTREAM.md](UPSTREAM.md)、[GPLv3 全文](LICENSE-GPLv3) 和[第三方声明](desktop/THIRD-PARTY-NOTICES.md)。上游商业许可选项不代表 AppleHome 修改提供商业许可。
+## License and credits
 
-音频驱动 **VB-CABLE** 来自 [VB-Audio Software](https://vb-cable.com/)，采用 **Donationware** 模式，欢迎向原作者捐助或支付许可。包内保留未修改的原厂 Pack45 与原始说明，应用“关于”提供来源与许可入口；驱动遵循[厂商独立条款](https://vb-audio.com/Services/licensing.htm)，不属于 AppleHome 的 GPL 源码。
+Based on [AirFlash](https://github.com/Ding-Kyoma/AirFlash) by Ding-Kyoma and its contributors. This project's changes are licensed under **GPLv3 or later**. Upstream copyright and third-party notices are retained. See [source provenance](UPSTREAM.md), the [GPL text](LICENSE-GPLv3) and [third-party notices](desktop/THIRD-PARTY-NOTICES.md). The upstream commercial-license option does not grant commercial rights to this project's changes.
+
+The bundled **VB-CABLE** driver is separate software by [VB-Audio Software](https://vb-cable.com/), distributed under its own [Donationware terms](https://vb-audio.com/Services/licensing.htm). Donations or license payments to its author are welcome. The original Pack45 package and vendor readme are preserved, and the app's About view links to the driver source and terms. VB-CABLE is not covered by this project's GPL license.
