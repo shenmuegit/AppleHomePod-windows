@@ -80,6 +80,18 @@ internal static class NativeSetupSmoke
                 throw new InvalidOperationException("A single HomePod must automatically configure and play before the only functional confirmation.");
             await Capture("automatic-confirmation", "听到声音了吗");
             checks.Add("single-device-needs-no-manual-route-name-or-player");
+            platform.DiscoveryError = new IOException("设备发现失败：网络不存在或尚未启动。可手动添加接收器。");
+            await flow.RefreshAsync(default); window.RefreshView();
+            await Capture("discovery-unavailable", "暂时无法查找 HomePod");
+            if (Descendants(window).OfType<TextBlock>().Any(text => text.Text.Contains("接收器", StringComparison.Ordinal)
+                || text.Text.Contains("手动添加", StringComparison.Ordinal) || text.Text.Contains("网络不存在", StringComparison.Ordinal)))
+                throw new InvalidOperationException("Discovery errors must use HomePod language and supported recovery only.");
+            platform.DiscoveryError = null;
+            Invoke("重新查找");
+            await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+            if (flow.Step != NativeSetupStep.Listening)
+                throw new InvalidOperationException("Search recovery must retry the automatic HomePod connection.");
+            checks.Add("discovery-failure-retries-without-manual-device-setup");
             App.WriteOutput(args, new { ok = true, checks, audio_sent = false, hardware_used = false, production_state_modified = false });
             return 0;
         }
@@ -141,6 +153,7 @@ internal static class NativeSetupSmoke
         internal bool Installed, Previewed, Completed, RenamedExisting, Configured, AudioPlayed;
         internal int PlayCount;
         internal Task? Playback;
+        internal Exception? DiscoveryError;
         internal readonly Receiver Receiver = new("9efd9099abd6", "da", "127.0.0.1")
             { Model = "AudioAccessory5,1", SoftwareVersion = "27.0", IsLeader = true, Codecs = [1] };
         private readonly EndpointIdentity _endpoint = new("simulated-output", "simulated-adapter", NativeBindingPolicy.HardwareId,
@@ -153,7 +166,8 @@ internal static class NativeSetupSmoke
                 new(false, _endpoint.MixFormat, _endpoint.DriverSha256, 0, 50), 100) : null;
             return Task.FromResult(new NativeSetupInspection(Installed, Installed, Installed ? live : null, stored, Completed));
         }
-        public Task<IReadOnlyList<Receiver>> DiscoverAsync(CancellationToken cancellation) => Task.FromResult<IReadOnlyList<Receiver>>([Receiver]);
+        public Task<IReadOnlyList<Receiver>> DiscoverAsync(CancellationToken cancellation) => DiscoveryError is { } error
+            ? Task.FromException<IReadOnlyList<Receiver>>(error) : Task.FromResult<IReadOnlyList<Receiver>>([Receiver]);
         public Task<NativeDriverInstallOutcome> InstallDriverAsync(CancellationToken cancellation) { Installed = true; return Task.FromResult(NativeDriverInstallOutcome.VerificationRequired); }
         public Task PrepareOutputAsync(Receiver receiver, CancellationToken cancellation) { Configured = true; return Task.CompletedTask; }
         public Task PlayConfirmationAsync(CancellationToken cancellation) { AudioPlayed = true; PlayCount++; return Playback?.WaitAsync(cancellation) ?? Task.CompletedTask; }

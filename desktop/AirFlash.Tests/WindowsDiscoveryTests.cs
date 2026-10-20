@@ -8,6 +8,21 @@ namespace AirFlash.Tests;
 public sealed class WindowsDiscoveryTests
 {
     [Fact]
+    public void DiscoveryFailureNamesHomePodWithoutUnsupportedManualSetup()
+    {
+        var api = new FakeDns { FailBrowse = true };
+        using var discovery = new WindowsDiscovery(api, () => []);
+        var failures = new List<string>(); discovery.Failed += failures.Add;
+        discovery.Start();
+        Assert.NotEmpty(failures);
+        Assert.All(failures, message => {
+            Assert.Contains("HomePod", message);
+            Assert.DoesNotContain("manually", message, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("接收器", message);
+        });
+    }
+
+    [Fact]
     public async Task InFlightPublicationCannotFinishAfterTheNewInterfaceSnapshot()
     {
         var api = new FakeDns(); using var discovery = new WindowsDiscovery(api, () => [new("nic", "LAN", "LAN", "192.0.2.1", true, 17)]);

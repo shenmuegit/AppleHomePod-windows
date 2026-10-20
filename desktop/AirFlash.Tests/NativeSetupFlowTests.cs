@@ -4,6 +4,31 @@ namespace AirFlash.Tests;
 
 public sealed class NativeSetupFlowTests
 {
+    [Fact]
+    public async Task DiscoveryFailureOffersSearchRecoveryWithoutExposingLegacyInstructions()
+    {
+        var platform = new Fake { Discover = _ => Task.FromException<IReadOnlyList<Receiver>>(
+            new IOException("设备发现失败：网络不存在或尚未启动。可手动添加接收器。")) };
+        await using var flow = new NativeSetupFlow(platform);
+        await flow.StartAutomaticAsync(default);
+        Assert.Equal("DiscoveryUnavailable", flow.Step.ToString());
+        Assert.Null(flow.Error); Assert.Empty(flow.Receivers);
+        Assert.DoesNotContain("preview", platform.Calls); Assert.DoesNotContain("complete", platform.Calls);
+        platform.Discover = null;
+        await flow.RefreshAsync(default);
+        Assert.Equal(NativeSetupStep.Listening, flow.Step);
+    }
+
+    [Fact]
+    public async Task CancelledDiscoveryIsNotReportedAsANetworkFailure()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var platform = new Fake { Discover = token => { cancellation.Cancel(); return Task.FromCanceled<IReadOnlyList<Receiver>>(token); } };
+        await using var flow = new NativeSetupFlow(platform);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => flow.RefreshAsync(cancellation.Token));
+        Assert.Equal(NativeSetupStep.Receiver, flow.Step); Assert.Null(flow.Error);
+    }
+
     private static EndpointIdentity Endpoint => new("endpoint-1", @"ROOT\MEDIA\0009", NativeBindingPolicy.HardwareId,
         NativeBindingPolicy.Provider, NativeBindingPolicy.DriverVersion, NativeBindingPolicy.DriverSha256,
         "CABLE Input", "CABLE Input (VB-Audio Virtual Cable)", "48000/2/32/3", 2, AudioEndpointKind.Playback, true,
@@ -352,9 +377,10 @@ public sealed class NativeSetupFlowTests
         public readonly List<string> Calls = [];
         public Receiver? PreviewReceiver;
         public Func<CancellationToken, Task>? Preview, Complete;
+        public Func<CancellationToken, Task<IReadOnlyList<Receiver>>>? Discover;
         public Func<CancellationToken, Task<bool>>? Adapt;
         public Task<NativeSetupInspection> InspectAsync(CancellationToken cancellation) { Calls.Add("inspect"); return Task.FromResult(Inspection); }
-        public Task<IReadOnlyList<Receiver>> DiscoverAsync(CancellationToken cancellation) { Calls.Add("discover"); return Task.FromResult(Receivers); }
+        public Task<IReadOnlyList<Receiver>> DiscoverAsync(CancellationToken cancellation) { Calls.Add("discover"); return Discover?.Invoke(cancellation) ?? Task.FromResult(Receivers); }
         public Task<NativeDriverInstallOutcome> InstallDriverAsync(CancellationToken cancellation) => Task.FromResult(NativeDriverInstallOutcome.VerificationRequired);
         public Task PrepareOutputAsync(Receiver receiver, CancellationToken cancellation) => Task.CompletedTask;
         public Task PlayConfirmationAsync(CancellationToken cancellation) => Task.CompletedTask;

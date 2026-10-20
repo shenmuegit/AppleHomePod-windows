@@ -51,7 +51,7 @@ public sealed class WindowsDiscovery : IDiscoveryService
     {
         if (!_dnsAvailable())
         {
-            Failed?.Invoke(L.Get("Windows DNS-SD is unavailable. You can add a receiver manually and collect startup diagnostics."));
+            Failed?.Invoke(L.Get("HomePod discovery is unavailable on this PC. Please try again."));
             RunningChanged?.Invoke(false); return;
         }
         lock (_sync)
@@ -117,7 +117,7 @@ public sealed class WindowsDiscovery : IDiscoveryService
             var slot = new OperationSlot();
             lock (_sync) { if (!Current(epoch)) return; _browsers.Add(slot); }
             try { slot.Attach(_api.Browse(type, index.Value, (status, records) => RunSafely(() => Browse(epoch, type, status, records)), message => Failed?.Invoke(message))); browsing = true; }
-            catch (Exception error) { Cancel([slot]); Failed?.Invoke(L.Format("Receiver discovery failed: {0}. You can add a receiver manually.", error.Message)); }
+            catch (Exception error) { Cancel([slot]); Failed?.Invoke(L.Format("HomePod discovery failed: {0}", error.Message)); }
         }
         lock (_sync) { if (!Current(epoch)) return; }
         RunningChanged?.Invoke(browsing);

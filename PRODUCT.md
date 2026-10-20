@@ -42,4 +42,5 @@ README.md and docs/validation/windows-native-homepod-output.md distinguish histo
 - Prepare connection and audio resources before asking the user to listen.
 - Respond immediately to a playback action and show truthful preparation/playing/ready states.
 - Keep only information that helps the current decision; retain actionable failures and licensing access.
+- Name the user's speaker HomePod in setup; keep protocol terms and raw discovery errors in diagnostics, and offer only recovery actions the interface provides.
 - Confirm audibility explicitly before saving an audible reference or completing setup.

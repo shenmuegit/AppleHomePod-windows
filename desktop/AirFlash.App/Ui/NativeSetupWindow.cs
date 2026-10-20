@@ -49,6 +49,7 @@ public partial class NativeSetupWindow : Window
         TaskTitle.Text = step switch {
             NativeSetupStep.Driver => "安装音频驱动", NativeSetupStep.Restart => "重启后继续",
             NativeSetupStep.Ready => "已准备好", NativeSetupStep.Blocked => "连接未完成",
+            NativeSetupStep.DiscoveryUnavailable => "暂时无法查找 HomePod",
             _ when listening => "测试声音", _ => "连接设备"
         };
         DeviceText.Text = step == NativeSetupStep.Ready ? OutputName() : _flow.SelectedReceiver is { } selected
@@ -64,6 +65,7 @@ public partial class NativeSetupWindow : Window
             NativeSetupStep.Listening => "听到声音了吗？",
             NativeSetupStep.Ready => "已可播放音乐和视频。",
             NativeSetupStep.Blocked => "请检查下方原因，然后重试。",
+            NativeSetupStep.DiscoveryUnavailable => "请确认 HomePod 已通电，并与电脑连接同一网络。",
             _ => "正在检查设备…"
         };
         Preparation.Visibility = _busy && step is not (NativeSetupStep.Testing or NativeSetupStep.Listening)
@@ -90,9 +92,10 @@ public partial class NativeSetupWindow : Window
         PrimaryButton.Content = step switch {
             NativeSetupStep.Driver => "开始设置", NativeSetupStep.Restart => "重新检查",
             NativeSetupStep.Receiver => "连接", NativeSetupStep.Ready => "完成",
-            NativeSetupStep.Blocked => "重试", _ => "听到了"
+            NativeSetupStep.Blocked => "重试", NativeSetupStep.DiscoveryUnavailable => "重新查找", _ => "听到了"
         };
         PrimaryButton.Visibility = listening || step is NativeSetupStep.Driver or NativeSetupStep.Restart or NativeSetupStep.Ready or NativeSetupStep.Blocked
+            or NativeSetupStep.DiscoveryUnavailable
             || showReceivers ? Visibility.Visible : Visibility.Collapsed;
         var enabled = !_busy && !_closing;
         ReplayButton.IsEnabled = enabled; PrimaryButton.IsEnabled = enabled; SecondaryButton.IsEnabled = enabled;

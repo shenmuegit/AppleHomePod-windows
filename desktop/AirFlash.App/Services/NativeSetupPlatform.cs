@@ -153,7 +153,10 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
             Volatile.Write(ref _receivers, current);
             if (current.Any(r => r.PrefersNtpAlac && (boundId is null || ReceiverIdentity.Normalize(r.Id) == boundId))) found.TrySetResult();
         };
-        discovery.Failed += message => { Volatile.Write(ref discoveryError, message); found.TrySetException(new IOException(message)); };
+        discovery.Failed += message => {
+            AppPaths.Log("Setup HomePod discovery failed: " + message);
+            Volatile.Write(ref discoveryError, message); found.TrySetException(new IOException(message));
+        };
         discovery.Start();
         try { await found.Task.WaitAsync(TimeSpan.FromSeconds(8), cancellation).ConfigureAwait(false); }
         catch (TimeoutException) { /* Return the bounded fresh snapshot so the user can refresh discovery. */ }

@@ -1,6 +1,6 @@
 namespace AirFlash.Core;
 
-public enum NativeSetupStep { Checking, Driver, Restart, Receiver, Configuring, Testing, Listening, Ready, Blocked }
+public enum NativeSetupStep { Checking, Driver, Restart, Receiver, Configuring, Testing, Listening, Ready, Blocked, DiscoveryUnavailable }
 public sealed record NativeSetupInspection(bool DriverInstalled, bool RebootVerified, EndpointIdentity? Endpoint,
     NativeBinding? Binding, bool AgentReady, string? BlockedReason = null);
 public interface INativeSetupPlatform : IAsyncDisposable
@@ -48,7 +48,13 @@ public sealed class NativeSetupFlow(INativeSetupPlatform platform) : IAsyncDispo
         if (!CheckInspection(inspection)) return;
         if (inspection.Binding is { Calibration: not null, VerifiedBufferMs: not null, VerifiedBufferProfile: null } && inspection.AgentReady)
         { Step = NativeSetupStep.Ready; return; }
-        var receivers = await platform.DiscoverAsync(token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
+        IReadOnlyList<Receiver> receivers;
+        try { receivers = await platform.DiscoverAsync(token).ConfigureAwait(false); }
+        catch (IOException)
+        {
+            Receivers = []; Step = NativeSetupStep.DiscoveryUnavailable; return;
+        }
+        token.ThrowIfCancellationRequested();
         Receivers = receivers.ToArray();
         if (inspection.Binding is { Calibration: not null } binding && inspection.AgentReady)
         {
