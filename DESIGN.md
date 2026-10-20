@@ -2,92 +2,117 @@
 name: AppleHome
 description: Apple Devices-inspired clarity for a minimal native Windows setup.
 colors:
-  setup-accent: "#1769D2"
-  setup-accent-hover: "#135AB6"
-  setup-accent-pressed: "#0D4899"
   setup-paper: "#FFFFFF"
-  setup-canvas: "#F1F2F4"
+  setup-footer: "#FFFFFF"
   setup-ink: "#1D1D1F"
   setup-muted: "#626266"
-  setup-button-fill: "#F7F7F9"
-  setup-button-border: "#D0D0D5"
-  setup-hover: "#EDEEF2"
-  setup-pressed: "#E2E3E8"
+  setup-accent: "#1769D2"
+  setup-accent-border: "#1260C5"
+  setup-accent-text: "#FFFFFF"
+  setup-accent-hover: "#135AB6"
+  setup-accent-pressed: "#0D4899"
+  setup-button-fill: "#F4F5F7"
+  setup-button-border: "#E0E3E8"
+  setup-button-ink: "#464C55"
+  setup-hover: "#ECEEF2"
+  setup-hover-text: "#464C55"
+  setup-pressed: "#E3E6EB"
+  setup-pressed-text: "#1D1D1F"
+  setup-replay-fill: "#F4F7FC"
+  setup-replay-border: "#E2E8F1"
+  setup-replay-ink: "#1769D2"
+  setup-replay-hover: "#E7EFFB"
+  setup-replay-pressed: "#DEE8F8"
+  setup-replay-pressed-text: "#1769D2"
 typography:
   device-title:
     fontFamily: "Segoe UI, Microsoft YaHei UI"
-    fontSize: "20px"
+    fontSize: "21px"
     fontWeight: 600
+  device-detail:
+    fontFamily: "Segoe UI, Microsoft YaHei UI"
+    fontSize: "12px"
   task-title:
     fontFamily: "Segoe UI, Microsoft YaHei UI"
-    fontSize: "16px"
+    fontSize: "18px"
     fontWeight: 600
+  listening:
+    fontFamily: "Segoe UI, Microsoft YaHei UI"
+    fontSize: "22px"
+    fontWeight: 600
+    lineHeight: "30px"
   body:
     fontFamily: "Segoe UI, Microsoft YaHei UI"
     fontSize: "14px"
     lineHeight: "21px"
-  device-detail:
-    fontFamily: "Segoe UI, Microsoft YaHei UI"
-    fontSize: "13px"
   status:
     fontFamily: "Segoe UI, Microsoft YaHei UI"
     fontSize: "13px"
     lineHeight: "20px"
   button:
     fontFamily: "Segoe UI, Microsoft YaHei UI"
+    fontSize: "13px"
+  primary-button:
+    fontFamily: "Segoe UI, Microsoft YaHei UI"
     fontSize: "14px"
+    fontWeight: 500
   quiet-button:
     fontFamily: "Segoe UI, Microsoft YaHei UI"
     fontSize: "12px"
 rounded:
-  button: "6px"
-  grouped-surface: "12px"
+  button: "8px"
 spacing:
+  space-4: "4px"
+  space-8: "8px"
   gap-10: "10px"
+  space-12: "12px"
   space-16: "16px"
-  space-18: "18px"
   space-20: "20px"
-  space-22: "22px"
+  space-24: "24px"
   space-26: "26px"
 components:
   button-primary:
     backgroundColor: "{colors.setup-accent}"
-    textColor: "{colors.setup-paper}"
-    typography: "{typography.button}"
+    textColor: "{colors.setup-accent-text}"
+    typography: "{typography.primary-button}"
     rounded: "{rounded.button}"
-    padding: "8px 18px"
+    padding: "8px 14px"
   button-primary-hover:
     backgroundColor: "{colors.setup-accent-hover}"
+    textColor: "{colors.setup-accent-text}"
   button-primary-pressed:
     backgroundColor: "{colors.setup-accent-pressed}"
-    textColor: "{colors.setup-paper}"
+    textColor: "{colors.setup-accent-text}"
   button-secondary:
     backgroundColor: "{colors.setup-button-fill}"
-    textColor: "{colors.setup-ink}"
+    textColor: "{colors.setup-button-ink}"
     typography: "{typography.button}"
     rounded: "{rounded.button}"
-    padding: "8px 18px"
+    padding: "8px 14px"
   button-secondary-hover:
     backgroundColor: "{colors.setup-hover}"
+    textColor: "{colors.setup-hover-text}"
   button-secondary-pressed:
     backgroundColor: "{colors.setup-pressed}"
-    textColor: "{colors.setup-ink}"
+    textColor: "{colors.setup-pressed-text}"
   button-replay:
-    backgroundColor: "{colors.setup-button-fill}"
-    textColor: "{colors.setup-accent}"
+    backgroundColor: "{colors.setup-replay-fill}"
+    textColor: "{colors.setup-replay-ink}"
     typography: "{typography.button}"
     rounded: "{rounded.button}"
-    padding: "8px 18px"
+    padding: "8px 14px"
+  button-replay-hover:
+    backgroundColor: "{colors.setup-replay-hover}"
+    textColor: "{colors.setup-replay-ink}"
+  button-replay-pressed:
+    backgroundColor: "{colors.setup-replay-pressed}"
+    textColor: "{colors.setup-replay-pressed-text}"
   button-about:
     backgroundColor: "transparent"
     textColor: "{colors.setup-muted}"
     typography: "{typography.quiet-button}"
     rounded: "{rounded.button}"
     padding: "0"
-  grouped-surface:
-    backgroundColor: "{colors.setup-paper}"
-    rounded: "{rounded.grouped-surface}"
-    padding: "20px 22px 18px"
 ---
 
 # Design System: AppleHome
@@ -96,102 +121,96 @@ components:
 
 **Creative North Star: "Apple Devices for Windows"**
 
-AppleHome's setup follows the user's chosen Apple Devices reference: pale silver surroundings, a white grouped work area, precise type and restrained blue actions. The tone is calm, clear and polished. Device identity leads; the current task and its next action remain easy to scan.
+AppleHome's setup carries the user's chosen Apple Devices reference through one white field, centered device identity, precise native type and restrained blue actions. The directly user-approved final concept establishes the direction; the WPF implementation establishes exact values.
 
-This document records the implemented Windows WPF setup language. Native window controls, keyboard behavior and accessible state feedback belong to that language. `desktop/AirFlash.App/Ui/NativeSetupWindow.xaml` and `NativeSetupWindow.cs` are the implementation authority. Frontmatter uses portable `px` notation for the same numeric WPF device-independent pixel (DIP) values; padding uses top/right/bottom/left order. It does not define a separate CSS implementation.
+NativeSetupWindow.xaml and NativeSetupWindow.cs are the implementation authority. The approved visual authority is artifacts/design-minimal-installer-20261020/minimal-installer-v2-final.png and its editable .xaml. Portable px notation below preserves numeric WPF device-independent pixel (DIP) values; padding uses top/right/bottom/left order. No HTML/CSS implementation or preview is supplied.
 
 **Key Characteristics:**
 
-- Quiet neutral layers with one blue action family.
-- Clear device identity and compact, readable task hierarchy.
-- Soft grouped surfaces with smaller control corners.
-- Immediate state feedback through text and native control states.
-- Native Windows accessibility and window affordances.
+- One white field with centered device identity and task feedback.
+- Native vector HomePod mini artwork with a monochrome speaker fallback.
+- A prominent listening question and a quieter model line.
+- Distinct replay, secondary and primary actions with visible keyboard focus.
+- Native Windows controls and accessible text feedback.
 
 ## Colors
 
-The palette combines cool pale neutrals with a clear, restrained action blue. The frontmatter owns the exact values; these roles describe their application.
+The frontmatter records the actual light-palette WPF brushes. The artwork's one-off mesh, highlight and body-shading colors belong to that drawing and are not interface palette tokens.
 
 ### Primary
 
-`setup-accent` identifies the principal action, the replay affordance and keyboard focus. Its hover and pressed siblings deepen the primary button while preserving its light label.
+The accent family supplies primary fill, edge, light text, hover, pressed and focus treatment. Replay has a separate pale blue fill, edge, ink and interaction family.
 
 ### Neutral
 
-`setup-canvas` grounds the header and footer; `setup-paper` separates the grouped task area. `setup-ink` carries essential text and the device outline. `setup-muted` carries device detail, secondary status and About. Neutral buttons use `setup-button-fill` with `setup-button-border`, then `setup-hover` and `setup-pressed` for interaction feedback.
+Paper and footer form a continuous white field. Ink carries essential text and the fallback speaker; muted carries detail, ordinary instructions, status and About. Secondary actions use the button fill, border and ink resources with paired hover/pressed foregrounds.
 
-**The System Contrast Rule.** When high contrast is active at window creation, use the implemented Windows SystemColors mappings for surfaces, text, actions and interaction states. Do not hold the light palette above the user's contrast colors.
+**The System Contrast Rule.** When high contrast is active at window creation, apply the implemented Windows SystemColors mappings and use the monochrome speaker fallback. The system-colors capture exercises explicit mapping with current colors; it does not verify an OS contrast-mode transition.
 
 ## Typography
 
-Use the native Segoe UI family with Microsoft YaHei UI fallback throughout. The device title and task title use Semibold; ordinary text and actions retain the inherited regular treatment. The observed hierarchy is role-based, not a generated mathematical scale.
+Segoe UI with Microsoft YaHei UI fallback is inherited throughout. Device and task titles and the testing/listening message use Semibold; primary actions use Medium; remaining text inherits the native regular treatment. The frontmatter records the observed roles rather than a generated scale.
 
-- `device-title` gives the selected device its strongest textual identity.
-- `device-detail` supplies the quieter second identity line.
-- `task-title` identifies the current setup operation.
-- `body` carries the main instruction with its explicit line height.
-- `status` carries wrapped supporting or actionable error text.
-- `button` and `quiet-button` distinguish ordinary actions from About.
-
-The device title and detail use character ellipsis. Task, instruction and status text wrap. Keep meaningful status readable within the scrollable task area rather than forcing a single line.
+The device title and detail use character ellipsis. Task, instruction and status text wrap. Ordinary steps show task-title above body. Testing/listening hide the separate task title and promote the instruction to listening. Receiver names retain the existing control-character filter and length bound.
 
 ## Layout
 
-The native setup window opens centered at (520 × 420 DIP) and allows resizing down to (440 × 380 DIP). Its rows are an automatically sized identity header, a flexible grouped task area and an automatically sized action footer. The task area scrolls vertically when its content needs more room; horizontal scrolling is disabled.
+The native window opens centered at (560 × 464 DIP), with minimum (440 × 380 DIP). A flexible vertically scrollable body sits above an automatically sized pinned footer; horizontal scrolling is disabled. Body margins are left/top/right/bottom (26, 0, 26, 12 DIP). Footer padding is horizontal/vertical (26, 17 DIP).
 
-The header uses left/top/right/bottom margins of (26, 22, 26, 18 DIP), a square device icon (36 DIP) and an identity gap (16 DIP). Its second text line sits below the title (6 DIP). The grouped area has side margins (20 DIP) and internal left/top/right/bottom spacing of (22, 20, 22, 18 DIP). The footer uses horizontal/vertical padding of (26, 22 DIP), a flexible spacer and a gap between the two decision buttons (10 DIP).
+The centered artwork slot is (120 × 106 DIP), top margin (24 DIP). The device name follows (10 DIP), then the detail line (4 DIP). The task starts below identity (34 DIP). Ordinary instructions follow the task title (10 DIP); testing/listening remove this gap. Replay, preparation, receiver choice and status use top gaps (16 DIP). About is at lower left; decisions are at lower right with a gap (12 DIP).
 
-Within the task group, the instruction follows the title (10 DIP). Replay follows the instruction area (22 DIP); supporting status and preparation progress use top gaps (16 DIP). These are desktop layout constraints, not viewport breakpoints.
+Below outer height (430 DIP), artwork height becomes (80 DIP), artwork top margin (16 DIP), device-name gap (8 DIP), and task gap (20 DIP). The artwork retains its slot width while the Viewbox scales its content. This is native window adaptation, not a web breakpoint.
 
 ## Elevation & Depth
 
-Depth comes from the white work area against the pale silver ground, spacing and thin button borders. The setup adds no shadows, gradients or custom elevation effects. Preserve the native title bar and its system window treatment.
+The interface is flat: whitespace, type and thin button edges organize the white field. The approved HomePod artwork contains radial shading, tiled mesh and a small ground ellipse to describe the device. Preserve native title-bar and system window treatment.
 
-**The Quiet Layers Rule.** Use tonal separation and spacing to organize the setup; keep ornamental depth out of the task area.
+**The Quiet Field Rule.** Keep the setup body and footer on one continuous field; separate identity, task and actions with spacing and type.
 
 ## Shapes
 
-The grouped work area uses `rounded.grouped-surface`; buttons use the smaller `rounded.button`. Ordinary button borders are thin at rest (1 DIP) and stronger during keyboard focus (2 DIP). About has no resting border. The device outline and play triangle are native XAML `Path` geometry, with no shipping raster required for these controls.
+Buttons use rounded.button, with resting borders (1 DIP); About removes its resting border. Keyboard focus is a separate outer ring (2 DIP stroke, −4 DIP margin, 11 DIP corner radius), without changing layout. Device, fallback speaker and play artwork use native XAML geometry; these controls introduce no shipping raster.
 
 ## Components
 
 ### Buttons
 
-Buttons are compact and softly rectangular. Standard actions have minimum dimensions (98 × 36 DIP); the frontmatter records their fill, text, corner and padding assignments. `SetupPrimary` uses the accent family. `SetupButton` supplies neutral hover and pressed states. Disabled controls use reduced opacity (0.45).
+SetupButton supplies neutral interaction states, minimum dimensions (88 × 38 DIP), reduced disabled opacity (0.45), centered content and the recorded padding. SetupPrimary uses minimum width (112 DIP) with blue treatment and primary-button typography. These dimensions are minimums. The explicit tab order is replay → secondary → primary → About.
 
-Keyboard focus changes the border to the action color and strengthens its thickness. Under high contrast, accent and pressed combinations use Windows highlight colors and their paired text colors. About retains the same shared interaction states with a transparent, borderless resting appearance and no minimum width.
+The shared non-interactive outer ring appears for keyboard focus. After an operation, focus returns to the initiating button only if visible and enabled, the window is active, and keyboard focus was previously inside the window.
 
 ### Prepared replay
 
-Replay uses the neutral button surface and blue label with a native filled play triangle (16 × 16 DIP) separated from its label (10 DIP). Its minimum dimensions are larger (182 × 44 DIP). It remains a listening action; hearing confirmation is a separate decision.
+SetupReplay uses the replay color family, shared padding, minimum dimensions (148 × 38 DIP) and a filled play triangle (8 × 10 DIP) separated from its label (10 DIP). It is visible in testing/listening. Replay, decisions and receiver controls disable while busy or closing. Replay remains separate from the explicit hearing decision.
 
-Replay is visible during the testing and listening states. The replay, decision and receiver controls disable while an operation is busy or the window is closing. After an operation, keyboard focus returns to the initiating button only when it is visible, enabled and the window remains active with prior keyboard focus.
+### Device identity
 
-### Task group and feedback
+The shaded HomePod mini appears only for model AudioAccessory5,1 while the window's high-contrast palette is inactive. Other/unselected models and the high-contrast palette use the monochrome speaker in the same centered slot. Detail identifies HomePod mini for that model, otherwise Windows audio output; the ready state displays the configured output name.
 
-The white task group holds a task title, instruction, optional progress, receiver choice, replay and supporting status. The receiver picker uses the native WPF list, a bounded height (70–110 DIP) and item padding (10 DIP); unavailable receivers remain disabled. Failures appear as wrapped text in the same group.
+### Task and feedback
 
-The main instruction is a polite live region. The window combines the instruction with visible status for its accessible name, suppresses unchanged announcements and raises `LiveRegionChanged` for listeners. Preserve readable text feedback alongside native state styling.
+The task stack holds instruction, optional native preparation indicator (3 DIP high), receiver choice, replay and supporting status. The native receiver list is bounded (70–110 DIP) with item padding (10 DIP); unavailable or unqualified receivers remain disabled.
 
-**The Native Feedback Rule.** Use the implemented text, focus and control states without added transition effects. Preparation uses the native progress indicator; its indeterminate animation is enabled only when Windows client-area animation is enabled and high contrast is off.
+The instruction is a polite live region. Its accessible name includes visible status; unchanged announcements are suppressed and LiveRegionChanged is raised when listeners exist.
+
+**The Native Feedback Rule.** Use text, focus and native control states without added transitions. Preparation is indeterminate only when Windows client-area animation is enabled and high contrast is off.
 
 ### About
 
-About opens a native owned window, centered on the setup, with a fixed width (400 DIP), height sized to content and body margin (24 DIP). It reuses the setup font, foreground, background and shared neutral button style for licensing access.
+About has minimum dimensions (44 × 32 DIP), a transparent resting fill, no resting border and left-aligned text; shared focus/interaction behavior remains. Its owned native window is centered on setup, fixed width (400 DIP), height sized to content, with body margin (24 DIP). Licensing access reuses the neutral button style.
 
 ## Do's and Don'ts
 
 ### Do:
 
-- **Do** carry the chosen Apple Devices reference through neutral layering, precise type and restrained blue actions.
-- **Do** reuse the existing WPF brushes and button styles, including their keyboard and high-contrast states.
-- **Do** preserve native window controls, readable wrapped feedback and polite state announcements.
-- **Do** use native Path geometry for the setup's device and play icons.
-- **Do** keep replay and explicit hearing confirmation as distinct controls.
+- **Do** carry the approved Apple Devices direction through one white field, centered device identity, precise native type and restrained blue actions.
+- **Do** reuse the existing WPF brushes and role-specific button styles, including focus and SystemColors mappings.
+- **Do** preserve native window controls, wrapped feedback, polite announcements and the authored XAML artwork with its fallback.
+- **Do** keep replay separate from explicit hearing confirmation.
 
 ### Don't:
 
-- **Don't** reinstate the rejected bare text-and-buttons arrangement as the visual authority.
-- **Don't** add decorative shadows or transition effects to the setup's quiet task area.
-- **Don't** replace Windows contrast colors with fixed palette values in high-contrast mode.
-- **Don't** create a second browser-style implementation as the authority for these native controls.
+- **Don't** restore the superseded silver surround and grouped task card as visual authority.
+- **Don't** turn the HomePod drawing's shading into decorative panel elevation.
+- **Don't** override Windows contrast colors with fixed light-palette values when high contrast is active.
+- **Don't** make a browser implementation authoritative for these native controls.

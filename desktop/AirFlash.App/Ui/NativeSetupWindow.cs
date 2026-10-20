@@ -13,24 +13,14 @@ public partial class NativeSetupWindow : Window
 {
     private readonly NativeSetupFlow _flow;
     private readonly CancellationTokenSource _lifetime = new();
-    private bool _busy, _closing, _allowClose, _confirming;
+    private bool _busy, _closing, _allowClose, _confirming, _highContrast;
     private string? _operationError, _selectedId, _lastAnnouncement;
     public NativeSetupWindow(NativeSetupFlow flow, bool initializeOnLoad = true, bool verifyExistingConnection = false)
     {
         _flow = flow;
         InitializeComponent();
-        if (SystemParameters.HighContrast)
-        {
-            Resources["SetupPaper"] = SystemColors.WindowBrush; Resources["SetupFooter"] = SystemColors.ControlBrush;
-            Resources["SetupCanvas"] = SystemColors.ControlBrush;
-            Resources["SetupInk"] = SystemColors.WindowTextBrush; Resources["SetupMuted"] = SystemColors.WindowTextBrush;
-            Resources["SetupLine"] = SystemColors.WindowTextBrush; Resources["SetupAccent"] = SystemColors.HighlightBrush;
-            Resources["SetupAccentText"] = SystemColors.HighlightTextBrush;
-            Resources["SetupHover"] = SystemColors.ControlBrush; Resources["SetupAccentHover"] = SystemColors.HighlightBrush;
-            Resources["SetupPressed"] = SystemColors.HighlightBrush; Resources["SetupPressedText"] = SystemColors.HighlightTextBrush;
-            Resources["SetupAccentPressed"] = SystemColors.HighlightBrush;
-            Resources["SetupButtonFill"] = SystemColors.WindowBrush; Resources["SetupButtonBorder"] = SystemColors.WindowTextBrush;
-        }
+        if (SystemParameters.HighContrast) ApplyHighContrastPalette();
+        SizeChanged += (_, _) => RefreshPresentation();
         AppIconService.Track(this);
         Closing += CloseSafely;
         _flow.Changed += FlowChanged;
@@ -40,6 +30,41 @@ public partial class NativeSetupWindow : Window
                 await _flow.ConnectAsync(receiver, token);
         });
         RefreshView();
+    }
+    internal void ApplyHighContrastPalette()
+    {
+        _highContrast = true;
+        foreach (var key in new[] { "SetupPaper", "SetupCanvas", "SetupFooter", "SetupButtonFill", "SetupReplayFill", "SetupReplayHover" })
+            Resources[key] = SystemColors.WindowBrush;
+        foreach (var key in new[] { "SetupInk", "SetupMuted", "SetupLine", "SetupButtonInk", "SetupButtonBorder", "SetupReplayBorder", "SetupReplayInk" })
+            Resources[key] = SystemColors.WindowTextBrush;
+        foreach (var key in new[] { "SetupAccent", "SetupAccentBorder", "SetupAccentHover", "SetupAccentPressed", "SetupPressed", "SetupReplayPressed" })
+            Resources[key] = SystemColors.HighlightBrush;
+        foreach (var key in new[] { "SetupAccentText", "SetupPressedText", "SetupReplayPressedText" })
+            Resources[key] = SystemColors.HighlightTextBrush;
+        Resources["SetupHover"] = SystemColors.ControlBrush;
+        Resources["SetupHoverText"] = SystemColors.ControlTextBrush;
+    }
+    private void RefreshPresentation()
+    {
+        var compact = (ActualHeight > 0 ? ActualHeight : Height) < 430;
+        var listening = _flow.Step is NativeSetupStep.Testing or NativeSetupStep.Listening;
+        var artwork = !_highContrast && _flow.SelectedReceiver?.Model == "AudioAccessory5,1";
+        DeviceArtwork.Visibility = artwork ? Visibility.Visible : Visibility.Collapsed;
+        GenericArtwork.Visibility = artwork ? Visibility.Collapsed : Visibility.Visible;
+        foreach (var view in new[] { DeviceArtwork, GenericArtwork })
+        {
+            view.Height = compact ? 80 : 106;
+            view.Margin = new(0, compact ? 16 : 24, 0, 0);
+        }
+        HeaderTitle.Margin = new(0, compact ? 8 : 10, 0, 0);
+        TaskContent.Margin = new(0, compact ? 20 : 34, 0, 0);
+        TaskTitle.Visibility = listening ? Visibility.Collapsed : Visibility.Visible;
+        StepText.FontSize = listening ? 22 : 14;
+        StepText.FontWeight = listening ? FontWeights.SemiBold : FontWeights.Normal;
+        StepText.LineHeight = listening ? 30 : 21;
+        StepText.Margin = new(0, listening ? 0 : 10, 0, 0);
+        StepText.SetResourceReference(TextBlock.ForegroundProperty, listening ? "SetupInk" : "SetupMuted");
     }
     public void RefreshView()
     {
@@ -102,6 +127,7 @@ public partial class NativeSetupWindow : Window
         ReceiverPicker.IsEnabled = enabled;
         StatusText.Text = _operationError ?? _flow.Error ?? (step == NativeSetupStep.Driver ? "如 Windows 提示，请允许安装。" : "");
         StatusText.Visibility = StatusText.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        RefreshPresentation();
         AnnounceState(StatusText.Text.Length == 0 ? StepText.Text : StepText.Text + " " + StatusText.Text);
     }
     private void AnnounceState(string text)

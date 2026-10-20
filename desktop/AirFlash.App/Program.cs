@@ -24,11 +24,12 @@ internal static class Program
             if (args.Contains("--native-check") && args.Contains("--data-directory"))
                 AppPaths.DataDirectory = Path.GetFullPath(NativeOutputMaintenance.Argument(args, "--data-directory"));
             // The collector gets isolated logs, including failures before WPF initialization.
-            if (args.Contains("--compat-check"))
+            if (args.Contains("--compat-check") || args.Contains("--setup-smoke"))
             {
                 var index = Array.IndexOf(args, "--output");
                 if (index >= 0 && index + 1 < args.Length)
-                    AppPaths.DataDirectory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(args[index + 1]))!, "compat-logs");
+                    AppPaths.DataDirectory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(args[index + 1]))!,
+                        args.Contains("--setup-smoke") ? "setup-data" : "compat-logs");
             }
             AppPaths.Log($"Startup stage={stage} version={AppPaths.Version} os={Environment.OSVersion.Version} architecture={RuntimeInformation.ProcessArchitecture}");
             if (!WindowsCapabilities.Current.Supported) throw new PlatformNotSupportedException(WindowsCompatibility.Requirement);

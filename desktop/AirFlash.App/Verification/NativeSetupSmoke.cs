@@ -23,6 +23,21 @@ internal static class NativeSetupSmoke
         var checks = new List<string>();
         try
         {
+            if (args.Contains("--preview"))
+            {
+                platform.Installed = true;
+                await flow.StartAutomaticAsync(default);
+                window.RefreshView();
+                window.Title = "AppleHome · 界面预览";
+                var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                window.Closed += (_, _) => closed.TrySetResult();
+                window.Show();
+                await Capture("preview-listening", "听到声音了吗");
+                App.WriteOutput(args, new { ok = true, preview_only = true, audio_sent = false, hardware_used = false,
+                    production_state_modified = false, state = flow.Step.ToString(), data_directory = AppPaths.DataDirectory });
+                await closed.Task;
+                return 0;
+            }
             await flow.RefreshAsync(default);
             window.RefreshView(); window.Show();
             await Capture("driver", "正在安装音频驱动");
@@ -48,6 +63,30 @@ internal static class NativeSetupSmoke
                 throw new InvalidOperationException("State changes must have one polite, meaningful automation announcement.");
             checks.Add("state-announcement-is-polite-and-current");
             checks.Add("confirmation-keeps-only-essential-content");
+            var replay = (Button)window.FindName("ReplayButton");
+            var primary = (Button)window.FindName("PrimaryButton");
+            var secondary = (Button)window.FindName("SecondaryButton");
+            if (window.Width != 560 || window.Height != 464 || replay.ActualHeight < 38 || primary.ActualHeight < 38
+                || primary.ActualWidth < 112 || secondary.ActualWidth < 88
+                || ((FrameworkElement)window.FindName("DeviceArtwork")).Visibility != Visibility.Visible)
+                throw new InvalidOperationException("The approved device-centered layout and button targets must be present.");
+            if (((TextBlock)window.FindName("TaskTitle")).Visibility != Visibility.Collapsed)
+                throw new InvalidOperationException("The hearing question must not have a redundant task heading.");
+            foreach (var button in new[] { replay, primary, secondary })
+            {
+                var foreground = ((SolidColorBrush)button.Foreground).Color;
+                var background = ((SolidColorBrush)button.Background).Color;
+                var light = Luminance(foreground); var dark = Luminance(background);
+                if ((Math.Max(light, dark) + 0.05) / (Math.Min(light, dark) + 0.05) < 4.5)
+                    throw new InvalidOperationException("Button labels must retain readable contrast.");
+            }
+            checks.Add("approved-layout-and-button-contrast");
+            replay.Focus();
+            await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+            if (!replay.IsKeyboardFocused || ((Border)replay.Template.FindName("FocusRing", replay)).Opacity != 1)
+                throw new InvalidOperationException("Keyboard focus needs a visible ring outside the button.");
+            await Capture("keyboard-focus", "听到声音了吗");
+            checks.Add("keyboard-focus-ring-visible");
             var beforeReplay = platform.PlayCount;
             var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             platform.Playback = finished.Task;
@@ -65,8 +104,13 @@ internal static class NativeSetupSmoke
                 throw new InvalidOperationException("The replay button must play again without completing setup.");
             checks.Add("replay-button-twice-and-no-overlap");
             window.Width = window.MinWidth;
+            window.Height = window.MinHeight;
             await Capture("compact-confirmation", "听到声音了吗");
-            window.Width = 520;
+            var compactReplay = replay.TransformToAncestor(window).TransformBounds(new Rect(0, 0, replay.ActualWidth, replay.ActualHeight));
+            var compactPrimary = primary.TransformToAncestor(window).TransformBounds(new Rect(0, 0, primary.ActualWidth, primary.ActualHeight));
+            if (compactReplay.Bottom + 4 > compactPrimary.Top)
+                throw new InvalidOperationException("Compact setup must keep replay visible above the pinned decisions.");
+            window.Width = 560; window.Height = 464;
             if (platform.Completed) throw new InvalidOperationException("Setup completed before the user confirmed music.");
             await flow.ConfirmMusicAsync(default); window.RefreshView();
             await Capture("ready", "已准备好");
@@ -93,6 +137,21 @@ internal static class NativeSetupSmoke
             if (flow.Step != NativeSetupStep.Listening)
                 throw new InvalidOperationException("Search recovery must retry the automatic HomePod connection.");
             checks.Add("discovery-failure-retries-without-manual-device-setup");
+            platform.Receiver = platform.Receiver with { Name = new string('长', 160) };
+            await flow.StartAutomaticAsync(default); window.RefreshView();
+            await Capture("long-device-name", "听到声音了吗");
+            var title = (TextBlock)window.FindName("HeaderTitle");
+            if (title.Text.Length > 96 || title.TextTrimming != TextTrimming.CharacterEllipsis)
+                throw new InvalidOperationException("Long device names must remain bounded and visibly trimmed.");
+            window.ApplyHighContrastPalette(); window.RefreshView();
+            await Capture("system-colors", "听到声音了吗");
+            if (!ReferenceEquals(window.Resources["SetupReplayFill"], SystemColors.WindowBrush)
+                || !ReferenceEquals(window.Resources["SetupReplayInk"], SystemColors.WindowTextBrush)
+                || !ReferenceEquals(window.Resources["SetupAccentText"], SystemColors.HighlightTextBrush)
+                || ((FrameworkElement)window.FindName("DeviceArtwork")).Visibility != Visibility.Collapsed
+                || ((FrameworkElement)window.FindName("GenericArtwork")).Visibility != Visibility.Visible)
+                throw new InvalidOperationException("System contrast colors must replace the pale artwork and control palette.");
+            checks.Add("system-palette-and-monochrome-artwork");
             App.WriteOutput(args, new { ok = true, checks, audio_sent = false, hardware_used = false, production_state_modified = false });
             return 0;
         }
@@ -125,9 +184,9 @@ internal static class NativeSetupSmoke
                 throw new InvalidOperationException($"The {name} screen is missing its instruction.");
             if (elements.OfType<TextBox>().Any() || elements.OfType<Slider>().Any())
                 throw new InvalidOperationException("The first-run wizard must not ask for transport parameters or provide daily volume controls.");
-            if (window.ActualWidth is < 420 or > 520 || window.ActualHeight is < 300 or > 460)
+            if (window.ActualWidth is < 420 or > 560 || window.ActualHeight is < 300 or > 464)
                 throw new InvalidOperationException("The setup window must remain compact.");
-            foreach (var button in elements.OfType<Button>())
+            foreach (var button in elements.OfType<Button>().Where(button => button.IsVisible))
             {
                 var bounds = button.TransformToAncestor(window).TransformBounds(new Rect(0, 0, button.ActualWidth, button.ActualHeight));
                 if (bounds.Left < 0 || bounds.Right > window.ActualWidth || bounds.Top < 0 || bounds.Bottom > window.ActualHeight)
@@ -140,6 +199,11 @@ internal static class NativeSetupSmoke
             using (var file = File.Create(Path.Combine(directory, "setup-" + name + ".png"))) encoder.Save(file);
             checks.Add(name + "-visible-and-no-technical-inputs");
         }
+    }
+    private static double Luminance(Color color)
+    {
+        static double Linear(byte value) { var channel = value / 255.0; return channel <= 0.04045 ? channel / 12.92 : Math.Pow((channel + 0.055) / 1.055, 2.4); }
+        return 0.2126 * Linear(color.R) + 0.7152 * Linear(color.G) + 0.0722 * Linear(color.B);
     }
     private static IEnumerable<DependencyObject> Descendants(DependencyObject parent)
     {
@@ -155,7 +219,7 @@ internal static class NativeSetupSmoke
         internal int PlayCount;
         internal Task? Playback;
         internal Exception? DiscoveryError;
-        internal readonly Receiver Receiver = new("9efd9099abd6", "da", "127.0.0.1")
+        internal Receiver Receiver = new("9efd9099abd6", "da", "127.0.0.1")
             { Model = "AudioAccessory5,1", SoftwareVersion = "27.0", IsLeader = true, Codecs = [1] };
         private readonly EndpointIdentity _endpoint = new("simulated-output", "simulated-adapter", NativeBindingPolicy.HardwareId,
             NativeBindingPolicy.Provider, NativeBindingPolicy.DriverVersion, NativeBindingPolicy.DriverSha256, "CABLE Input",

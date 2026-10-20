@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-19T22:28:35+08:00",
+  "generatedAt": "2026-10-20T14:40:00+08:00",
   "title": "Design System: AppleHome",
   "extensions": {
     "sourceAuthority": {
@@ -9,39 +9,59 @@
         "desktop/AirFlash.App/Ui/NativeSetupWindow.xaml",
         "desktop/AirFlash.App/Ui/NativeSetupWindow.cs"
       ],
-      "units": "Frontmatter px values preserve the numeric WPF DIP values. Padding uses top/right/bottom/left order.",
-      "preview": "No HTML/CSS preview is supplied; the native WPF source is authoritative."
+      "units": "Frontmatter px values preserve numeric WPF DIP values. Padding uses top/right/bottom/left order.",
+      "preview": "Native WPF source is authoritative; no HTML/CSS preview is supplied.",
+      "approvedConcept": [
+        "artifacts/design-minimal-installer-20261020/minimal-installer-v2-final.png",
+        "artifacts/design-minimal-installer-20261020/minimal-installer-v2-final.xaml"
+      ]
     },
     "highContrast": {
-      "evaluation": "SystemParameters.HighContrast is evaluated when the setup window is constructed.",
+      "evaluation": "SystemParameters.HighContrast is evaluated at construction; ApplyHighContrastPalette sets the window flag and resource mappings.",
       "resourceMappings": {
         "SetupPaper": "SystemColors.WindowBrush",
-        "SetupCanvas": "SystemColors.ControlBrush",
-        "SetupFooter": "SystemColors.ControlBrush",
+        "SetupCanvas": "SystemColors.WindowBrush",
+        "SetupFooter": "SystemColors.WindowBrush",
+        "SetupButtonFill": "SystemColors.WindowBrush",
+        "SetupReplayFill": "SystemColors.WindowBrush",
+        "SetupReplayHover": "SystemColors.WindowBrush",
         "SetupInk": "SystemColors.WindowTextBrush",
         "SetupMuted": "SystemColors.WindowTextBrush",
+        "SetupLine": "SystemColors.WindowTextBrush",
+        "SetupButtonInk": "SystemColors.WindowTextBrush",
+        "SetupButtonBorder": "SystemColors.WindowTextBrush",
+        "SetupReplayBorder": "SystemColors.WindowTextBrush",
+        "SetupReplayInk": "SystemColors.WindowTextBrush",
         "SetupAccent": "SystemColors.HighlightBrush",
-        "SetupAccentText": "SystemColors.HighlightTextBrush",
-        "SetupHover": "SystemColors.ControlBrush",
+        "SetupAccentBorder": "SystemColors.HighlightBrush",
         "SetupAccentHover": "SystemColors.HighlightBrush",
-        "SetupPressed": "SystemColors.HighlightBrush",
-        "SetupPressedText": "SystemColors.HighlightTextBrush",
         "SetupAccentPressed": "SystemColors.HighlightBrush",
-        "SetupButtonFill": "SystemColors.WindowBrush",
-        "SetupButtonBorder": "SystemColors.WindowTextBrush"
-      }
+        "SetupPressed": "SystemColors.HighlightBrush",
+        "SetupReplayPressed": "SystemColors.HighlightBrush",
+        "SetupAccentText": "SystemColors.HighlightTextBrush",
+        "SetupPressedText": "SystemColors.HighlightTextBrush",
+        "SetupReplayPressedText": "SystemColors.HighlightTextBrush",
+        "SetupHover": "SystemColors.ControlBrush",
+        "SetupHoverText": "SystemColors.ControlTextBrush"
+      },
+      "artwork": "Use GenericArtwork while the window's high-contrast palette is active.",
+      "captureLimit": "setup-system-colors.png calls the mapping with current system colors; it does not verify an OS contrast-mode transition."
     },
     "focus": {
       "restingButtonBorderDip": 1,
-      "keyboardFocusedButtonBorderDip": 2,
-      "keyboardFocusedButtonBrush": "SetupAccent",
+      "ringStrokeDip": 2,
+      "ringMarginDip": -4,
+      "ringCornerRadiusDip": 11,
+      "ringBrush": "SetupAccent",
+      "ringTrigger": "IsKeyboardFocused",
+      "layout": "Separate non-hit-testable ring; control border and layout dimensions do not change.",
       "tabIndices": {
         "ReplayButton": 0,
         "SecondaryButton": 1,
         "PrimaryButton": 2,
         "AboutButton": 3
       },
-      "restoration": "After an operation, restore the initiating button only when it is visible and enabled, the window is active, and keyboard focus was previously within the window."
+      "restoration": "After an operation, restore the initiating button only when visible and enabled, the window is active, and keyboard focus was previously within the window."
     },
     "nativeMotion": {
       "customTransitions": "None; text and native control states update without added motion.",
@@ -52,58 +72,125 @@
       "announcement": "The main instruction's accessible name includes visible status; unchanged announcements are suppressed and LiveRegionChanged is raised when listeners exist."
     },
     "nativeSizing": {
-      "windowDip": [520, 420],
-      "minimumWindowDip": [440, 380],
-      "minimumButtonDip": [98, 36],
-      "minimumReplayDip": [182, 44],
-      "receiverPickerHeightDip": [70, 110],
+      "windowDip": [
+        560,
+        464
+      ],
+      "minimumWindowDip": [
+        440,
+        380
+      ],
+      "minimumButtonDip": [
+        88,
+        38
+      ],
+      "minimumPrimaryDip": [
+        112,
+        38
+      ],
+      "minimumReplayDip": [
+        148,
+        38
+      ],
+      "minimumAboutDip": [
+        44,
+        32
+      ],
+      "receiverPickerHeightDip": [
+        70,
+        110
+      ],
+      "receiverItemPaddingDip": 10,
+      "preparationHeightDip": 3,
+      "bodyMarginDip": [
+        26,
+        0,
+        26,
+        12
+      ],
+      "footerPaddingDip": [
+        26,
+        17,
+        26,
+        17
+      ],
+      "decisionGapDip": 12,
+      "artworkSlotDip": [
+        120,
+        106
+      ],
+      "artworkTopMarginDip": 24,
+      "deviceNameTopMarginDip": 10,
+      "deviceDetailTopMarginDip": 4,
+      "taskTopMarginDip": 34,
+      "compact": {
+        "outerHeightLessThanDip": 430,
+        "artworkHeightDip": 80,
+        "artworkTopMarginDip": 16,
+        "deviceNameTopMarginDip": 8,
+        "taskTopMarginDip": 20
+      },
       "disabledControlOpacity": 0.45
     },
     "iconProvenance": {
-      "device": "Native XAML Path geometry in NativeSetupWindow.xaml.",
-      "play": "Native XAML Path geometry in NativeSetupWindow.xaml.",
+      "device": "Native XAML Canvas/Path/Ellipse/DrawingBrush geometry authored from the directly approved minimal-installer-v2-final.xaml. Model AudioAccessory5,1 only while the window's high-contrast palette is inactive.",
+      "fallback": "GenericArtwork is native XAML speaker Path geometry for other/unselected models and high contrast.",
+      "play": "Native XAML Path, 8 × 10 DIP, with a 10-DIP label gap.",
       "shippingRasters": "These setup controls introduce no raster assets."
+    },
+    "verification": {
+      "review": "artifacts/minimal-ui-implementation-20261020/review/impeccable-finish-review.md",
+      "captures": [
+        "artifacts/minimal-ui-implementation-20261020/setup-listening.png",
+        "artifacts/minimal-ui-implementation-20261020/setup-compact-confirmation.png",
+        "artifacts/minimal-ui-implementation-20261020/setup-keyboard-focus.png",
+        "artifacts/minimal-ui-implementation-20261020/setup-discovery-unavailable.png",
+        "artifacts/minimal-ui-implementation-20261020/setup-ready.png",
+        "artifacts/minimal-ui-implementation-20261020/setup-system-colors.png",
+        "artifacts/minimal-ui-implementation-20261020/setup-long-device-name.png"
+      ],
+      "boundary": "Existing compiled-WPF client captures use a mock platform; native whole-window chrome is not captured. No fresh UI, audio, hardware or backend validation was performed for documentation.",
+      "qualityBar": "No independent QUALITY BAR card or native Windows reference packet was supplied; no independent ceiling pass is claimed."
     }
   },
   "narrative": {
     "northStar": "Apple Devices for Windows",
-    "overview": "AppleHome's setup follows the user's chosen Apple Devices reference: pale silver surroundings, a white grouped work area, precise type and restrained blue actions. The tone is calm, clear and polished. Device identity leads; the current task and its next action remain easy to scan.\n\nThis document records the implemented Windows WPF setup language. Native window controls, keyboard behavior and accessible state feedback belong to that language. `desktop/AirFlash.App/Ui/NativeSetupWindow.xaml` and `NativeSetupWindow.cs` are the implementation authority. Frontmatter uses portable `px` notation for the same numeric WPF device-independent pixel (DIP) values; padding uses top/right/bottom/left order. It does not define a separate CSS implementation.",
+    "overview": "AppleHome's setup carries the user's chosen Apple Devices reference through one white field, centered device identity, precise native type and restrained blue actions. The directly user-approved final concept establishes the direction; the WPF implementation establishes exact values.\n\nNativeSetupWindow.xaml and NativeSetupWindow.cs are the implementation authority. The approved visual authority is artifacts/design-minimal-installer-20261020/minimal-installer-v2-final.png and its editable .xaml. Portable px notation below preserves numeric WPF device-independent pixel (DIP) values; padding uses top/right/bottom/left order. No HTML/CSS implementation or preview is supplied.",
     "keyCharacteristics": [
-      "Quiet neutral layers with one blue action family.",
-      "Clear device identity and compact, readable task hierarchy.",
-      "Soft grouped surfaces with smaller control corners.",
-      "Immediate state feedback through text and native control states.",
-      "Native Windows accessibility and window affordances."
+      "One white field with centered device identity and task feedback.",
+      "Native vector HomePod mini artwork with a monochrome speaker fallback.",
+      "A prominent listening question and a quieter model line.",
+      "Distinct replay, secondary and primary actions with visible keyboard focus.",
+      "Native Windows controls and accessible text feedback."
     ],
     "rules": [
       {
         "name": "The System Contrast Rule",
-        "body": "When high contrast is active at window creation, use the implemented Windows SystemColors mappings for surfaces, text, actions and interaction states. Do not hold the light palette above the user's contrast colors.",
+        "body": "When high contrast is active at window creation, apply the implemented Windows SystemColors mappings and use the monochrome speaker fallback. The system-colors capture exercises explicit mapping with current colors; it does not verify an OS contrast-mode transition.",
         "section": "colors"
       },
       {
-        "name": "The Quiet Layers Rule",
-        "body": "Use tonal separation and spacing to organize the setup; keep ornamental depth out of the task area.",
+        "name": "The Quiet Field Rule",
+        "body": "Keep the setup body and footer on one continuous field; separate identity, task and actions with spacing and type.",
         "section": "elevation"
       },
       {
         "name": "The Native Feedback Rule",
-        "body": "Use the implemented text, focus and control states without added transition effects. Preparation uses the native progress indicator; its indeterminate animation is enabled only when Windows client-area animation is enabled and high contrast is off.",
+        "body": "Use text, focus and native control states without added transitions. Preparation is indeterminate only when Windows client-area animation is enabled and high contrast is off.",
         "section": "components"
       }
     ],
     "dos": [
-      "**Do** carry the chosen Apple Devices reference through neutral layering, precise type and restrained blue actions.",
-      "**Do** reuse the existing WPF brushes and button styles, including their keyboard and high-contrast states.",
-      "**Do** preserve native window controls, readable wrapped feedback and polite state announcements.",
-      "**Do** use native Path geometry for the setup's device and play icons.",
-      "**Do** keep replay and explicit hearing confirmation as distinct controls."
+      "**Do** carry the approved Apple Devices direction through one white field, centered device identity, precise native type and restrained blue actions.",
+      "**Do** reuse the existing WPF brushes and role-specific button styles, including focus and SystemColors mappings.",
+      "**Do** preserve native window controls, wrapped feedback, polite announcements and the authored XAML artwork with its fallback.",
+      "**Do** keep replay separate from explicit hearing confirmation."
     ],
     "donts": [
-      "**Don't** reinstate the rejected bare text-and-buttons arrangement as the visual authority.",
-      "**Don't** add decorative shadows or transition effects to the setup's quiet task area.",
-      "**Don't** replace Windows contrast colors with fixed palette values in high-contrast mode.",
-      "**Don't** create a second browser-style implementation as the authority for these native controls."
+      "**Don't** restore the superseded silver surround and grouped task card as visual authority.",
+      "**Don't** turn the HomePod drawing's shading into decorative panel elevation.",
+      "**Don't** override Windows contrast colors with fixed light-palette values when high contrast is active.",
+      "**Don't** make a browser implementation authoritative for these native controls."
     ]
   }
 }
