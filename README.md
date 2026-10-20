@@ -6,6 +6,8 @@
 
 <p align="center">Play your Windows audio through HomePod.</p>
 
+<p align="center"><strong>English</strong> · <a href="README.zh-CN.md">简体中文</a></p>
+
 <p align="center">
   <a href="https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.2/AppleHome-0.2.0-ec4a0e797fed.zip"><strong>Download Windows preview</strong></a>
   &nbsp;·&nbsp; <a href="#get-started">Get started</a>
@@ -23,10 +25,10 @@ AppleHomePod sends music, video and system audio from your PC to HomePod over yo
 > **Preview:** tested on Windows 10 Pro 22H2 (build 19045, x64) with one HomePod mini running software 27.0. Other Windows versions, HomePod models and stereo pairs have not been validated.
 
 <p align="center">
-  <img src="docs/images/setup-confirmation.png" width="546" alt="AppleHome setup with a centered HomePod mini, a replay button, and two buttons to confirm whether audio was heard.">
+  <img src="docs/images/setup-confirmation-en.png" width="546" alt="English AppleHome setup with a centered HomePod mini and the Play again, No audio and I heard it buttons.">
 </p>
 
-<p align="center"><sub>The setup confirmation screen. The current wizard uses Simplified Chinese.</sub></p>
+<p align="center"><sub>English setup preview from the localized development build. Preview 2 downloads still use Simplified Chinese.</sub></p>
 
 ## Use Windows controls
 
