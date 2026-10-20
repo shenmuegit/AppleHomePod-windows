@@ -1,6 +1,6 @@
 # Windows 原生 HomePod 输出验收记录
 
-初始日期：2026-10-15；最近更新：2026-10-19。依据 [原生输出规格](../superpowers/specs/2026-10-14-windows-native-homepod-output-design.md)与[实施计划](../superpowers/plans/2026-10-14-windows-native-homepod-output-implementation.md)。用户已在计划交接后继续，进入 Native inline 实现。
+初始日期：2026-10-15；最近更新：2026-10-20。依据 [原生输出规格](../superpowers/specs/2026-10-14-windows-native-homepod-output-design.md)与[实施计划](../superpowers/plans/2026-10-14-windows-native-homepod-output-implementation.md)。用户已在计划交接后继续，进入 Native inline 实现。
 
 ## 2026-10-20 自动发现后备路径与真实连接恢复
 
@@ -12,9 +12,9 @@ Windows DNS-SD 在可用Wi-Fi上曾返回1222；独立的局域网单播响应�
 
 将Windows浏览接口固定为返回1222、其后使用真实网络及当前shipping源码的实机检查，在519.256ms发现并确认“da”的完整合格档案；仅Windows解析失败的独立分支为519.165ms，两轮均无发现错误。原Windows路径的真实连接也进入Streaming，5秒发送627包，发送、同步、反馈与重传错误为0；确认音源未播放，非零PCM包为0，所以这是连接和传输证据，不是实际听音验收。证据位于`artifacts/validation/native-output/discovery-connect-20261020/`。
 
-新候选目录为`dist/auto-discovery-20261020/`。正常音乐确认、正式安装更新与当前运行状态由后续交付报告记录；不把旧后台04:20退出的历史故障追认为已解决，也不据短时连接证明过夜或断网恢复。
+新候选目录为`dist/auto-discovery-20261020/`。程序代码`cc0e3eda71aceef63b13bf292da211c10088ff36`，EXE SHA256 `f76b6162446dd5713e4fc54f9c874e73070e0a8e7497f80d538d76524be631a7`；安装副本、项目根目录入口与发布候选哈希一致。正式后台已通过所有权核验完成更新并成功启动，冷启动6371ms，原设备绑定文件与100ms记录未改。程序自动选择已有合格HomePod播放端点的Console/Multimedia角色，保持Windows音量；没有改动Communications角色。打开的真实窗口显示“da / HomePod – da / 已准备好”，随后用户用自己的正常音乐明确确认“正常播放，声音连续”。未播放提示音、录制PCM或使用麦克风。音乐期间非零媒体包持续增加，发送、同步、反馈与重传错误为0；本地capture→send p95约31ms，不能当作声学延迟。不把旧后台04:20退出的历史故障追认为已解决，也不据短时连接证明过夜或断网恢复。
 
-同轮正式发布启动检查还暴露原有3秒设备枚举上限：后台在发布环境冷启动时于`WindowsNativeOutput.Publish`超时。读取65个端点时，现在只为精确匹配的VB-CABLE候选计算驱动文件指纹，其他不合格硬件不再读取整份驱动文件；候选仍执行全部实时哈希、Provider、版本和端点资格检查。监视器的枚举等待边界调整到10秒，仍须成功核验后才清除validation fence。真实只读断言确认3个VB-CABLE端点的原始驱动哈希均保持正确，枚举耗时1941ms。此处是驱动核验边界，与HomePod音频缓冲无关；最终后台启动结果另行记录。
+同轮正式发布启动检查还暴露原有3秒设备枚举上限：后台在发布环境冷启动时于`WindowsNativeOutput.Publish`超时。读取65个端点时，现在只为精确匹配的VB-CABLE候选计算驱动文件指纹，其他不合格硬件不再读取整份驱动文件；候选仍执行全部实时哈希、Provider、版本和端点资格检查。监视器的枚举等待边界调整到10秒，仍须成功核验后才清除validation fence。真实只读断言确认3个VB-CABLE端点的原始驱动哈希均保持正确，枚举耗时1941ms。此处是驱动核验边界，与HomePod音频缓冲无关；最终正式后台已启动成功。
 
 ## 2026-10-20 设备搜索错误页与术语修正（前一修订）
 
