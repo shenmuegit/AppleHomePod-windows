@@ -2,6 +2,14 @@
 
 初始日期：2026-10-15；最近更新：2026-10-20。依据 [原生输出规格](../superpowers/specs/2026-10-14-windows-native-homepod-output-design.md)与[实施计划](../superpowers/plans/2026-10-14-windows-native-homepod-output-implementation.md)。用户已在计划交接后继续，进入 Native inline 实现。
 
+## 2026-10-20 0.2.0 Preview 1 封包后验收
+
+本包代码为 `567533684ccd04a2cd53783debd83925fda3d2c6`，EXE SHA256 为 `cfd1f60903da9100171604e2c6b52751a614070f2af350cd4f3c8b7d9224f316`。完整 ZIP SHA256 为 `05eefc6f55a39771f7249d4dfbe61ee430d7c3b9f9501524535fbbc61cd5540e`；交付 EXE、项目入口和正式安装文件一致。通过自有维护命令更新后台，绑定、校准和设备记录哈希未变。
+
+在 Windows 10 Pro 22H2 / 19045 / x64 与单只 HomePod mini 27.0 上，用用户自己的正常音乐和 Windows 原生控件确认音乐连续、调低/恢复音量正常，以及至少 15 秒静音后恢复正常。新版状态协议实际返回目标、实例、采集、发现、流、gate 和首包状态；观察期间实例一致。采集到发送 p95 约 28–34 ms，发送和同步错误均为 0，统计不代表端到端声学延迟。
+
+对应完整软件检查为 .NET 806 项、Python 125 项、Ruff、自包含发布与本机启动/引擎握手通过。未播放生成音频、录音或做断网测试，未重跑 30 分钟、过夜、视频持续或其他环境验收。本包内封存的待硬件验收记录保持原样，后续结果通过独立发布说明补充。发布入口、来源和限制见[0.2.0 Preview 1](../releases/v0.2.0-preview.1.md)。
+
 ## 2026-10-20 自动发现后备路径与真实连接恢复
 
 Windows DNS-SD 在可用Wi-Fi上曾返回1222；独立的局域网单播响应探针仍收到当前mini的完整广播。共享发现层现在保留正常Windows路径，并在该特定错误下自动改用标准mDNS查询。程序遍历可用IPv4组播网卡，使用临时UDP端口请求单播响应，不要求用户填IP或选择网卡，不修改DNS、代理、防火墙、注册表或系统网络服务。响应使用Windows自带的`DnsExtractRecordsFromMessage_W`解析，没有增加第三方运行依赖。
