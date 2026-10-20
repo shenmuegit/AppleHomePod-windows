@@ -138,7 +138,7 @@ public sealed class WindowsNativeOutput : INativeOutputMonitor, IMMNotificationC
         {
             _revalidate = false;
             validatedVersion = _bindingValidation.Version;
-            var endpoints = new WindowsNativeBinding().SnapshotAsync(default).WaitAsync(TimeSpan.FromSeconds(3)).GetAwaiter().GetResult();
+            var endpoints = new WindowsNativeBinding().SnapshotAsync(default).WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
             var current = endpoints.SingleOrDefault(e => e.EndpointId == _binding.Endpoint.EndpointId);
             var valid = current is not null && NativeBindingPolicy.ValidateLive(_binding, current) is null;
             if (_bindingValid && !valid) _generation = checked(_generation + 1);

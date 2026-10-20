@@ -198,7 +198,9 @@ public sealed class WindowsNativeBinding
                 var service = RegistryProperty(set, ref info, 4).TrimEnd('\0');
                 using var driver = driverKey.Length == 0 ? null : Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Class\" + driverKey, false);
                 using var serviceKey = service.Length == 0 ? null : Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\" + service, false);
-                var hash = DriverHash(serviceKey?.GetValue("ImagePath") as string);
+                // Only a VB-CABLE candidate needs a file fingerprint; unrelated display/audio drivers can be very large.
+                var hash = hardware.Contains(NativeBindingPolicy.HardwareId, StringComparer.OrdinalIgnoreCase)
+                    ? DriverHash(serviceKey?.GetValue("ImagePath") as string) : "";
                 adapters.Add(new(id.ToString(), hardware, driver?.GetValue("ProviderName") as string ?? "",
                     driver?.GetValue("DriverVersion") as string ?? "", hash));
             }
