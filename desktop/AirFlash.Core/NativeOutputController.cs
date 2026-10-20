@@ -166,10 +166,10 @@ public sealed class NativeOutputController
         var selected = _windows!.DefaultRenderIds.Any(id => id == _binding.Endpoint.EndpointId);
         var held = _externalActive || _externalAt is { } at && _time.GetElapsedTime(at) < TimeSpan.FromSeconds(30);
         if (!selected && !held) { await StopRouteAsync().ConfigureAwait(false); return; }
-        if (!_begun)
+        if (!_begun && _receiverWaitAt is null)
         {
             _connectRevision = _volume!.Revision;
-            await _host.BeginCaptureAsync(cancellation).ConfigureAwait(false); _begun = true; _receiverWaitAt = _time.GetTimestamp();
+            _receiverWaitAt = _time.GetTimestamp();
         }
         var receiver = resolve(_binding.ReceiverId);
         var metadataPending = receiver is not null && ReceiverIdentity.Normalize(receiver.Id) == _binding.ReceiverId && receiver.Online && receiver.Complete
@@ -193,6 +193,8 @@ public sealed class NativeOutputController
                 if (_time.GetElapsedTime(_receiverWaitAt!.Value) >= TimeSpan.FromSeconds(2)) throw new IOException("The bound HomePod is unavailable; startup sound cannot be retained indefinitely.");
                 return;
             }
+            // Discovery must not consume the bounded capture preroll before a transport can start.
+            await _host.BeginCaptureAsync(cancellation).ConfigureAwait(false); _begun = true;
             Interlocked.Increment(ref _routeEpoch); _active = true; _receiver = receiver; _stream = null; _remoteActual = null; _gateOpen = false; _lastGain = null; _deviceRevision = -1; _metricsAt = null;
             PublishStatus();
             _receiverWaitAt = null;
@@ -330,6 +332,7 @@ public sealed class NativeOutputController
     }
     private async Task StopRouteAsync()
     {
+        _receiverWaitAt = null;
         if (!_active && !_begun) return;
         Interlocked.Increment(ref _routeEpoch); _active = false;
         PublishStatus();

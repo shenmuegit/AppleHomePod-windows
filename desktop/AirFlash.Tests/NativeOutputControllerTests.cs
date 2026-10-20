@@ -612,9 +612,18 @@ public sealed class NativeOutputControllerTests
         using (var pending = new CancellationTokenSource(50))
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => f.Run!.WaitAsync(pending.Token));
         Assert.Empty(f.Starts);
+        Assert.DoesNotContain(f.Wire.Commands, command => command.Command == "begin_capture");
+        f.Time.Advance(TimeSpan.FromMilliseconds(1750));
+        await Until(() => f.Resolutions > 1);
+        Assert.DoesNotContain(f.Wire.Commands, command => command.Command == "begin_capture");
+        f.Monitor.Select(false); f.Time.Advance(TimeSpan.FromSeconds(3)); f.Monitor.Select(true);
+        await Until(() => f.Resolutions > 2 || f.Run!.IsCompleted);
+        using (var pending = new CancellationTokenSource(50))
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => f.Run!.WaitAsync(pending.Token));
         f.Receiver = complete; f.Time.Advance(TimeSpan.FromMilliseconds(250));
         await Until(() => f.Gates.Any(c => c.Params.Boolean("open") == true));
         Assert.Single(f.Starts);
+        Assert.Single(f.Wire.Commands, command => command.Command == "begin_capture");
     }
     [Fact]
     public async Task CaptureTimingReportsInitialAndBoundedSteadySamples()
