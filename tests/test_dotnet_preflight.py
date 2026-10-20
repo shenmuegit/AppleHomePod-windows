@@ -33,6 +33,9 @@ function global:Get-Command {
     if ($Name.Count -eq 1 -and $Name[0] -eq 'dotnet') {
         if ($global:airflashTestCase.hosts.path) {
             [pscustomobject]@{ Source = $global:airflashTestCase.hosts.path.path }
+            if ($global:airflashTestCase.hosts.path_second) {
+                [pscustomobject]@{ Source = $global:airflashTestCase.hosts.path_second.path }
+            }
         }
         return
     }
@@ -306,6 +309,18 @@ def test_preflight_checks_the_selected_host_in_desktop(fixture, available, selec
     assert calls[0]["path"] == str(paths[selected])
     assert calls[0]["cwd"] == str(fixture.root / "desktop")
     assert calls[0]["arguments"] == ["--version"]
+
+
+@pytest.mark.parametrize("entry", ["check-dotnet.ps1", "dotnet.ps1"])
+def test_multiple_path_hosts_use_the_first_without_combining_paths(fixture, entry):
+    selected = fixture.host("path")
+    fixture.host("path_second", resolve_exit=42)
+    arguments = ("--info",) if entry == "dotnet.ps1" else ()
+    result = fixture.run(entry, arguments)
+    assert result["error"] is None
+    assert result["exit"] == 0
+    assert [call["path"] for call in host_calls(result)] == [str(selected)]
+    assert host_calls(result)[0]["cwd"] == str(fixture.root / "desktop")
 
 
 @pytest.mark.parametrize("version", ["10.0.100", "10.0.301", "10.0.400"])
