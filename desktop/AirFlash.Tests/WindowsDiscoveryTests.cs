@@ -22,6 +22,86 @@ public sealed class WindowsDiscoveryTests
         });
     }
 
+    [Theory]
+    [InlineData("start")]
+    [InlineData("browse")]
+    [InlineData("resolve")]
+    [InlineData("worker")]
+    [InlineData("capability")]
+    public void DiscoveryFaultRecoversWithoutAnotherStartOrNetworkChange(string fault)
+    {
+        var time = new ManualTime(); var api = new FakeDns { FailBrowse = fault == "start" };
+        var available = fault != "capability";
+        using var discovery = new WindowsDiscovery(api, () => [], time: time, dnsAvailable: () => available);
+        IReadOnlyList<Receiver> last = []; discovery.Changed += values => last = values;
+        discovery.Start();
+        if (fault is "browse" or "resolve" or "worker")
+        {
+            if (fault == "browse") api.Browsers[0].Callback(1222, []);
+            else if (fault == "worker") api.Browsers[0].Failed("discovery worker stopped");
+            else { api.Browsers[0].Callback(0, [new(Name, 120)]); api.Resolvers[0].Callback(1222, null); }
+        }
+        var old = api.Operations.ToArray(); var attempts = api.BrowseAttempts;
+        api.FailBrowse = false; available = true;
+        time.Advance(TimeSpan.FromMilliseconds(999)); Assert.Equal(attempts, api.BrowseAttempts);
+        time.Advance(TimeSpan.FromMilliseconds(1)); Assert.Equal(attempts + 2, api.BrowseAttempts);
+        Assert.All(old, operation => Assert.Equal(1, operation.Stops));
+        api.Browsers[^2].Callback(0, [new(Name, 120)]); api.Resolvers[^1].Callback(0, Record());
+        Assert.Equal("192.0.2.10", Assert.Single(last).Address);
+        if (old.OfType<ResolveOperation>().FirstOrDefault() is { } stale) stale.Callback(0, Record("192.0.2.99"));
+        foreach (var staleBrowser in old.OfType<BrowseOperation>()) staleBrowser.Failed("obsolete query failure");
+        Assert.Equal("192.0.2.10", Assert.Single(last).Address);
+        attempts = api.BrowseAttempts; time.Advance(TimeSpan.FromSeconds(30)); Assert.Equal(attempts, api.BrowseAttempts);
+    }
+
+    [Fact]
+    public void DiscoveryRecoveryBacksOffAndStopCancelsPendingRetries()
+    {
+        var time = new ManualTime(); var api = new FakeDns { FailBrowse = true };
+        using var discovery = new WindowsDiscovery(api, () => [], time: time);
+        discovery.Start();
+        foreach (var seconds in new[] { 1, 2, 4, 8, 16, 30, 30 })
+        {
+            var attempts = api.BrowseAttempts;
+            time.Advance(TimeSpan.FromMilliseconds(seconds * 1000 - 1)); Assert.Equal(attempts, api.BrowseAttempts);
+            time.Advance(TimeSpan.FromMilliseconds(1)); Assert.Equal(attempts + 2, api.BrowseAttempts);
+        }
+        api.FailBrowse = false; time.Advance(TimeSpan.FromSeconds(30));
+        api.Browsers[^2].Callback(0, [new(Name, 120)]); api.Resolvers[^1].Callback(0, Record());
+        time.Advance(TimeSpan.FromSeconds(10)); api.Browsers[^2].Failed("new failure after recovery");
+        var recovered = api.BrowseAttempts;
+        time.Advance(TimeSpan.FromSeconds(1)); Assert.Equal(recovered + 2, api.BrowseAttempts);
+        api.Browsers[^2].Failed("pending retry before stop");
+        discovery.Stop(); var stopped = api.BrowseAttempts;
+        time.Advance(TimeSpan.FromHours(8)); Assert.Equal(stopped, api.BrowseAttempts);
+    }
+
+    [Fact]
+    public void SilentDiscoveryAndExpiredRecordsAreRefreshedWithoutAHotLoop()
+    {
+        var time = new ManualTime(); var api = new FakeDns();
+        using var discovery = new WindowsDiscovery(api, () => [], time: time);
+        discovery.Start(); time.Advance(TimeSpan.FromSeconds(29)); Assert.Equal(2, api.BrowseAttempts);
+        time.Advance(TimeSpan.FromSeconds(1)); Assert.Equal(4, api.BrowseAttempts);
+        api.Browsers[^2].Callback(0, [new(Name, 120)]); api.Resolvers[^1].Callback(0, Record());
+        time.Advance(TimeSpan.FromSeconds(119)); Assert.Equal(4, api.BrowseAttempts);
+        time.Advance(TimeSpan.FromSeconds(1)); Assert.Equal(4, api.BrowseAttempts);
+        time.Advance(TimeSpan.FromSeconds(1)); Assert.Equal(6, api.BrowseAttempts);
+        discovery.Dispose(); time.Advance(TimeSpan.FromMinutes(5)); Assert.Equal(6, api.BrowseAttempts);
+    }
+
+    [Fact]
+    public void AHealthyDeviceDoesNotHideAnotherUnresolvedDiscoveryQuery()
+    {
+        var time = new ManualTime(); var api = new FakeDns();
+        using var discovery = new WindowsDiscovery(api, () => [], time: time);
+        discovery.Start(); api.Browsers[0].Callback(0, [new(Name, 120)]); api.Resolvers[0].Callback(0, Record());
+        time.Advance(TimeSpan.FromSeconds(5));
+        api.Browsers[0].Callback(0, [new("Other._airplay._tcp.local", 120)]);
+        time.Advance(TimeSpan.FromSeconds(29)); Assert.Equal(2, api.BrowseAttempts);
+        time.Advance(TimeSpan.FromSeconds(1)); Assert.Equal(4, api.BrowseAttempts);
+    }
+
     [Fact]
     public async Task InFlightPublicationCannotFinishAfterTheNewInterfaceSnapshot()
     {
@@ -203,10 +283,12 @@ public sealed class WindowsDiscoveryTests
         public List<ResolveOperation> Resolvers { get; } = [];
         public IEnumerable<FakeOperation> Operations => Browsers.Cast<FakeOperation>().Concat(Resolvers);
         public bool EarlyBrowse, EarlyResolve, FailResolve, FailBrowse;
+        public int BrowseAttempts;
         public IDisposable Browse(string type, uint index, Action<uint, IReadOnlyList<DnsSdService>> callback, Action<string> failed)
         {
+            BrowseAttempts++;
             if (FailBrowse) throw new Win32Exception(87);
-            var operation = new BrowseOperation(index, callback); Browsers.Add(operation);
+            var operation = new BrowseOperation(index, callback, failed); Browsers.Add(operation);
             if (EarlyBrowse) callback(0, [new(Name, 120)]); return operation;
         }
         public IDisposable Resolve(string instance, string type, uint index, Action<uint, ServiceRecord?> callback, Action<string> failed)
@@ -223,7 +305,11 @@ public sealed class WindowsDiscoveryTests
         public Action? DuringStop;
         public void Dispose() { Stops++; DuringStop?.Invoke(); }
     }
-    private sealed class BrowseOperation(uint index, Action<uint, IReadOnlyList<DnsSdService>> callback) : FakeOperation(index) { public Action<uint, IReadOnlyList<DnsSdService>> Callback { get; } = callback; }
+    private sealed class BrowseOperation(uint index, Action<uint, IReadOnlyList<DnsSdService>> callback, Action<string> failed) : FakeOperation(index)
+    {
+        public Action<uint, IReadOnlyList<DnsSdService>> Callback { get; } = callback;
+        public Action<string> Failed { get; } = failed;
+    }
     private sealed class ResolveOperation(uint index, Action<uint, ServiceRecord?> callback) : FakeOperation(index) { public Action<uint, ServiceRecord?> Callback { get; } = callback; }
     private sealed class FakeNative : IWindowsDnsApi
     {

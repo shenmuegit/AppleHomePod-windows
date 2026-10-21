@@ -23,6 +23,7 @@ public sealed record TransportMetrics(double? SessionUptimeMs, long? SenderLateR
 }
 public sealed record EngineNotice(string Code, string Host, string Channel, string Message, bool? Retryable = null)
 {
+    public bool CanRetry() => Retryable ?? !new[] { "pairing", "srp", "verification", "credentials", "signature", "identity", "authentication" }.Any(word => Detail.Contains(word, StringComparison.OrdinalIgnoreCase));
     public static EngineNotice Parse(JsonElement item) => new(item.Text("code", "engine_error"), item.Text("host"), item.Text("channel"), item.Text("message", L.Get("Audio engine error.")), item.Boolean("retryable"));
     public string Detail => string.Join(" · ", new[] { Message, Host, Channel, Code }.Where(s => !string.IsNullOrWhiteSpace(s)));
 }

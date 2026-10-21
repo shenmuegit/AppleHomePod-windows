@@ -43,7 +43,8 @@ public sealed class NativeOutputController
     private NativeVolume? _volume;
     private SessionSnapshot? _stream;
     private Receiver? _receiver;
-    private long? _externalAt, _errorAt, _metricsAt;
+    private long? _externalAt, _errorAt, _metricsAt, _retryAt, _healthyAt;
+    private int _retrySeconds = 1;
     private long _routeEpoch, _connectRevision, _zeroRevision, _remoteObservedRevision;
     private ulong _streamCaptureEpoch;
     private int? _lastNonZero, _remoteActual, _restoreTarget;
@@ -94,7 +95,7 @@ public sealed class NativeOutputController
                     if (stream.State == PlaybackState.Connecting && _stream?.State is not PlaybackState.Connecting)
                     {
                         if (_stream is not null) _connectRevision = update.UserRevision;
-                        _remoteActual = null; _restoreSequence = null; _restoreTarget = null; _gateOpen = false; _lastGain = null; _deviceRevision = -1; _metricsAt = null;
+                        _remoteActual = null; _restoreSequence = null; _restoreTarget = null; _gateOpen = false; _lastGain = null; _deviceRevision = -1; _metricsAt = null; _healthyAt = null;
                     }
                     if (stream.Metrics is { } metrics && !ReferenceEquals(metrics, _stream?.Metrics)
                         && (_metricsAt is null || _time.GetElapsedTime(_metricsAt.Value) >= TimeSpan.FromSeconds(15)))
@@ -165,7 +166,7 @@ public sealed class NativeOutputController
     {
         var selected = _windows!.DefaultRenderIds.Any(id => id == _binding.Endpoint.EndpointId);
         var held = _externalActive || _externalAt is { } at && _time.GetElapsedTime(at) < TimeSpan.FromSeconds(30);
-        if (!selected && !held) { await StopRouteAsync().ConfigureAwait(false); return; }
+        if (!selected && !held) { await StopRouteAsync().ConfigureAwait(false); _retryAt = null; _retrySeconds = 1; return; }
         if (!_begun && !_waitingForReceiver)
         {
             _connectRevision = _volume!.Revision;
@@ -192,6 +193,11 @@ public sealed class NativeOutputController
             throw new InvalidOperationException("This receiver identity, firmware or group has not been qualified for native output.");
         if (!_active)
         {
+            if (_retryAt is { } retry)
+            {
+                if (_time.GetElapsedTime(retry) < TimeSpan.FromSeconds(_retrySeconds)) return;
+                _retryAt = null; _retrySeconds = Math.Min(_retrySeconds * 2, 30);
+            }
             // Discovery must not consume the bounded capture preroll before a transport can start.
             await _host.BeginCaptureAsync(cancellation).ConfigureAwait(false); _begun = true;
             Interlocked.Increment(ref _routeEpoch); _active = true; _receiver = receiver; _stream = null; _remoteActual = null; _gateOpen = false; _lastGain = null; _deviceRevision = -1; _metricsAt = null;
@@ -209,9 +215,20 @@ public sealed class NativeOutputController
             return; // Consume the new connection/volume snapshot before touching its capture gate.
         }
         if (_errorAt is { } failed && _session.Snapshot.State == PlaybackState.Error && _time.GetElapsedTime(failed) >= TimeSpan.FromMilliseconds(100))
-            throw new IOException(_session.Snapshot.Message);
+        {
+            if (_session.Snapshot.Diagnostics?.LastFault?.CanRetry() != true) throw new IOException(_session.Snapshot.Message);
+            await StopRouteAsync().ConfigureAwait(false);
+            _errorAt = null; _retryAt = _time.GetTimestamp();
+            _log?.Invoke($"Native route retry scheduled in {_retrySeconds} s after transient session failure.");
+            return;
+        }
         if (_stream?.State is not (PlaybackState.Streaming or PlaybackState.Standby)) return;
         await ApplyVolumeAsync(cancellation).ConfigureAwait(false);
+        if (_gateOpen && _stream.MediaStarted)
+        {
+            _healthyAt ??= _time.GetTimestamp();
+            if (_time.GetElapsedTime(_healthyAt.Value) >= TimeSpan.FromSeconds(10)) _retrySeconds = 1;
+        }
     }
     private async Task ApplyVolumeAsync(CancellationToken cancellation)
     {
@@ -330,6 +347,7 @@ public sealed class NativeOutputController
     }
     private async Task StopRouteAsync()
     {
+        _healthyAt = null;
         _waitingForReceiver = false;
         if (!_active && !_begun) return;
         Interlocked.Increment(ref _routeEpoch); _active = false;

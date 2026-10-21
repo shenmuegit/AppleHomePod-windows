@@ -454,7 +454,7 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
                 }
                 log?.Invoke($"Session failure: {JsonSerializer.Serialize(_diagnostics)}\n{error}");
                 Publish(epoch, PlaybackState.Error, notice.Detail);
-                if (!_settings.ForceReconnect || attempts > _settings.MaxReconnectAttempts || notice.Retryable == false || notice.Retryable is null && IsAuthenticationFailure(error.Message)) return;
+                if (!_settings.ForceReconnect || attempts > _settings.MaxReconnectAttempts || !notice.CanRetry()) return;
             }
             if (reoffer) continue;
             var delay = TimeSpan.FromMilliseconds(Math.Min(_timing.Retry.TotalMilliseconds * Math.Pow(2, attempts - 1), 8000));
@@ -500,7 +500,6 @@ public sealed class SessionController(IEngineFactory factory, IAudioService audi
     }
     private sealed class EngineFailure(EngineNotice notice) : IOException(notice.Detail) { public EngineNotice Notice { get; } = notice; }
     private sealed class PairCancelledException : OperationCanceledException;
-    private static bool IsAuthenticationFailure(string message) => new[] { "pairing", "srp", "verification", "credentials", "signature", "identity", "authentication" }.Any(word => message.Contains(word, StringComparison.OrdinalIgnoreCase));
     private void SetConnection(IEngineConnection connection, string session) { lock (_sync) { _connection = connection; _sessionId = session; _equalizerReady = false; } }
     private void ClearConnection(IEngineConnection connection) { lock (_sync) if (ReferenceEquals(_connection, connection)) { _connection = null; _sessionId = null; _equalizerReady = false; } }
     private static async Task RequestStopAsync(IEngineConnection connection, string session)

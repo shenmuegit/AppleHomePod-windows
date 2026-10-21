@@ -17,6 +17,8 @@ public sealed class WindowsDiscovery : IDiscoveryService
     private readonly Action<string> _log;
     private readonly TimeProvider _time;
     private readonly ITimer _expiry;
+    private DateTimeOffset? _retryAt, _probeAt, _healthyAt;
+    private int _retrySeconds = 1;
     private string _interfaceId = "";
     private uint? _interfaceIndex;
     private bool _started, _disposed;
@@ -45,23 +47,19 @@ public sealed class WindowsDiscovery : IDiscoveryService
             _interfaceId = id; _records.Clear(); _expires.Clear(); restart = _started;
         }
         Publish();
-        if (restart) RunSafely(Restart);
+        if (restart) RunSafely(() => Restart());
     }
     public void Start()
     {
-        if (!_dnsAvailable())
-        {
-            Failed?.Invoke(L.Get("HomePod discovery is unavailable on this PC. Please try again."));
-            RunningChanged?.Invoke(false); return;
-        }
         lock (_sync)
         {
             if (_disposed || _started) return;
             _started = true;
+            _retrySeconds = 1;
             NetworkChange.NetworkAddressChanged += NetworkChanged;
             NetworkChange.NetworkAvailabilityChanged += NetworkAvailabilityChanged;
         }
-        RunSafely(Restart);
+        RunSafely(() => Restart());
     }
     public void Stop()
     {
@@ -70,6 +68,7 @@ public sealed class WindowsDiscovery : IDiscoveryService
         {
             if (!_started) return;
             _started = false; ++_epoch;
+            _retryAt = _probeAt = _healthyAt = null;
             NetworkChange.NetworkAddressChanged -= NetworkChanged;
             NetworkChange.NetworkAvailabilityChanged -= NetworkAvailabilityChanged;
             _expiry.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
@@ -79,25 +78,44 @@ public sealed class WindowsDiscovery : IDiscoveryService
         RunningChanged?.Invoke(false);
         // Preserve cache when suspended; don't publish an empty discovery event.
     }
-    private void NetworkChanged(object? sender, EventArgs args) => RunSafely(Restart);
-    private void NetworkAvailabilityChanged(object? sender, NetworkAvailabilityEventArgs args) => RunSafely(Restart);
+    private void NetworkChanged(object? sender, EventArgs args) => RunSafely(() => Restart());
+    private void NetworkAvailabilityChanged(object? sender, NetworkAvailabilityEventArgs args) => RunSafely(() => Restart());
     private void RunSafely(Action action)
     {
         try { action(); }
-        catch (Exception error) { _log($"Discovery operation failed: {error}"); Failed?.Invoke(L.Format("Receiver discovery: {0}", error.Message)); }
+        catch (Exception error) { _log($"Discovery operation failed: {error}"); long epoch; lock (_sync) epoch = _epoch; Failure(epoch, L.Format("Receiver discovery: {0}", error.Message)); }
     }
-    private void Restart()
+    private void Failure(long epoch, string message)
+    {
+        int? seconds = null;
+        lock (_sync)
+        {
+            if (!Current(epoch)) return;
+            if (_retryAt is null)
+            {
+                var now = _time.GetUtcNow();
+                if (_healthyAt is { } healthy && now - healthy >= TimeSpan.FromSeconds(10)) _retrySeconds = 1;
+                seconds = _retrySeconds; _retryAt = now.AddSeconds(_retrySeconds);
+                _retrySeconds = Math.Min(_retrySeconds * 2, 30);
+                _healthyAt = null; ScheduleExpiry();
+            }
+        }
+        if (seconds is { } delay) _log($"HomePod discovery retry scheduled in {delay} s.");
+        Failed?.Invoke(message);
+    }
+    private void Restart(long? expectedEpoch = null)
     {
         string selected;
-        lock (_sync) { if (_disposed || !_started) return; selected = _interfaceId; }
+        lock (_sync) { if (_disposed || !_started || expectedEpoch is { } expected && expected != _epoch) return; selected = _interfaceId; }
         uint? index;
         try { index = DiscoveryInterface.ResolveIndex(selected, _adapters()); }
-        catch (NetworkInformationException error) { Failed?.Invoke(error.Message); index = null; }
+        catch (NetworkInformationException error) { _log(error.Message); index = null; }
         OperationSlot[] old; long epoch;
         lock (_sync)
         {
-            if (_disposed || !_started || selected != _interfaceId) return;
+            if (_disposed || !_started || selected != _interfaceId || expectedEpoch is { } expected && expected != _epoch) return;
             epoch = ++_epoch; _interfaceIndex = index;
+            _retryAt = _healthyAt = null; _probeAt = _time.GetUtcNow().AddSeconds(30);
             old = DetachOperations();
             // Show cache immediately, then retire entries not confirmed on resume.
             _expires.Clear();
@@ -105,10 +123,15 @@ public sealed class WindowsDiscovery : IDiscoveryService
             ScheduleExpiry();
         }
         Cancel(old);
+        if (!_dnsAvailable())
+        {
+            Failure(epoch, L.Get("HomePod discovery is unavailable on this PC. Please try again."));
+            RunningChanged?.Invoke(false); return;
+        }
         if (index is null)
         {
             RunningChanged?.Invoke(false);
-            Failed?.Invoke(L.Get("The selected network interface is unavailable. Discovery is paused."));
+            Failure(epoch, L.Get("The selected network interface is unavailable. Discovery is paused."));
             return;
         }
         var browsing = false;
@@ -116,8 +139,8 @@ public sealed class WindowsDiscovery : IDiscoveryService
         {
             var slot = new OperationSlot();
             lock (_sync) { if (!Current(epoch)) return; _browsers.Add(slot); }
-            try { slot.Attach(_api.Browse(type, index.Value, (status, records) => RunSafely(() => Browse(epoch, type, status, records)), message => Failed?.Invoke(message))); browsing = true; }
-            catch (Exception error) { Cancel([slot]); Failed?.Invoke(L.Format("HomePod discovery failed: {0}", error.Message)); }
+            try { slot.Attach(_api.Browse(type, index.Value, (status, records) => RunSafely(() => Browse(epoch, type, status, records)), message => Failure(epoch, message))); browsing = true; }
+            catch (Exception error) { Cancel([slot]); Failure(epoch, L.Format("HomePod discovery failed: {0}", error.Message)); }
         }
         lock (_sync) { if (!Current(epoch)) return; }
         RunningChanged?.Invoke(browsing);
@@ -128,7 +151,7 @@ public sealed class WindowsDiscovery : IDiscoveryService
         if (status != 0)
         {
             lock (_sync) { if (!Current(epoch)) return; }
-            Failed?.Invoke(L.Format("Receiver discovery: {0}", new Win32Exception((int)status).Message)); return;
+            Failure(epoch, L.Format("Receiver discovery: {0}", new Win32Exception((int)status).Message)); return;
         }
         var removed = new List<OperationSlot>();
         var start = new List<(string Name, OperationSlot Slot, uint Index)>();
@@ -149,6 +172,7 @@ public sealed class WindowsDiscovery : IDiscoveryService
                     {
                         var slot = new OperationSlot(); _resolvers[service.Instance] = slot;
                         start.Add((service.Instance, slot, _interfaceIndex!.Value));
+                        _probeAt ??= _time.GetUtcNow().AddSeconds(30);
                     }
                 }
             }
@@ -158,11 +182,11 @@ public sealed class WindowsDiscovery : IDiscoveryService
         foreach (var item in start)
         {
             lock (_sync) { if (!Current(epoch) || _resolvers.GetValueOrDefault(item.Name) != item.Slot) continue; }
-            try { item.Slot.Attach(_api.Resolve(item.Name, type, item.Index, (code, record) => Resolved(epoch, item.Name, item.Slot, code, record), message => Failed?.Invoke(message))); }
+            try { item.Slot.Attach(_api.Resolve(item.Name, type, item.Index, (code, record) => Resolved(epoch, item.Name, item.Slot, code, record), message => Failure(epoch, message))); }
             catch (Exception error)
             {
                 lock (_sync) { if (_resolvers.GetValueOrDefault(item.Name) == item.Slot) _resolvers.Remove(item.Name); }
-                Cancel([item.Slot]); Failed?.Invoke(L.Format("Resolving receiver: {0}", error.Message));
+                Cancel([item.Slot]); Failure(epoch, L.Format("Resolving receiver: {0}", error.Message));
             }
         }
         Publish();
@@ -172,12 +196,15 @@ public sealed class WindowsDiscovery : IDiscoveryService
         if (status != 0)
         {
             lock (_sync) { if (!Current(epoch) || _resolvers.GetValueOrDefault(name) != slot) return; }
-            Failed?.Invoke(L.Format("Resolving receiver: {0}", new Win32Exception((int)status).Message)); return;
+            Failure(epoch, L.Format("Resolving receiver: {0}", new Win32Exception((int)status).Message)); return;
         }
         if (record is null) return;
         lock (_sync)
         {
             if (!Current(epoch) || _resolvers.GetValueOrDefault(name) != slot) return;
+            if (_resolvers.Keys.All(instance => instance == name || _records.ContainsKey(instance))) _probeAt = null;
+            if (_retryAt is null) _healthyAt ??= _time.GetUtcNow();
+            ScheduleExpiry();
             if (_records.TryGetValue(name, out var previous) && Equal(previous, record)) return;
             _log("Discovery resolved: " + Describe(record)); _records[name] = record;
         }
@@ -185,23 +212,31 @@ public sealed class WindowsDiscovery : IDiscoveryService
     }
     private void ScheduleExpiry()
     {
-        var due = _expires.Count == 0 ? Timeout.InfiniteTimeSpan : _expires.Values.Min() - _time.GetUtcNow();
+        DateTimeOffset? next = _expires.Count == 0 ? null : _expires.Values.Min();
+        if (_retryAt is { } retry && (next is null || retry < next.Value)) next = retry;
+        if (_probeAt is { } probe && (next is null || probe < next.Value)) next = probe;
+        var due = next is { } deadline ? deadline - _time.GetUtcNow() : Timeout.InfiniteTimeSpan;
         _expiry.Change(due == Timeout.InfiniteTimeSpan ? due : due < TimeSpan.Zero ? TimeSpan.Zero : due, Timeout.InfiniteTimeSpan);
     }
     private void Expire()
     {
-        var old = new List<OperationSlot>(); bool changed = false;
+        var old = new List<OperationSlot>(); bool changed = false; bool refresh; long epoch;
         lock (_sync)
         {
             if (_disposed || !_started) return;
+            epoch = _epoch;
             foreach (var name in _expires.Where(p => p.Value <= _time.GetUtcNow()).Select(p => p.Key).ToArray())
             {
                 _expires.Remove(name); changed |= _records.Remove(name);
                 if (_resolvers.Remove(name, out var resolver)) old.Add(resolver);
             }
+            refresh = _retryAt <= _time.GetUtcNow() || _probeAt <= _time.GetUtcNow();
+            if (refresh) _retryAt = _probeAt = null;
+            else if (changed) _probeAt = _time.GetUtcNow().AddSeconds(1);
             ScheduleExpiry();
         }
         Cancel(old); if (changed) Publish();
+        if (refresh) { _log("Refreshing HomePod discovery queries."); RunSafely(() => Restart(epoch)); }
     }
     private OperationSlot[] DetachOperations()
     {

@@ -209,6 +209,7 @@ public sealed class NativeEngineHostTests
         public bool StreamReplies, VolumeReplies;
         public int? InitialVolume;
         public TaskCompletionSource? StartHold;
+        public object? StartError;
         public bool Disposed;
         public int CharactersRead => _reader.CharactersRead;
         public int CancelledReads => _reader.CancelledReads;
@@ -234,6 +235,7 @@ public sealed class NativeEngineHostTests
                 case "stop" when StopReplies: Event(session, new { @event = "stopped" }); break;
                 case "start":
                     if (StartHold is not null) await StartHold.Task.WaitAsync(cancellation);
+                    if (StartError is { } error) { Event(session, error); break; }
                     if (StreamReplies && p.Text("latency_policy") is "negotiate" or "apply")
                     {
                         var applying = p.Text("latency_policy") == "apply";

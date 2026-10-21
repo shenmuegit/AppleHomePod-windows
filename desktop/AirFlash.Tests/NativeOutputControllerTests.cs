@@ -627,6 +627,66 @@ public sealed class NativeOutputControllerTests
         Assert.Equal(0, f.Monitor.PhysicalMuteCalls);
     }
 
+    [Fact]
+    public async Task ExhaustedTransientSessionRetriesWaitAndRecoverWithoutTerminatingNativeOutput()
+    {
+        await using var f = await Fixture.Create(timing: SessionTiming.Default with { Retry = TimeSpan.Zero });
+        f.Wire.StartError = new { @event = "error", code = "network_timeout", message = "HomePod did not answer", retryable = true };
+        f.Monitor.Select(true); f.Start();
+        await Until(() => f.Starts.Count == 6 && f.Session.Snapshot.State == PlaybackState.Error);
+        f.Time.Advance(TimeSpan.FromMilliseconds(150));
+        await Until(() => f.Controller.Status.State == PlaybackState.Idle || f.Run!.IsCompleted);
+        Assert.False(f.Run!.IsCompleted);
+        f.Wire.StartError = null;
+        f.Time.Advance(TimeSpan.FromMilliseconds(999)); await Task.Delay(20); Assert.Equal(6, f.Starts.Count);
+        f.Time.Advance(TimeSpan.FromMilliseconds(1));
+        await Until(() => f.Starts.Count == 7 && f.Gates.Any(command => command.Params.Boolean("open") == true));
+        f.Wire.Event(f.StreamId, new { @event = "first_send", first_send_qpc_ns = 123 });
+        await Until(() => f.Controller.Status.TransportReady);
+        Assert.Equal(0, f.Monitor.PhysicalMuteCalls);
+    }
+
+    [Fact]
+    public async Task TransientRouteRetriesBackOffAndDeselectingOutputCancelsTheRetry()
+    {
+        await using var f = await Fixture.Create(timing: SessionTiming.Default with { Retry = TimeSpan.Zero });
+        f.Wire.StartError = new { @event = "error", message = "HomePod did not answer", retryable = true };
+        f.Monitor.Select(true); f.Start();
+        var count = 0;
+        foreach (var seconds in new[] { 1, 2 })
+        {
+            count += 6;
+            await Until(() => f.Starts.Count == count && f.Controller.Status.State == PlaybackState.Error);
+            f.Time.Advance(TimeSpan.FromMilliseconds(150));
+            await Until(() => f.Controller.Status.State == PlaybackState.Idle || f.Run!.IsCompleted);
+            Assert.False(f.Run!.IsCompleted);
+            f.Time.Advance(TimeSpan.FromMilliseconds(seconds * 1000 - 1)); await Task.Delay(20);
+            Assert.Equal(count, f.Starts.Count);
+            f.Time.Advance(TimeSpan.FromMilliseconds(1));
+        }
+        count += 6; await Until(() => f.Starts.Count == count && f.Controller.Status.State == PlaybackState.Error);
+        f.Time.Advance(TimeSpan.FromMilliseconds(150));
+        await Until(() => f.Controller.Status.State == PlaybackState.Idle || f.Run!.IsCompleted);
+        f.Monitor.Select(false); f.Wire.StartError = null;
+        f.Time.Advance(TimeSpan.FromMinutes(1)); await Task.Delay(20); Assert.Equal(count, f.Starts.Count);
+        Assert.False(f.Run!.IsCompleted);
+        f.Monitor.Select(true);
+        await Until(() => f.Starts.Count == count + 1 && f.Gates.Any(command => command.Params.Boolean("open") == true));
+    }
+
+    [Theory]
+    [InlineData(false, "Receiver rejected this stream")]
+    [InlineData(null, "Authentication credentials rejected")]
+    public async Task PermanentSessionFailuresStillFailClosed(bool? retryable, string message)
+    {
+        await using var f = await Fixture.Create(timing: SessionTiming.Default with { Retry = TimeSpan.Zero });
+        f.Wire.StartError = new { @event = "error", message, retryable };
+        f.Monitor.Select(true); f.Start(); await Until(() => f.Session.Snapshot.State == PlaybackState.Error);
+        f.Time.Advance(TimeSpan.FromMilliseconds(150));
+        await Assert.ThrowsAsync<IOException>(() => f.Run!.WaitAsync(TimeSpan.FromSeconds(3)));
+        Assert.Single(f.Starts); Assert.DoesNotContain(f.Gates, command => command.Params.Boolean("open") == true);
+    }
+
     [Theory]
     [InlineData("firmware")]
     [InlineData("model")]
@@ -709,7 +769,7 @@ public sealed class NativeOutputControllerTests
         public List<NativeEngineHostTests.Sent> Gates => Wire.Commands.Where(c => c.Command == "set_capture_gate").ToList();
         public string StreamId => Starts.Last().Session;
         public static async Task<Fixture> Create(int? initialVolume = 38, bool masterInPcm = false, int referenceVolume = 38, int? bufferMs = 100,
-            int? fallbackMs = null, string? verifiedProfile = null)
+            int? fallbackMs = null, string? verifiedProfile = null, SessionTiming? timing = null)
         {
             var f = new Fixture(); f.Wire.InitialVolume = initialVolume; f.Wire.VolumeReplies = true;
             var binding = NativeEngineHostTests.Binding;
@@ -720,7 +780,7 @@ public sealed class NativeOutputControllerTests
             binding = System.Text.Json.JsonSerializer.Deserialize<NativeBinding>(document, AppSettings.JsonOptions)!;
             f.Calibration = binding.Calibration!;
             f.Host = new(f.Wire, 42, fallbackMs); await f.Host.ArmAsync(binding, default);
-            f.Session = new(f.Host, f.Monitor, f.Logs.Enqueue);
+            f.Session = new(f.Host, f.Monitor, f.Logs.Enqueue, timing);
             f.Controller = new(binding, f.Monitor, f.Host, f.Session, f.Time, f.Logs.Enqueue);
             return f;
         }
