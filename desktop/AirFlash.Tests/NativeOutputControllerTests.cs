@@ -601,10 +601,37 @@ public sealed class NativeOutputControllerTests
         Assert.DoesNotContain(f.Wire.Commands, c => c.Session == next && c.Command == "set_device_volume");
     }
     [Theory]
+    [InlineData("metadata")]
+    [InlineData("offline")]
+    [InlineData("missing")]
+    public async Task DiscoveryRefreshAfterLongIdleWaitsAndRecoversWithoutExiting(string unavailable)
+    {
+        await using var f = await Fixture.Create(); var complete = f.Receiver;
+        f.Monitor.Select(true); f.Start();
+        await Until(() => f.Gates.Any(command => command.Params.Boolean("open") == true));
+        f.Time.Advance(TimeSpan.FromHours(8)); await f.FlushVolume();
+        Assert.Single(f.Starts);
+        f.Found = unavailable != "missing";
+        f.Receiver = unavailable == "offline" ? complete with { Online = false } : complete with { SoftwareVersion = "" };
+        f.Time.Advance(TimeSpan.FromMilliseconds(250));
+        await Until(() => !f.Controller.Status.GateOpen || f.Run!.IsCompleted);
+        f.Time.Advance(TimeSpan.FromMinutes(5));
+        using (var pending = new CancellationTokenSource(50))
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => f.Run!.WaitAsync(pending.Token));
+        Assert.False(f.Controller.Status.TransportReady);
+        Assert.Single(f.Starts);
+        f.Found = true; f.Receiver = complete; f.Time.Advance(TimeSpan.FromMilliseconds(250));
+        await Until(() => f.Starts.Count == 2 && f.Gates.Any(command => command.Params.Integer("epoch") == 2 && command.Params.Boolean("open") == true));
+        f.Wire.Event(f.StreamId, new { @event = "first_send", first_send_qpc_ns = 123 });
+        await Until(() => f.Controller.Status.TransportReady);
+        Assert.Equal(0, f.Monitor.PhysicalMuteCalls);
+    }
+
+    [Theory]
     [InlineData("firmware")]
     [InlineData("model")]
     [InlineData("leader")]
-    public async Task PartialDiscoveryWaitsForQualificationMetadataWithinStartupBound(string missing)
+    public async Task PartialDiscoveryWaitsWithoutStartingPrerollOrExpiringWhileSelected(string missing)
     {
         await using var f = await Fixture.Create(); var complete = f.Receiver;
         f.Receiver = missing switch { "firmware" => complete with { SoftwareVersion = "" }, "model" => complete with { Model = "" }, _ => complete with { IsLeader = false } };
@@ -616,6 +643,9 @@ public sealed class NativeOutputControllerTests
         f.Time.Advance(TimeSpan.FromMilliseconds(1750));
         await Until(() => f.Resolutions > 1);
         Assert.DoesNotContain(f.Wire.Commands, command => command.Command == "begin_capture");
+        f.Time.Advance(TimeSpan.FromHours(8));
+        using (var pending = new CancellationTokenSource(50))
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => f.Run!.WaitAsync(pending.Token));
         f.Monitor.Select(false); f.Time.Advance(TimeSpan.FromSeconds(3)); f.Monitor.Select(true);
         await Until(() => f.Resolutions > 2 || f.Run!.IsCompleted);
         using (var pending = new CancellationTokenSource(50))
@@ -674,6 +704,7 @@ public sealed class NativeOutputControllerTests
         public Receiver Receiver = new("receiver-1", "da", "127.0.0.1") { Model = "AudioAccessory5,1", SoftwareVersion = "27.0", IsLeader = true, Codecs = [1] };
         public Task? Run;
         public int Resolutions;
+        public bool Found = true;
         public List<NativeEngineHostTests.Sent> Starts => Wire.Commands.Where(c => c.Command == "start").ToList();
         public List<NativeEngineHostTests.Sent> Gates => Wire.Commands.Where(c => c.Command == "set_capture_gate").ToList();
         public string StreamId => Starts.Last().Session;
@@ -693,7 +724,7 @@ public sealed class NativeOutputControllerTests
             f.Controller = new(binding, f.Monitor, f.Host, f.Session, f.Time, f.Logs.Enqueue);
             return f;
         }
-        public void Start() => Run = Controller.RunAsync(_ => { Interlocked.Increment(ref Resolutions); return Receiver; }, Stop.Token);
+        public void Start() => Run = Controller.RunAsync(_ => { Interlocked.Increment(ref Resolutions); return Found ? Receiver : null; }, Stop.Token);
         public async Task FlushVolume()
         {
             var db = Monitor.Snapshot.Volume.Db - .1;

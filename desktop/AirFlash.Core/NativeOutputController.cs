@@ -43,7 +43,7 @@ public sealed class NativeOutputController
     private NativeVolume? _volume;
     private SessionSnapshot? _stream;
     private Receiver? _receiver;
-    private long? _externalAt, _receiverWaitAt, _errorAt, _metricsAt;
+    private long? _externalAt, _errorAt, _metricsAt;
     private long _routeEpoch, _connectRevision, _zeroRevision, _remoteObservedRevision;
     private ulong _streamCaptureEpoch;
     private int? _lastNonZero, _remoteActual, _restoreTarget;
@@ -51,7 +51,7 @@ public sealed class NativeOutputController
     private long _deviceRevision = -1;
     private double _devicePcmGain = 1;
     private double? _lastGain;
-    private bool _active, _begun, _gateOpen, _clearPending, _externalActive;
+    private bool _active, _begun, _gateOpen, _clearPending, _externalActive, _waitingForReceiver;
     private NativeAgentStatus _status = new(1);
     private readonly Guid _instanceId = Guid.NewGuid();
     public NativeAgentStatus Status => Volatile.Read(ref _status);
@@ -166,10 +166,10 @@ public sealed class NativeOutputController
         var selected = _windows!.DefaultRenderIds.Any(id => id == _binding.Endpoint.EndpointId);
         var held = _externalActive || _externalAt is { } at && _time.GetElapsedTime(at) < TimeSpan.FromSeconds(30);
         if (!selected && !held) { await StopRouteAsync().ConfigureAwait(false); return; }
-        if (!_begun && _receiverWaitAt is null)
+        if (!_begun && !_waitingForReceiver)
         {
             _connectRevision = _volume!.Revision;
-            _receiverWaitAt = _time.GetTimestamp();
+            _waitingForReceiver = true;
         }
         var receiver = resolve(_binding.ReceiverId);
         var metadataPending = receiver is not null && ReceiverIdentity.Normalize(receiver.Id) == _binding.ReceiverId && receiver.Online && receiver.Complete
@@ -177,27 +177,26 @@ public sealed class NativeOutputController
             && receiver.Model is "" or "AudioAccessory5,1" && receiver.SoftwareVersion is "" or "27.0"
             && (receiver.Codecs.Length == 0 || receiver.Codecs.Contains((byte)1))
             && (receiver.Model.Length == 0 || receiver.SoftwareVersion.Length == 0 || !receiver.IsLeader);
-        if (metadataPending)
+        if (receiver is null || ReceiverIdentity.Normalize(receiver.Id) == _binding.ReceiverId && !receiver.Online || metadataPending)
         {
-            _receiverWaitAt ??= _time.GetTimestamp();
-            if (_time.GetElapsedTime(_receiverWaitAt.Value) >= TimeSpan.FromSeconds(2)) throw new IOException("The bound HomePod's discovery metadata did not become complete within the startup bound.");
-            if (_active) { await GainAsync(0).ConfigureAwait(false); await GateAsync(false, false, cancellation).ConfigureAwait(false); }
+            if (_active)
+            {
+                _connectRevision = _volume!.Revision;
+                await GainAsync(0).ConfigureAwait(false); await GateAsync(false, false, cancellation).ConfigureAwait(false);
+                await StopRouteAsync().ConfigureAwait(false); _waitingForReceiver = true;
+                _log?.Invoke("Native route paused while HomePod discovery is incomplete; waiting for qualified metadata.");
+            }
             return;
         }
-        if (receiver is not null && (ReceiverIdentity.Normalize(receiver.Id) != _binding.ReceiverId || !receiver.Online || !receiver.Complete || !receiver.PrefersNtpAlac))
+        if (ReceiverIdentity.Normalize(receiver.Id) != _binding.ReceiverId || !receiver.Online || !receiver.Complete || !receiver.PrefersNtpAlac)
             throw new InvalidOperationException("This receiver identity, firmware or group has not been qualified for native output.");
         if (!_active)
         {
-            if (receiver is null)
-            {
-                if (_time.GetElapsedTime(_receiverWaitAt!.Value) >= TimeSpan.FromSeconds(2)) throw new IOException("The bound HomePod is unavailable; startup sound cannot be retained indefinitely.");
-                return;
-            }
             // Discovery must not consume the bounded capture preroll before a transport can start.
             await _host.BeginCaptureAsync(cancellation).ConfigureAwait(false); _begun = true;
             Interlocked.Increment(ref _routeEpoch); _active = true; _receiver = receiver; _stream = null; _remoteActual = null; _gateOpen = false; _lastGain = null; _deviceRevision = -1; _metricsAt = null;
             PublishStatus();
-            _receiverWaitAt = null;
+            _waitingForReceiver = false;
             await _session.SetNativeGainAsync(0).ConfigureAwait(false);
             await _session.StartAsync(receiver, Settings()).ConfigureAwait(false);
             _log?.Invoke("Native route started for the verified receiver.");
@@ -209,7 +208,6 @@ public sealed class NativeOutputController
             await _session.UpdateReceiverAsync(receiver, Settings()).ConfigureAwait(false);
             return; // Consume the new connection/volume snapshot before touching its capture gate.
         }
-        if (receiver is not null) _receiverWaitAt = null;
         if (_errorAt is { } failed && _session.Snapshot.State == PlaybackState.Error && _time.GetElapsedTime(failed) >= TimeSpan.FromMilliseconds(100))
             throw new IOException(_session.Snapshot.Message);
         if (_stream?.State is not (PlaybackState.Streaming or PlaybackState.Standby)) return;
@@ -332,7 +330,7 @@ public sealed class NativeOutputController
     }
     private async Task StopRouteAsync()
     {
-        _receiverWaitAt = null;
+        _waitingForReceiver = false;
         if (!_active && !_begun) return;
         Interlocked.Increment(ref _routeEpoch); _active = false;
         PublishStatus();
