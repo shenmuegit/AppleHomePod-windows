@@ -1,11 +1,11 @@
 # AppleHome 首次安装
 
-适用于 **0.2.0 Preview 2**。当前已验证：**Windows 10 Pro 22H2（19045，x64）与单只 HomePod mini 27.0**。其他系统、型号、固件与立体声对尚未实机验证。
+适用于 **0.2.0 Preview 3**。当前实机范围：**Windows 10 Pro 22H2（19045，x64）与单只 HomePod mini 27.0**。其他系统、型号、固件与立体声对尚未实机验证。
 
 ## 安装前
 
 - HomePod 已在 Apple“家庭”App 初始化，与电脑位于同一局域网。
-- 从 [GitHub Release](https://github.com/shenmuegit/AppleHomePod-windows/releases/tag/v0.2.0-preview.2) 下载 `AppleHome-0.2.0-ec4a0e797fed.zip`，可对照同页 `SHA256SUMS.txt` 校验文件。
+- 从 [GitHub Release](https://github.com/shenmuegit/AppleHomePod-windows/releases/tag/v0.2.0-preview.3) 下载 `AppleHome-0.2.0-9cf79335d419.zip`，可对照同页 `SHA256SUMS.txt` 校验文件。
 - 应用为自包含版本，无需安装 .NET 或 Rust。
 
 ## 三步完成设置
@@ -15,6 +15,8 @@
 3. **确认听到声音。** 需要重听时点击“再播放一次”，听到后确认并完成设置；未出声时选择“没听到”，由程序检查并重试。
 
 无需手动改名、切换首次播放输出、填写 IP、选择网卡或输入缓冲时间。本包实测使用已有合格驱动与设备记录，全新自动驱动安装、重启到确认的完整流程仍待独立实机验收。
+
+向导按 Windows 首选显示语言自动选择英文、简体中文或繁体中文，其他语言回退英文，无需手动选择语言。
 
 ## 日常使用
 
@@ -29,13 +31,20 @@
 ```powershell
 $stop = Start-Process .\AppleHome.exe -ArgumentList '--native-disable' -Wait -PassThru
 if ($stop.ExitCode -ne 0) { throw '后台停止失败，请按错误提示处理。' }
-Start-Process .\AppleHome.exe -ArgumentList '--native-enable' -Wait
+$update = Start-Process .\AppleHome.exe -ArgumentList '--native-enable' -Wait -PassThru
+if ($update.ExitCode -ne 0) { throw '后台更新失败，请按错误提示处理。' }
 ```
 
 维护仅适用于已有有效绑定与校准的安装。程序只更新仍属于本应用的任务和文件，出现所有权或资格问题时请按具体错误处理。
+
+## 自动恢复的验证范围
+
+Preview 3 在 HomePod 使用期间自动重试发现查询和可重试音频故障。本轮修复期间，旁听者确认正常音乐暂停至少 1 分钟后自行恢复，声音连续。发现故障采用模拟注入验证，没有中断实际网络。
+
+**过夜空闲后再次播放尚未实机验证。** 本构建未重复手动音量／静音循环与持续长播，具体范围见版本说明。
 
 ## 驱动与许可
 
 VB-CABLE 来自 [VB-Audio Software](https://vb-cable.com/)，采用 **Donationware** 模式，欢迎向作者捐助或支付许可。原厂 Pack45 与说明保持未修改，“关于”保留来源与许可入口；驱动遵循[厂商独立条款](https://vb-audio.com/Services/licensing.htm)，不属于 AppleHome 的 GPL 源码。AppleHome EXE 当前未签名。
 
-完整范围见[兼容矩阵](https://github.com/shenmuegit/AppleHomePod-windows/blob/main/docs/COMPATIBILITY.md)，本包验证及哈希见[版本说明](https://github.com/shenmuegit/AppleHomePod-windows/blob/main/docs/releases/v0.2.0-preview.2.md)。
+完整范围见[兼容矩阵](https://github.com/shenmuegit/AppleHomePod-windows/blob/main/docs/COMPATIBILITY.md)，本包验证及哈希见[版本说明](https://github.com/shenmuegit/AppleHomePod-windows/blob/main/docs/releases/v0.2.0-preview.3.md)。
