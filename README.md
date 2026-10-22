@@ -9,14 +9,14 @@
 <p align="center"><strong>English</strong> · <a href="README.zh-CN.md">简体中文</a></p>
 
 <p align="center">
-  <a href="https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.3/AppleHome-0.2.0-9cf79335d419.zip"><strong>Download Windows preview</strong></a>
+  <a href="https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.4/AppleHome-0.2.0-366a8ee1d869.zip"><strong>Download Windows preview</strong></a>
   &nbsp;·&nbsp; <a href="#get-started">Get started</a>
   &nbsp;·&nbsp; <a href="#compatibility">Compatibility</a>
-  &nbsp;·&nbsp; <a href="https://github.com/shenmuegit/AppleHomePod-windows/releases/tag/v0.2.0-preview.3">Release notes</a>
+  &nbsp;·&nbsp; <a href="https://github.com/shenmuegit/AppleHomePod-windows/releases/tag/v0.2.0-preview.4">Release notes</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/shenmuegit/AppleHomePod-windows/releases/tag/v0.2.0-preview.3"><img src="https://img.shields.io/badge/release-0.2.0_preview_3-2563eb?style=flat-square" alt="Release: 0.2.0 Preview 3"></a>
+  <a href="https://github.com/shenmuegit/AppleHomePod-windows/releases/tag/v0.2.0-preview.4"><img src="https://img.shields.io/badge/release-0.2.0_preview_4-2563eb?style=flat-square" alt="Release: 0.2.0 Preview 4"></a>
   <a href="LICENSE-GPLv3"><img src="https://img.shields.io/badge/license-GPLv3%2B-555?style=flat-square" alt="License: GPLv3 or later"></a>
 </p>
 
@@ -39,7 +39,7 @@ The background app starts when you sign in. Everyday playback does not require a
 ## Get started
 
 1. Set up HomePod in Apple's Home app and connect it to the same local network as your PC. The PC can use Wi-Fi or Ethernet.
-2. [Download the preview ZIP](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.3/AppleHome-0.2.0-9cf79335d419.zip), extract it and open **`AppleHome.exe`**. The app is self-contained; you do not need to install .NET or Rust.
+2. [Download the preview ZIP](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.4/AppleHome-0.2.0-366a8ee1d869.zip), extract it and open **`AppleHome.exe`**. The app is self-contained; you do not need to install .NET or Rust.
 3. Follow the setup wizard. Allow the audio driver installation when Windows asks. If a restart is required, save your work, restart Windows and open the app again.
 4. Wait for HomePod to connect, then confirm that you hear the setup audio. Use the replay button if you need to hear it again.
 
@@ -49,17 +49,15 @@ A full first-install test, including driver setup and the required restart, is s
 
 **Updating an earlier preview?** Reopening the wizard reuses the installed app. Follow the [English update instructions](docs/installation.md#update-an-existing-preview) to replace its background process while retaining the qualified device record. Automatic updates are not available.
 
-## In Preview 3
+## In Preview 4
 
-**Development fix:** when Windows DNS-SD accepts queries but stops returning results, discovery now switches to the existing managed mDNS provider instead of repeatedly reopening the silent provider. This correction is not included in the Preview 3 download below.
+Windows discovery can accept queries without returning any devices or reporting an error. Preview 3 kept reopening that silent provider, so playback could stay silent even while HomePod was reachable. Preview 4 switches to the existing managed mDNS provider when the no-result maintenance deadline expires.
 
-If HomePod discovery information disappeared briefly, the previous background app could exit and leave later playback silent. Preview 3 removes that fatal two-second cutoff and restores qualified connections automatically.
+- The switch happens automatically on the affected discovery interface; no IP address or adapter selection is required.
+- Explicit permission and invalid-request errors keep their existing handling. Device qualification and authentication checks remain enforced.
+- Recovery, per-device timing and automatic setup language selection from Preview 3 are retained.
 
-- Failed discovery queries restart with backoff. Queries that never resolve and expired records are refreshed.
-- Transient audio failures can recover after a retry batch is exhausted. Authentication and device qualification checks remain enforced.
-- Setup now selects English, Simplified Chinese or Traditional Chinese from Windows automatically.
-
-The update preserves device calibration, timing records, Windows volume controls and the existing setup interface. See the [release notes](docs/releases/v0.2.0-preview.3.md) for the validation scope.
+The update preserves device calibration, timing records, Windows volume controls and the existing setup interface. See the [release notes](docs/releases/v0.2.0-preview.4.md) for the validation scope.
 
 ## Compatibility
 
@@ -70,9 +68,9 @@ The update preserves device calibration, timing records, Windows volume controls
 | HomePod (1st or 2nd generation); other mini firmware | Not yet validated; the current wizard does not enable these device profiles |
 | Stereo pairs and Apple TV groups | Not yet validated; not enabled by the current wizard |
 
-During this repair, normal music resumed after a listener-reported pause of at least one minute and remained continuous. The final build was checked for background readiness, preserved Windows output and volume, and live music transport with zero observed send or synchronization errors. Discovery and retry failures were tested with simulated faults; the physical network was not interrupted.
+This binary was checked in the actual failing environment: Windows DNS-SD returned no devices while direct mDNS found the same qualified HomePod. After installation, the background switched providers, rediscovered HomePod and resumed normal music. The listener confirmed continuous sound; observed send and synchronization errors were zero. Windows output, volume, binding and calibration were preserved.
 
-**Overnight idle followed by playback has not been tested on hardware.** A new manual volume/mute cycle, a 30-minute run and sustained video synchronization were not repeated for this binary. Earlier builds passed those separately documented checks on the same device; they do not qualify this build automatically.
+**Overnight idle followed by playback has not been tested on hardware.** This recurrence followed a PC boot. Detection retains the approximately 30-second maintenance window, and the underlying trigger for Windows discovery going silent remains unknown. Manual volume/mute cycles, a 30-minute run and sustained video synchronization were not repeated for this binary; earlier results remain documented separately.
 
 This preview does not promise measured end-to-end latency. Windows 11, network-outage recovery and other Home access or PIN policies still need hardware testing. The executable is unsigned and automatic updates are not available. See the [detailed compatibility record](docs/COMPATIBILITY.md) (Chinese).
 
@@ -80,18 +78,18 @@ This preview does not promise measured end-to-end latency. Windows 11, network-o
 
 | File | Purpose |
 |---|---|
-| [Windows preview](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.3/AppleHome-0.2.0-9cf79335d419.zip) | App, original driver package, licenses and build records |
-| [Matching source archive](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.3/AppleHome-source-9cf79335d419.zip) | Source and dependency locks for the published binary |
-| [English installation guide](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.3/INSTALL.md) | Current setup and update instructions |
-| [SHA256SUMS.txt](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.3/SHA256SUMS.txt) | Checksums for the release attachments |
+| [Windows preview](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.4/AppleHome-0.2.0-366a8ee1d869.zip) | App, original driver package, licenses and build records |
+| [Matching source archive](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.4/AppleHome-source-366a8ee1d869.zip) | Source and dependency locks for the published binary |
+| [English installation guide](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.4/INSTALL.md) | Current setup and update instructions |
+| [SHA256SUMS.txt](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.4/SHA256SUMS.txt) | Checksums for the release attachments |
 
 Check the download in PowerShell and compare the result with `SHA256SUMS.txt`:
 
 ```powershell
-Get-FileHash .\AppleHome-0.2.0-9cf79335d419.zip -Algorithm SHA256
+Get-FileHash .\AppleHome-0.2.0-366a8ee1d869.zip -Algorithm SHA256
 ```
 
-The release tag `v0.2.0-preview.3` points to binary source commit [`9cf7933`](https://github.com/shenmuegit/AppleHomePod-windows/commit/9cf79335d419a45912156c0261435c9621487796). The installed repair executable and matching archives are preserved without rebuilding. Archived documentation is a build-time snapshot; the attached installation guides and release notes describe this release.
+The release tag `v0.2.0-preview.4` points to binary source commit [`366a8ee`](https://github.com/shenmuegit/AppleHomePod-windows/commit/366a8ee1d8694c4148ae6d5e2fa8ecee63cb1f4d). The installed repair executable and matching archives are preserved without rebuilding. Archived documentation is a build-time snapshot; the attached installation guides and release notes describe this release.
 
 ## Build and contribute
 

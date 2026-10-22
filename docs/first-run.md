@@ -1,11 +1,11 @@
 # AppleHome 首次安装
 
-适用于 **0.2.0 Preview 3**。当前实机范围：**Windows 10 Pro 22H2（19045，x64）与单只 HomePod mini 27.0**。其他系统、型号、固件与立体声对尚未实机验证。
+适用于 **0.2.0 Preview 4**。当前实机范围：**Windows 10 Pro 22H2（19045，x64）与单只 HomePod mini 27.0**。其他系统、型号、固件与立体声对尚未实机验证。
 
 ## 安装前
 
 - HomePod 已在 Apple“家庭”App 初始化，与电脑位于同一局域网。
-- 从 [GitHub Release](https://github.com/shenmuegit/AppleHomePod-windows/releases/tag/v0.2.0-preview.3) 下载 `AppleHome-0.2.0-9cf79335d419.zip`，可对照同页 `SHA256SUMS.txt` 校验文件。
+- 从 [GitHub Release](https://github.com/shenmuegit/AppleHomePod-windows/releases/tag/v0.2.0-preview.4) 下载 `AppleHome-0.2.0-366a8ee1d869.zip`，可对照同页 `SHA256SUMS.txt` 校验文件。
 - 应用为自包含版本，无需安装 .NET 或 Rust。
 
 ## 三步完成设置
@@ -39,12 +39,12 @@ if ($update.ExitCode -ne 0) { throw '后台更新失败，请按错误提示处�
 
 ## 自动恢复的验证范围
 
-Preview 3 在 HomePod 使用期间自动重试发现查询和可重试音频故障。本轮修复期间，旁听者确认正常音乐暂停至少 1 分钟后自行恢复，声音连续。发现故障采用模拟注入验证，没有中断实际网络。
+Preview 4 在 Windows DNS-SD 不再返回结果时自动切换到已有的托管 mDNS 实现，沿用约 30 秒静默查询维护窗口。本轮在实际故障环境中观察到自动切换、重新发现设备和恢复音乐，旁听者确认声音连续。无需填写 IP 或选择网卡；明确的权限错误和非法请求保留原有处理。
 
-**过夜空闲后再次播放尚未实机验证。** 本构建未重复手动音量／静音循环与持续长播，具体范围见版本说明。
+**过夜空闲后再次播放尚未实机验证。** 此次故障发生在电脑开机后，Windows 发现接口失效的系统触发因素仍未知。本构建未重复手动音量／静音循环与持续长播，具体范围见版本说明。
 
 ## 驱动与许可
 
 VB-CABLE 来自 [VB-Audio Software](https://vb-cable.com/)，采用 **Donationware** 模式，欢迎向作者捐助或支付许可。原厂 Pack45 与说明保持未修改，“关于”保留来源与许可入口；驱动遵循[厂商独立条款](https://vb-audio.com/Services/licensing.htm)，不属于 AppleHome 的 GPL 源码。AppleHome EXE 当前未签名。
 
-完整范围见[兼容矩阵](https://github.com/shenmuegit/AppleHomePod-windows/blob/main/docs/COMPATIBILITY.md)，本包验证及哈希见[版本说明](https://github.com/shenmuegit/AppleHomePod-windows/blob/main/docs/releases/v0.2.0-preview.3.md)。
+完整范围见[兼容矩阵](https://github.com/shenmuegit/AppleHomePod-windows/blob/main/docs/COMPATIBILITY.md)，本包验证及哈希见[版本说明](https://github.com/shenmuegit/AppleHomePod-windows/blob/main/docs/releases/v0.2.0-preview.4.md)。
