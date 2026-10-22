@@ -103,6 +103,50 @@ public sealed class WindowsDiscoveryTests
     }
 
     [Fact]
+    public void SilentWindowsQueriesRecoverThroughTheExistingManagedProvider()
+    {
+        var time = new ManualTime(); var native = new FakeNative(); var fallback = new FakeDns();
+        var api = new WindowsDnsSdApi(native, fallback);
+        using var discovery = new WindowsDiscovery(api, () => [new("lan", "LAN", "LAN", "192.0.2.1", true, 17)], time: time);
+        discovery.SetInterface("lan");
+        IReadOnlyList<Receiver> last = []; discovery.Changed += values => last = values;
+        discovery.Start(); Assert.Equal(2, native.Starts); Assert.Empty(fallback.Browsers);
+        time.Advance(TimeSpan.FromSeconds(29)); Assert.Empty(fallback.Browsers);
+        time.Advance(TimeSpan.FromSeconds(1)); Assert.Equal(2, fallback.Browsers.Count);
+        Assert.Equal(2, native.Starts); Assert.Equal(2, native.Cancels);
+        fallback.Browsers[0].Callback(0, [new(Name, 120)]); fallback.Resolvers[0].Callback(0, Record());
+        Assert.Equal("192.0.2.10", Assert.Single(last).Address);
+        using var unaffected = api.Browse(Type, 18, (_, _) => { }, _ => { });
+        Assert.Equal(3, native.Starts);
+        time.Advance(TimeSpan.FromSeconds(30)); Assert.Equal(2, fallback.Browsers.Count);
+    }
+
+    [Fact]
+    public void ExpiredWindowsDiscoverySwitchesProviderAfterAnInitiallyGoodResult()
+    {
+        var time = new ManualTime(); var native = new FakeNative(); var fallback = new FakeDns();
+        using var discovery = new WindowsDiscovery(new WindowsDnsSdApi(native, fallback), () => [], time: time);
+        IReadOnlyList<Receiver> last = []; discovery.Changed += values => last = values;
+        discovery.Start(); native.EmitAt(0); native.EmitAt(2); Assert.Single(last);
+        time.Advance(TimeSpan.FromSeconds(120)); Assert.Empty(last);
+        time.Advance(TimeSpan.FromSeconds(1)); Assert.Equal(2, fallback.Browsers.Count);
+        fallback.Browsers[0].Callback(0, [new(Name, 120)]); fallback.Resolvers[0].Callback(0, Record());
+        Assert.Single(last);
+    }
+
+    [Theory]
+    [InlineData(5u)]
+    [InlineData(87u)]
+    public void ExplicitNativePermissionAndRequestFailuresCannotTriggerSilentFallback(uint error)
+    {
+        var time = new ManualTime(); var native = new FakeNative { StartStatus = error }; var fallback = new FakeDns();
+        using var discovery = new WindowsDiscovery(new WindowsDnsSdApi(native, fallback), () => [], time: time);
+        discovery.Start();
+        foreach (var seconds in new[] { 1, 2, 4, 8, 16, 30, 30 }) time.Advance(TimeSpan.FromSeconds(seconds));
+        Assert.Empty(fallback.Browsers);
+    }
+
+    [Fact]
     public async Task InFlightPublicationCannotFinishAfterTheNewInterfaceSnapshot()
     {
         var api = new FakeDns(); using var discovery = new WindowsDiscovery(api, () => [new("nic", "LAN", "LAN", "192.0.2.1", true, 17)]);
@@ -314,12 +358,13 @@ public sealed class WindowsDiscoveryTests
     private sealed class FakeNative : IWindowsDnsApi
     {
         private DnsSdRequest _request;
-        public int Cancels, Frees;
+        private readonly List<DnsSdRequest> _requests = [];
+        public int Starts, Cancels, Frees;
         public uint StartStatus = 9506, CancelStatus;
         public bool CallbackOnStart, CallbackOnCancel;
         public uint Start(ref DnsSdRequest request, IntPtr cancel, bool resolve)
         {
-            _request = request; Marshal.WriteIntPtr(cancel, new(123)); if (CallbackOnStart) Emit(); return StartStatus;
+            _request = request; _requests.Add(request); Starts++; Marshal.WriteIntPtr(cancel, new(123)); if (CallbackOnStart) Emit(); return StartStatus;
         }
         public uint Cancel(IntPtr cancel, bool resolve)
         {
@@ -328,6 +373,7 @@ public sealed class WindowsDiscoveryTests
             return CancelStatus;
         }
         public void Emit() => Marshal.GetDelegateForFunctionPointer<DnsSdCallback>(_request.Callback)(0, _request.Context, new(1));
+        public void EmitAt(int index) => Marshal.GetDelegateForFunctionPointer<DnsSdCallback>(_requests[index].Callback)(0, _requests[index].Context, new(1));
         public IReadOnlyList<DnsSdService> ReadBrowse(IntPtr records) => [new(Name, 120)];
         public ServiceRecord? ReadResolve(string name, string type, IntPtr result) => Record();
         public void FreeResult(IntPtr result, bool resolve) => Frees++;

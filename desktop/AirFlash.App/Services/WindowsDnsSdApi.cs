@@ -8,6 +8,7 @@ namespace AirFlash.App.Services;
 internal sealed record DnsSdService(string Instance, uint Ttl);
 internal interface IDnsSdApi
 {
+    void Recover(uint index) { }
     IDisposable Browse(string type, uint index, Action<uint, IReadOnlyList<DnsSdService>> callback, Action<string> failed);
     IDisposable Resolve(string instance, string type, uint index, Action<uint, ServiceRecord?> callback, Action<string> failed);
 }
@@ -19,6 +20,11 @@ internal sealed class WindowsDnsSdApi(IWindowsDnsApi? native = null, IDnsSdApi? 
     private readonly IWindowsDnsApi _native = native ?? new WindowsDnsApi();
     private readonly IDnsSdApi _fallback = fallback ?? new ManagedDnsSdApi();
     private readonly ConcurrentDictionary<uint, byte> _managedInterfaces = new();
+    public void Recover(uint index)
+    {
+        if (_managedInterfaces.TryAdd(index, 0))
+            log?.Invoke($"Windows DNS-SD stopped returning results; using managed mDNS on interface {index}.");
+    }
     public IDisposable Browse(string type, uint index, Action<uint, IReadOnlyList<DnsSdService>> callback, Action<string> failed)
         => WithFallback(index, () => Start(type, index, false, (status, result) => callback(status, result == IntPtr.Zero ? [] : _native.ReadBrowse(result)
             .Where(service => service.Instance.TrimEnd('.').EndsWith("." + type, StringComparison.OrdinalIgnoreCase)).ToArray()), failed),

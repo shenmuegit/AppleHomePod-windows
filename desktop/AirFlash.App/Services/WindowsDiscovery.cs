@@ -103,7 +103,7 @@ public sealed class WindowsDiscovery : IDiscoveryService
         if (seconds is { } delay) _log($"HomePod discovery retry scheduled in {delay} s.");
         Failed?.Invoke(message);
     }
-    private void Restart(long? expectedEpoch = null)
+    private void Restart(long? expectedEpoch = null, bool recover = false)
     {
         string selected;
         lock (_sync) { if (_disposed || !_started || expectedEpoch is { } expected && expected != _epoch) return; selected = _interfaceId; }
@@ -134,6 +134,7 @@ public sealed class WindowsDiscovery : IDiscoveryService
             Failure(epoch, L.Get("The selected network interface is unavailable. Discovery is paused."));
             return;
         }
+        if (recover) _api.Recover(index.Value);
         var browsing = false;
         foreach (var type in new[] { "_airplay._tcp.local", "_raop._tcp.local" })
         {
@@ -220,7 +221,7 @@ public sealed class WindowsDiscovery : IDiscoveryService
     }
     private void Expire()
     {
-        var old = new List<OperationSlot>(); bool changed = false; bool refresh; long epoch;
+        var old = new List<OperationSlot>(); bool changed = false; bool refresh, recover; long epoch;
         lock (_sync)
         {
             if (_disposed || !_started) return;
@@ -230,13 +231,14 @@ public sealed class WindowsDiscovery : IDiscoveryService
                 _expires.Remove(name); changed |= _records.Remove(name);
                 if (_resolvers.Remove(name, out var resolver)) old.Add(resolver);
             }
+            recover = _retryAt is null && _probeAt <= _time.GetUtcNow();
             refresh = _retryAt <= _time.GetUtcNow() || _probeAt <= _time.GetUtcNow();
             if (refresh) _retryAt = _probeAt = null;
             else if (changed) _probeAt = _time.GetUtcNow().AddSeconds(1);
             ScheduleExpiry();
         }
         Cancel(old); if (changed) Publish();
-        if (refresh) { _log("Refreshing HomePod discovery queries."); RunSafely(() => Restart(epoch)); }
+        if (refresh) { _log("Refreshing HomePod discovery queries."); RunSafely(() => Restart(epoch, recover)); }
     }
     private OperationSlot[] DetachOperations()
     {

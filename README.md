@@ -51,6 +51,8 @@ A full first-install test, including driver setup and the required restart, is s
 
 ## In Preview 3
 
+**Development fix:** when Windows DNS-SD accepts queries but stops returning results, discovery now switches to the existing managed mDNS provider instead of repeatedly reopening the silent provider. This correction is not included in the Preview 3 download below.
+
 If HomePod discovery information disappeared briefly, the previous background app could exit and leave later playback silent. Preview 3 removes that fatal two-second cutoff and restores qualified connections automatically.
 
 - Failed discovery queries restart with backoff. Queries that never resolve and expired records are refreshed.
