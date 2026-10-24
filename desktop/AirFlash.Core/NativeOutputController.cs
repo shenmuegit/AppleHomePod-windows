@@ -43,7 +43,7 @@ public sealed class NativeOutputController
     private NativeVolume? _volume;
     private SessionSnapshot? _stream;
     private Receiver? _receiver;
-    private long? _externalAt, _errorAt, _metricsAt, _retryAt, _healthyAt;
+    private long? _errorAt, _metricsAt, _retryAt, _healthyAt;
     private int _retrySeconds = 1;
     private long _routeEpoch, _connectRevision, _zeroRevision, _remoteObservedRevision;
     private ulong _streamCaptureEpoch;
@@ -52,7 +52,7 @@ public sealed class NativeOutputController
     private long _deviceRevision = -1;
     private double _devicePcmGain = 1;
     private double? _lastGain;
-    private bool _active, _begun, _gateOpen, _clearPending, _externalActive, _waitingForReceiver;
+    private bool _active, _begun, _gateOpen, _clearPending, _waitingForReceiver;
     private NativeAgentStatus _status = new(1);
     private readonly Guid _instanceId = Guid.NewGuid();
     public NativeAgentStatus Status => Volatile.Read(ref _status);
@@ -118,8 +118,8 @@ public sealed class NativeOutputController
         finally
         {
             _monitor.Changed -= WindowsChanged; _session.Changed -= SessionChanged; _events.Writer.TryComplete();
-            await StopRouteAsync().ConfigureAwait(false);
-            PublishStatus(false);
+            try { await StopRouteAsync().ConfigureAwait(false); }
+            finally { PublishStatus(false); }
         }
     }
     private void PublishStatus(bool running = true)
@@ -138,12 +138,6 @@ public sealed class NativeOutputController
             || value.Sessions.Any(s => string.IsNullOrEmpty(s.InstanceId) || s.ProcessId < 0)) throw new InvalidDataException("Invalid native output snapshot.");
         if (!value.BindingValid) throw new InvalidDataException("The native endpoint, driver or mix format changed; maintenance is required.");
         _windows = value; AcceptVolume(value.Volume);
-        var external = value.Sessions.Where(s => s.EndpointId == _binding.Endpoint.EndpointId
-            && s.ProcessId != Environment.ProcessId && s.ProcessId != _host.ProcessId && s.InstanceId != _host.CaptureSessionInstanceId).ToArray();
-        var active = external.Any(s => s.Active);
-        if (_externalActive && !active || external.Any(s => s.Active || s.ObservedActive))
-            _externalAt = _time.GetTimestamp();
-        _externalActive = active;
     }
     private void AcceptVolume(NativeVolume value)
     {
@@ -160,13 +154,12 @@ public sealed class NativeOutputController
     {
         CaptureMode = "endpoint", CaptureEndpoint = _binding.Endpoint.EndpointId, StreamSampleRate = "44100",
         Equalizer = new(), MasterVolume = 100,
-        MuteWhileStreaming = false, StandbyEnabled = false, AutoConnectOnDiscover = false, ForceReconnect = true, MaxReconnectAttempts = 5
+        MuteWhileStreaming = false, StandbyEnabled = false, AutoConnectOnDiscover = false, ForceReconnect = false
     };
     private async Task ReconcileAsync(Func<string, Receiver?> resolve, CancellationToken cancellation)
     {
-        var selected = _windows!.DefaultRenderIds.Any(id => id == _binding.Endpoint.EndpointId);
-        var held = _externalActive || _externalAt is { } at && _time.GetElapsedTime(at) < TimeSpan.FromSeconds(30);
-        if (!selected && !held) { await StopRouteAsync().ConfigureAwait(false); _retryAt = null; _retrySeconds = 1; return; }
+        if (!NativeEngineSupervisor.IsSelected(_windows!, _binding.Endpoint.EndpointId))
+        { await StopRouteAsync().ConfigureAwait(false); _retryAt = null; _retrySeconds = 1; return; }
         if (!_begun && !_waitingForReceiver)
         {
             _connectRevision = _volume!.Revision;

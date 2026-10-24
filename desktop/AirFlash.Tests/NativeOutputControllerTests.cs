@@ -159,6 +159,7 @@ public sealed class NativeOutputControllerTests
         Assert.Equal(100, f.Session.Snapshot.TargetLatency); Assert.Equal(0, f.Session.Snapshot.Diagnostics!.ReconnectCount);
         Assert.Equal(2, f.Starts.Count); Assert.Null(f.Host.VerifiedBufferMs);
         f.Wire.StreamReplies = true; f.Wire.Event(f.StreamId, new { @event = "error", message = "network disconnected", retryable = true });
+        await f.RetryRouteAsync();
         await Until(() => f.Starts.Count == 4 && f.Session.Snapshot.State == PlaybackState.Streaming);
         Assert.Equal("negotiate", f.Starts[2].Params.Text("latency_policy"));
         Assert.Equal(System.Text.Json.JsonValueKind.Null, f.Starts[2].Params.GetProperty("latency_ms").ValueKind);
@@ -268,6 +269,7 @@ public sealed class NativeOutputControllerTests
         var old = f.StreamId; f.Wire.Event(old, Negotiation());
         await Until(() => f.Session.Snapshot.TargetLatency == 100);
         f.Wire.Event(old, new { @event = "error", message = "network disconnected", retryable = true });
+        await f.RetryRouteAsync();
         await Until(() => f.Starts.Count == 2 && f.Session.Snapshot.State == PlaybackState.Streaming);
         Assert.Contains(observations, s => s.State == PlaybackState.Connecting && s.TargetLatency is null && s.Diagnostics?.Latency is null);
         Assert.Equal(100, f.Session.Snapshot.TargetLatency);
@@ -400,14 +402,12 @@ public sealed class NativeOutputControllerTests
     [Theory]
     [InlineData(0, 75)]
     [InlineData(1, 125)]
-    [InlineData(2, 350)]
-    [InlineData(3, 500)]
-    public async Task AnyRenderRoleOrExternalSessionStartsOneRoute(int demand, int bufferMs)
+    public async Task WindowsPlaybackRoleStartsOneRoute(int demand, int bufferMs)
     {
         await using var f = await Fixture.Create(bufferMs: bufferMs);
         var ids = new string?[] { null, "other", null };
-        if (demand < 3) ids[demand] = "endpoint-1";
-        f.Monitor.Publish(f.Monitor.Snapshot with { DefaultRenderIds = ids, Sessions = demand == 3 ? [new("endpoint-1", "external", 12345, true)] : [] });
+        ids[demand] = "endpoint-1";
+        f.Monitor.Publish(f.Monitor.Snapshot with { DefaultRenderIds = ids });
         f.Start(); await Until(() => f.Gates.Any(c => c.Params.Boolean("open") == true));
         for (var i = 0; i < 4; i++) f.Monitor.Publish(f.Monitor.Snapshot);
         await f.FlushVolume();
@@ -447,9 +447,9 @@ public sealed class NativeOutputControllerTests
         Assert.Equal(2, f.Starts.Last().Params.Integer("capture_epoch"));
     }
     [Fact]
-    public async Task FifteenSecondPauseResumesAndThirtySecondIdleStopsUsingMonotonicTime()
+    public async Task SelectedOutputStaysRunningAcrossPauseAndLongSilence()
     {
-        await using var f = await Fixture.Create();
+        await using var f = await Fixture.Create(); f.Monitor.Select(true);
         f.Monitor.Publish(f.Monitor.Snapshot with { Sessions = [new("endpoint-1", "music", 12345, true)] });
         f.Start(); await Until(() => f.Gates.Any(c => c.Params.Boolean("open") == true));
         f.Monitor.Publish(f.Monitor.Snapshot with { Sessions = [new("endpoint-1", "music", 12345, false)] });
@@ -461,16 +461,18 @@ public sealed class NativeOutputControllerTests
         f.Monitor.Publish(f.Monitor.Snapshot with { Sessions = [new("endpoint-1", "music", 12345, false)] });
         await f.FlushVolume();
         f.Time.Advance(TimeSpan.FromSeconds(29)); await f.FlushVolume(); Assert.DoesNotContain(f.Wire.Commands, c => c.Command == "stop");
-        f.Time.Advance(TimeSpan.FromSeconds(1)); await Until(() => f.Wire.Commands.Any(c => c.Command == "stop"));
+        f.Time.Advance(TimeSpan.FromDays(365)); await f.FlushVolume();
+        Assert.Single(f.Starts); Assert.DoesNotContain(f.Wire.Commands, c => c.Command == "stop");
     }
     [Fact]
-    public async Task ContinuouslyActiveApplicationKeepsRoutePastThirtySeconds()
+    public async Task ActiveApplicationCannotHoldAConnectionAfterWindowsSwitchesAway()
     {
-        await using var f = await Fixture.Create();
+        await using var f = await Fixture.Create(); f.Monitor.Select(true);
         f.Monitor.Publish(f.Monitor.Snapshot with { Sessions = [new("endpoint-1", "music", 12345, true)] });
         f.Start(); await Until(() => f.Gates.Any(c => c.Params.Boolean("open") == true));
-        f.Time.Advance(TimeSpan.FromMinutes(30)); await f.FlushVolume();
-        Assert.Single(f.Starts); Assert.DoesNotContain(f.Wire.Commands, c => c.Command == "stop");
+        f.Monitor.Select(false); await Until(() => f.Wire.Commands.Any(c => c.Command == "stop"));
+        f.Time.Advance(TimeSpan.FromMinutes(30)); await Task.Delay(20);
+        Assert.Single(f.Starts); Assert.False(f.Controller.Status.GateOpen);
     }
     [Fact]
     public async Task SessionCreatedDuringInitialEnumerationIsRetainedAndShortActiveEdgeSurvivesCoalescing()
@@ -483,7 +485,8 @@ public sealed class NativeOutputControllerTests
         Assert.False(sessions.TakeSnapshot()[0].ObservedActive);
         await using var f = await Fixture.Create();
         f.Monitor.Publish(f.Monitor.Snapshot with { Sessions = snapshot }); f.Start();
-        await Until(() => f.Starts.Count == 1);
+        await Task.Delay(20); Assert.Empty(f.Starts);
+        f.Monitor.Select(true); await Until(() => f.Starts.Count == 1);
     }
     [Theory]
     [InlineData(false)]
@@ -628,19 +631,19 @@ public sealed class NativeOutputControllerTests
     }
 
     [Fact]
-    public async Task ExhaustedTransientSessionRetriesWaitAndRecoverWithoutTerminatingNativeOutput()
+    public async Task TransientSessionFailureWaitsAndRecoversWithoutTerminatingNativeOutput()
     {
         await using var f = await Fixture.Create(timing: SessionTiming.Default with { Retry = TimeSpan.Zero });
         f.Wire.StartError = new { @event = "error", code = "network_timeout", message = "HomePod did not answer", retryable = true };
         f.Monitor.Select(true); f.Start();
-        await Until(() => f.Starts.Count == 6 && f.Session.Snapshot.State == PlaybackState.Error);
+        await Until(() => f.Starts.Count == 1 && f.Session.Snapshot.State == PlaybackState.Error);
         f.Time.Advance(TimeSpan.FromMilliseconds(150));
-        await Until(() => f.Controller.Status.State == PlaybackState.Idle || f.Run!.IsCompleted);
+        await Until(() => f.Logs.Any(line => line.Contains("retry scheduled")) || f.Run!.IsCompleted);
         Assert.False(f.Run!.IsCompleted);
         f.Wire.StartError = null;
-        f.Time.Advance(TimeSpan.FromMilliseconds(999)); await Task.Delay(20); Assert.Equal(6, f.Starts.Count);
+        f.Time.Advance(TimeSpan.FromMilliseconds(999)); await Task.Delay(20); Assert.Single(f.Starts);
         f.Time.Advance(TimeSpan.FromMilliseconds(1));
-        await Until(() => f.Starts.Count == 7 && f.Gates.Any(command => command.Params.Boolean("open") == true));
+        await Until(() => f.Starts.Count == 2 && f.Gates.Any(command => command.Params.Boolean("open") == true));
         f.Wire.Event(f.StreamId, new { @event = "first_send", first_send_qpc_ns = 123 });
         await Until(() => f.Controller.Status.TransportReady);
         Assert.Equal(0, f.Monitor.PhysicalMuteCalls);
@@ -655,18 +658,18 @@ public sealed class NativeOutputControllerTests
         var count = 0;
         foreach (var seconds in new[] { 1, 2 })
         {
-            count += 6;
+            count++;
             await Until(() => f.Starts.Count == count && f.Controller.Status.State == PlaybackState.Error);
             f.Time.Advance(TimeSpan.FromMilliseconds(150));
-            await Until(() => f.Controller.Status.State == PlaybackState.Idle || f.Run!.IsCompleted);
+            await Until(() => f.Logs.Count(line => line.Contains("retry scheduled")) == count || f.Run!.IsCompleted);
             Assert.False(f.Run!.IsCompleted);
             f.Time.Advance(TimeSpan.FromMilliseconds(seconds * 1000 - 1)); await Task.Delay(20);
             Assert.Equal(count, f.Starts.Count);
             f.Time.Advance(TimeSpan.FromMilliseconds(1));
         }
-        count += 6; await Until(() => f.Starts.Count == count && f.Controller.Status.State == PlaybackState.Error);
+        count++; await Until(() => f.Starts.Count == count && f.Controller.Status.State == PlaybackState.Error);
         f.Time.Advance(TimeSpan.FromMilliseconds(150));
-        await Until(() => f.Controller.Status.State == PlaybackState.Idle || f.Run!.IsCompleted);
+        await Until(() => f.Logs.Count(line => line.Contains("retry scheduled")) == count || f.Run!.IsCompleted);
         f.Monitor.Select(false); f.Wire.StartError = null;
         f.Time.Advance(TimeSpan.FromMinutes(1)); await Task.Delay(20); Assert.Equal(count, f.Starts.Count);
         Assert.False(f.Run!.IsCompleted);
@@ -785,6 +788,14 @@ public sealed class NativeOutputControllerTests
             return f;
         }
         public void Start() => Run = Controller.RunAsync(_ => { Interlocked.Increment(ref Resolutions); return Found ? Receiver : null; }, Stop.Token);
+        public async Task RetryRouteAsync()
+        {
+            var previous = Logs.Count(line => line.Contains("retry scheduled"));
+            await Until(() => Session.Snapshot.State == PlaybackState.Error);
+            Time.Advance(TimeSpan.FromMilliseconds(150));
+            await Until(() => Logs.Count(line => line.Contains("retry scheduled")) > previous);
+            Time.Advance(TimeSpan.FromSeconds(1));
+        }
         public async Task FlushVolume()
         {
             var db = Monitor.Snapshot.Volume.Db - .1;

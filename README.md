@@ -61,6 +61,8 @@ The update preserves device calibration, timing records, Windows volume controls
 
 ## Compatibility
 
+**Known issue in the published Preview 4:** the background can exit after an engine-stop failure, leaving a selected HomePod output silent. The current development build adds persistent supervision driven by Windows output selection. Long-idle and sleep/wake hardware validation of that change is still pending; the published download does not include it yet.
+
 | Environment | Preview status |
 |---|---|
 | Windows 10 Pro 22H2, build 19045, x64 + one HomePod mini on software 27.0 | Normal-music recovery checked; build-specific scope below |
