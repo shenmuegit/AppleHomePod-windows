@@ -51,6 +51,23 @@ internal static class NativeSetupSmoke
             if (!Descendants(window).OfType<TextBlock>().Any(text => text.Text.Contains(L.Get("Select a HomePod to connect."), StringComparison.Ordinal)))
                 throw new InvalidOperationException("An empty device selection must keep an actionable message visible.");
             checks.Add("empty-selection-remains-visible");
+            var originalReceiver = platform.Receiver;
+            platform.Receiver = originalReceiver with { Model = "FutureSpeaker", SoftwareVersion = "99.4", Codecs = [0] };
+            platform.AdditionalReceiver = originalReceiver with { Id = "001122334455", Name = "Another HomePod" };
+            await flow.RefreshAsync(default); window.RefreshView();
+            var picker = (ListBox)window.FindName("ReceiverPicker");
+            var unlisted = picker.Items.Cast<ListBoxItem>().Single(item => ((Receiver)item.Tag).Id == originalReceiver.Id);
+            if (picker.Items.Count != 2) throw new InvalidOperationException("The picker check requires multiple discovered devices.");
+            if (!unlisted.IsEnabled) throw new InvalidOperationException("A transport preference cannot disable a connectable discovered receiver.");
+            await Capture("unlisted-receiver-choice", "Choose a HomePod to connect.");
+            picker.SelectedItem = unlisted;
+            Invoke("Connect"); await UntilIdle();
+            if (flow.Step != NativeSetupStep.Listening || !platform.Previewed)
+                throw new InvalidOperationException("Selecting an unlisted receiver must reach the connection preview.");
+            checks.Add("unlisted-receiver-can-be-selected-and-connected");
+            platform.Receiver = originalReceiver;
+            platform.AdditionalReceiver = null;
+            await flow.RefreshAsync(default); window.RefreshView();
             await flow.ConnectAsync(platform.Receiver, default); window.RefreshView();
             await Capture("listening", "Did you hear it?");
             var choices = Descendants(window).OfType<Button>().Select(button => button.Content).ToArray();
@@ -240,6 +257,7 @@ internal static class NativeSetupSmoke
         internal int PlayCount;
         internal Task? Playback;
         internal Exception? DiscoveryError;
+        internal Receiver? AdditionalReceiver;
         internal Receiver Receiver = new("9efd9099abd6", "da", "127.0.0.1")
             { Model = "AudioAccessory5,1", SoftwareVersion = "27.0", IsLeader = true, Codecs = [1] };
         private readonly EndpointIdentity _endpoint = new("simulated-output", "simulated-adapter", NativeBindingPolicy.HardwareId,
@@ -253,7 +271,8 @@ internal static class NativeSetupSmoke
             return Task.FromResult(new NativeSetupInspection(Installed, Installed, Installed ? live : null, stored, Completed));
         }
         public Task<IReadOnlyList<Receiver>> DiscoverAsync(CancellationToken cancellation) => DiscoveryError is { } error
-            ? Task.FromException<IReadOnlyList<Receiver>>(error) : Task.FromResult<IReadOnlyList<Receiver>>([Receiver]);
+            ? Task.FromException<IReadOnlyList<Receiver>>(error)
+            : Task.FromResult<IReadOnlyList<Receiver>>(AdditionalReceiver is { } additional ? [Receiver, additional] : [Receiver]);
         public Task<NativeDriverInstallOutcome> InstallDriverAsync(CancellationToken cancellation) { Installed = true; return Task.FromResult(NativeDriverInstallOutcome.VerificationRequired); }
         public Task PrepareOutputAsync(Receiver receiver, CancellationToken cancellation) { Configured = true; return Task.CompletedTask; }
         public Task PlayConfirmationAsync(CancellationToken cancellation) { AudioPlayed = true; PlayCount++; return Playback?.WaitAsync(cancellation) ?? Task.CompletedTask; }

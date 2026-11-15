@@ -107,9 +107,8 @@ public partial class NativeSetupWindow : Window
             ReceiverPicker.Items.Clear();
             foreach (var receiver in _flow.Receivers)
             {
-                var qualified = receiver.Online && receiver.PrefersNtpAlac;
-                var item = new ListBoxItem { Content = DisplayName(receiver.Name) + (qualified ? "" : " · " + L.Get("Not supported yet")),
-                    Tag = receiver, Padding = new(10), IsEnabled = qualified };
+                var item = new ListBoxItem { Content = DisplayName(receiver.Name),
+                    Tag = receiver, Padding = new(10), IsEnabled = receiver.CanConnect };
                 ReceiverPicker.Items.Add(item);
                 if (receiver.Id == previous) ReceiverPicker.SelectedItem = item;
             }
