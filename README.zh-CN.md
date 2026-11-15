@@ -9,20 +9,20 @@
 <p align="center"><a href="README.md">English</a> · <strong>简体中文</strong></p>
 
 <p align="center">
-  <a href="https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.4/AppleHome-0.2.0-366a8ee1d869.zip"><strong>下载 Windows 预览版</strong></a>
+  <a href="https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.5/AppleHome-0.2.0-6fc6482b1521.zip"><strong>下载 Windows 预览版</strong></a>
   &nbsp;·&nbsp; <a href="#开始使用">开始使用</a>
   &nbsp;·&nbsp; <a href="#兼容范围">兼容范围</a>
-  &nbsp;·&nbsp; <a href="https://github.com/shenmuegit/AppleHomePod-windows/releases/tag/v0.2.0-preview.4">版本说明</a>
+  &nbsp;·&nbsp; <a href="https://github.com/shenmuegit/AppleHomePod-windows/releases/tag/v0.2.0-preview.5">版本说明</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/shenmuegit/AppleHomePod-windows/releases/tag/v0.2.0-preview.4"><img src="https://img.shields.io/badge/release-0.2.0_preview_4-2563eb?style=flat-square" alt="版本：0.2.0 Preview 4"></a>
+  <a href="https://github.com/shenmuegit/AppleHomePod-windows/releases/tag/v0.2.0-preview.5"><img src="https://img.shields.io/badge/release-0.2.0_preview_5-2563eb?style=flat-square" alt="版本：0.2.0 Preview 5"></a>
   <a href="LICENSE-GPLv3"><img src="https://img.shields.io/badge/license-GPLv3%2B-555?style=flat-square" alt="许可：GPLv3 或更新版本"></a>
 </p>
 
 AppleHomePod 通过局域网，把电脑上的音乐、视频和系统声音发送到 HomePod。完成设置后，继续使用原来的播放器，通过 Windows 输出选择、音量和静音控件操作。
 
-> **预览版：**已验证 Windows 10 Pro 22H2（19045，x64）与单只 HomePod mini 27.0。其他 Windows 版本、HomePod 型号和立体声对尚未实机验证。
+> **Preview 5：**已验证 Windows 10 Pro 22H2（19045，x64）与单只 HomePod mini 27.2。其他组合可以尝试连接，尚未取得对应实机验证。
 
 <p align="center">
   <img src="docs/images/setup-confirmation.png" width="546" alt="AppleHome 中文安装向导：居中的 HomePod mini、再播放一次按钮，以及没听到和听到了两个确认按钮。">
@@ -39,65 +39,58 @@ AppleHomePod 通过局域网，把电脑上的音乐、视频和系统声音发�
 ## 开始使用
 
 1. 先在 Apple「家庭」App 中设置 HomePod，并让它与电脑连接同一局域网。电脑可以使用 Wi-Fi 或有线网络。
-2. [下载预览版 ZIP](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.4/AppleHome-0.2.0-366a8ee1d869.zip)，解压并打开 **`AppleHome.exe`**。应用为自包含版本，无需另装 .NET 或 Rust。
+2. [下载预览版 ZIP](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.5/AppleHome-0.2.0-6fc6482b1521.zip)，解压并打开 **`AppleHome.exe`**。应用为自包含版本，无需另装 .NET 或 Rust。
 3. 按向导完成音频驱动安装。Windows 要求管理员许可时按提示操作；若需要重启，先保存工作，重启后重新打开应用。
 4. 等待 HomePod 连接，然后确认是否听到声音。需要重听时，点击「再播放一次」。
 
-只有一只合格 HomePod 时会自动连接；有多只时选择目标设备。Windows 输出名称、首次播放输出和连接参数由向导配置。听到声音后点击「听到了」完成设置；没有出声时点击「没听到」检查并重试。
+只有一只连接信息有效的已发现 HomePod 时会自动连接；有多只时选择目标设备。Windows 输出名称、首次播放输出和连接参数由向导配置。听到声音后点击「听到了」完成设置；没有出声时点击「没听到」检查并重试。
 
-本发布包的完整首次安装流程，包括全新自动驱动安装与必要重启，仍待实机验证。当前播放验收使用已有合格驱动和设备记录。
+本构建的完整首次安装流程，包括全新自动驱动安装与必要重启，仍待实机验证。当前播放验收通过更新已有安装完成，使用有效的驱动、设备绑定和校准记录。
 
-**更新已有预览版：**重新打开向导会复用已安装程序。请按[中文更新说明](docs/first-run.md#已有预览安装)替换后台，保留已有合格设备记录。目前没有自动更新功能。
+**更新已有预览版：**重新打开向导会复用已安装程序。请按[中文更新说明](docs/first-run.md#已有预览安装)替换后台，沿用设备绑定和校准记录。目前没有自动更新功能。
 
-## Preview 4 的改进
+## Preview 5 的改进
 
-Windows 发现接口可能接受查询，却既不返回设备，也不报告错误。Preview 3 会反复重开同一个无响应的查询，因此 HomePod 在线时仍可能持续无声。Preview 4 在无结果维护期限到达后，自动切换到已有的托管 mDNS 实现。
+HomePod 升级固件后，原来正常的设备可能仍能被发现，却一直无声：程序把某个型号和固件的时钟偏好误当成播放许可。Preview 5 移除后台播放、首次连接、参考准备和设备列表中的型号／固件白名单。设备身份和连接信息有效后即可尝试连接，实际结果由协议握手与认证决定。
 
-- 切换只作用于对应发现接口，不要求填写 IP 或选择网卡。
-- 明确的权限错误与非法请求保留原有处理，身份、认证和设备资格校验继续有效。
-- 保留 Preview 3 的重连恢复、按设备保存的缓冲记录，以及按 Windows 显示语言自动切换的安装向导。
+- 时钟和编码偏好用于指导传输，不阻止其他型号或固件尝试播放；缓冲自动选择，记录按设备档案区分。
+- Windows 选择 HomePod 输出时，后台持续监督并恢复失败的发送引擎，切出才释放。空闲、暂停、静音或累计失败次数不会终止运行意图。
+- 继续提供 mDNS 自动切换，以及随系统显示语言选择的英文、简体中文和繁体中文向导。
 
-本次更新保留设备校准、缓冲记录、Windows 音量逻辑和现有安装界面。验证范围见[版本说明](docs/releases/v0.2.0-preview.4.md)（英文）。
+详细内容见[版本说明](docs/releases/v0.2.0-preview.5.md)（英文）与 [PR #2](https://github.com/shenmuegit/AppleHomePod-windows/pull/2)。
 
 ## 兼容范围
 
-当前源码允许连接信息有效的已发现设备尝试播放，不设置型号或固件白名单。时钟和编码偏好用于指导现有发送引擎，连接结果由实际握手与认证决定。历史型号／固件实测只用于缓冲适配，固件升级后不将旧档案的缓冲记录冒充新档案的实测结果。问题记录见 [Issue #1](https://github.com/shenmuegit/AppleHomePod-windows/issues/1)。
-
-公开下载的 Preview 4 早于此改动。下方实机结果描述对应发布构建，不作为当前源码的播放准入名单，也不能证明其他设备已经实测。
-
-11 月 15 日，当前源码候选也在同一台 Windows 10 x64 与报告固件为 27.2 的单只 mini 上完成正常音乐验收：用户确认声音连续、Windows 音量变化和至少 15 秒静音恢复均正常。详细记录见[兼容说明](docs/COMPATIBILITY.md)。
-
-**已发布 Preview 4 的已知问题：**引擎停止失败可能使整个后台退出，Windows 仍选择 HomePod 时会无声。当前开发版增加了由 Windows 输出选择驱动的常驻监督与引擎重建。此改动仍待过夜空闲及真实睡眠／唤醒实测，现有公开下载尚未包含该改动。
-
 | 环境 | 预览版状态 |
 |---|---|
-| Windows 10 Pro 22H2，19045，x64 + 单只 HomePod mini 27.0 | 已检查正常音乐恢复；具体构建的范围见下文 |
+| Windows 10 Pro 22H2，19045，x64 + 单只 HomePod mini 27.2 | Preview 5：用户确认正常音乐连续、Windows 音量变化和至少 15 秒静音恢复正常 |
+| 同一台电脑与 mini 27.0 | 属于早期构建记录，未作为 Preview 5 重新验收 |
 | Windows 10 其他构建；Windows 11 x64 | 尚未实机验证 |
-| HomePod 第 1、2 代；mini 其他固件 | 尚未验证，当前向导未放行这些设备档案 |
-| 立体声对、Apple TV 分组 | 尚未验证，当前向导未放行 |
+| HomePod 第 1、2 代；mini 其他固件 | 没有型号／固件白名单，实际兼容性尚待实机验证 |
+| 立体声对、Apple TV 分组 | 尚未验证，仍须满足发现、身份、拓扑和协议要求 |
 
-本构建在实际故障环境中完成检查：Windows DNS-SD 返回空设备列表，但直接 mDNS 能找到同一只合格 HomePod。安装后，后台自动切换来源、重新发现设备并恢复正常音乐；旁听者确认声音连续，观察中的发送和同步错误为 0。Windows 输出、音量、绑定和校准保持原值。
+允许尝试播放与已经实测兼容是两件事。移除白名单不代表所有 HomePod 或访问策略均已验证。11 月 15 日验收使用 mini 27.2，该会话协商后采用 250 ms 缓冲候选；这不是统一默认值，也不是声学延迟测量。固件变化后，不会把旧档案的缓冲记录当成新档案的已验证参考。
 
-**过夜空闲后再次播放尚未实机验证。** 此次故障发生在电脑开机后，静默检测仍沿用约 30 秒维护窗口，Windows 发现接口失效的系统触发因素尚未确定。本构建未重复手动音量／静音循环、30 分钟长播及持续视频同步，早期结果分别保留。
+**本发布包的过夜空闲恢复与真实睡眠／唤醒尚未实机验证。** 早期 30 分钟音乐与 5 分钟视频观察继续归属于原构建。先前监督候选的输出切回曾自动恢复，但首次等待较长，因此不承诺无缝切换。
 
-当前不承诺已测量的端到端延迟。Windows 11、断网恢复、其他家庭访问或 PIN 策略仍待实测。EXE 尚未签名，未提供自动更新。逐版本证据见[详细兼容记录](docs/COMPATIBILITY.md)。
+当前不承诺已测量的端到端延迟。断网恢复、其他家庭访问或 PIN 策略仍待实测。EXE 尚未签名，未提供自动更新。逐版本证据见[详细兼容记录](docs/COMPATIBILITY.md)。
 
 ## 下载与完整性校验
 
 | 文件 | 用途 |
 |---|---|
-| [Windows 预览版](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.4/AppleHome-0.2.0-366a8ee1d869.zip) | 应用、原始驱动包、许可和构建记录 |
-| [对应源码包](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.4/AppleHome-source-366a8ee1d869.zip) | 与发布二进制对应的源码和依赖锁文件 |
-| [中文安装指南](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.4/INSTALL.zh-CN.md) | 安装与已有预览版的更新方式 |
-| [SHA256SUMS.txt](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.4/SHA256SUMS.txt) | 发布附件的校验值 |
+| [Windows 预览版](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.5/AppleHome-0.2.0-6fc6482b1521.zip) | 应用、原始驱动包、许可和构建记录 |
+| [对应源码包](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.5/AppleHome-source-6fc6482b1521.zip) | 与发布二进制对应的源码和依赖锁文件 |
+| [中文安装指南](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.5/INSTALL.zh-CN.md) | 安装与已有预览版的更新方式 |
+| [SHA256SUMS.txt](https://github.com/shenmuegit/AppleHomePod-windows/releases/download/v0.2.0-preview.5/SHA256SUMS.txt) | 发布附件的校验值 |
 
 在 PowerShell 中计算下载文件的 SHA256，与同一 Release 的 `SHA256SUMS.txt` 对照：
 
 ```powershell
-Get-FileHash .\AppleHome-0.2.0-366a8ee1d869.zip -Algorithm SHA256
+Get-FileHash .\AppleHome-0.2.0-6fc6482b1521.zip -Algorithm SHA256
 ```
 
-发布标签 `v0.2.0-preview.4` 对应二进制源码提交 [`366a8ee`](https://github.com/shenmuegit/AppleHomePod-windows/commit/366a8ee1d8694c4148ae6d5e2fa8ecee63cb1f4d)。已安装修复版的 EXE 与对应归档保持原样，没有重新编译。归档中的文档保留构建时快照；当前安装步骤和验证范围以 Release 随附的指南和版本说明为准。
+发布标签 `v0.2.0-preview.5` 对应二进制源码提交 [`6fc6482`](https://github.com/shenmuegit/AppleHomePod-windows/commit/6fc6482b152188f29e37a9a7d55f8502ebec29ad)。已安装修复版的 EXE 与对应归档保持原样，没有重新编译。归档中的文档保留构建时快照；当前安装步骤和验证范围以 Release 随附的指南和版本说明为准。
 
 ## 构建与参与
 
