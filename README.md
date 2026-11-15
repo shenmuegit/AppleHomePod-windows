@@ -65,6 +65,8 @@ Current source permits discovered devices with valid connection details to attem
 
 The public Preview 4 download predates this change. Its hardware results below describe that binary; they are not an admission list for current source or proof that another device has been tested.
 
+On November 15, the current-source candidate was also verified on the same Windows 10 x64 PC with the standalone mini reporting firmware 27.2: the listener confirmed continuous normal music, Windows volume changes and recovery after at least 15 seconds of mute. The detailed record is in [compatibility notes](docs/COMPATIBILITY.md).
+
 **Known issue in the published Preview 4:** the background can exit after an engine-stop failure, leaving a selected HomePod output silent. The current development build adds persistent supervision driven by Windows output selection. Long-idle and sleep/wake hardware validation of that change is still pending; the published download does not include it yet.
 
 | Environment | Preview status |
