@@ -166,24 +166,19 @@ public sealed class NativeOutputController
             _waitingForReceiver = true;
         }
         var receiver = resolve(_binding.ReceiverId);
-        var metadataPending = receiver is not null && ReceiverIdentity.Normalize(receiver.Id) == _binding.ReceiverId && receiver.Online && receiver.Complete
-            && !receiver.IsGroup && receiver.StereoId.Length == 0 && receiver.GroupId.Length == 0
-            && receiver.Model is "" or "AudioAccessory5,1" && receiver.SoftwareVersion is "" or "27.0"
-            && (receiver.Codecs.Length == 0 || receiver.Codecs.Contains((byte)1))
-            && (receiver.Model.Length == 0 || receiver.SoftwareVersion.Length == 0 || !receiver.IsLeader);
-        if (receiver is null || ReceiverIdentity.Normalize(receiver.Id) == _binding.ReceiverId && !receiver.Online || metadataPending)
+        if (receiver is null || ReceiverIdentity.Normalize(receiver.Id) == _binding.ReceiverId && (!receiver.Online || !receiver.Complete))
         {
             if (_active)
             {
                 _connectRevision = _volume!.Revision;
                 await GainAsync(0).ConfigureAwait(false); await GateAsync(false, false, cancellation).ConfigureAwait(false);
                 await StopRouteAsync().ConfigureAwait(false); _waitingForReceiver = true;
-                _log?.Invoke("Native route paused while HomePod discovery is incomplete; waiting for qualified metadata.");
+                _log?.Invoke("Native route paused while HomePod discovery is incomplete; waiting for connection details.");
             }
             return;
         }
-        if (ReceiverIdentity.Normalize(receiver.Id) != _binding.ReceiverId || !receiver.Online || !receiver.Complete || !receiver.PrefersNtpAlac)
-            throw new InvalidOperationException("This receiver identity, firmware or group has not been qualified for native output.");
+        if (ReceiverIdentity.Normalize(receiver.Id) != _binding.ReceiverId || !receiver.CanConnect)
+            throw new InvalidOperationException("The discovered receiver does not match the bound identity or has invalid connection details.");
         if (!_active)
         {
             if (_retryAt is { } retry)

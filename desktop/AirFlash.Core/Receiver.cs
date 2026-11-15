@@ -7,9 +7,9 @@ public sealed record Receiver(string Id, string Name, string Address, int Port =
     public string Model { get; init; } = "";
     public string SoftwareVersion { get; init; } = "";
     public string GroupId { get; init; } = "";
-    // shortcut: only this standalone model/firmware has an audible baseline; expand after hardware qualification.
-    public bool PrefersNtpAlac => Model == "AudioAccessory5,1" && SoftwareVersion == "27.0" &&
-        IsLeader && !IsGroup && StereoId.Length == 0 && GroupId.Length == 0 &&
+    // This is a transport preference, never permission to attempt playback.
+    public bool PrefersNtpAlac => Model.StartsWith("AudioAccessory", StringComparison.Ordinal) &&
+        !IsGroup && StereoId.Length == 0 && GroupId.Length == 0 &&
         (Codecs.Length == 0 || Codecs.Contains((byte)1));
     public string StereoId { get; init; } = "";
     public string GroupName { get; init; } = "";
@@ -21,6 +21,8 @@ public sealed record Receiver(string Id, string Name, string Address, int Port =
     public string[] Aliases { get; init; } = [];
     public bool IsGroup => Members.Length > 0 || Id.StartsWith("stereo:", StringComparison.Ordinal);
     public bool Complete => !IsGroup || Members.Length == 2;
+    public bool CanConnect => ReceiverIdentity.IsBroadcast(Id) && Online && Complete
+        && !string.IsNullOrWhiteSpace(Address) && Port is >= 1 and <= 65535;
     public string Detail => IsGroup ? L.Format("HomePod stereo · {0}/2", Members.Length) : Model.Length > 0 ? Model : L.Get("AirFlash receiver");
     [JsonIgnore] public IEnumerable<Receiver> Peers => IsGroup ? Members : [this];
     public string TransportKey => string.Join(";", Peers.OrderBy(p => p.Address, StringComparer.Ordinal).ThenBy(p => p.Port).Select(p => $"{p.Address}:{p.Port}:{(IsGroup && p.IsLeader)}"));

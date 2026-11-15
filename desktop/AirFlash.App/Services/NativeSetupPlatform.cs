@@ -154,7 +154,7 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
             var current = ReceiverCatalog.Reconcile(values, new()).Receivers
                 .Where(r => r.Online && ReceiverIdentity.IsBroadcast(r.Id)).ToArray();
             Volatile.Write(ref _receivers, current);
-            if (current.Any(r => r.PrefersNtpAlac && (boundId is null || ReceiverIdentity.Normalize(r.Id) == boundId))) found.TrySetResult();
+            if (current.Any(r => r.CanConnect && (boundId is null || ReceiverIdentity.Normalize(r.Id) == boundId))) found.TrySetResult();
         };
         discovery.Failed += message => {
             AppPaths.Log("Setup HomePod discovery failed: " + message);
@@ -181,8 +181,8 @@ internal sealed class NativeSetupPlatform : INativeSetupPlatform
         if (!inspection.DriverInstalled || !inspection.RebootVerified || inspection.Endpoint is null)
             throw new InvalidOperationException("Finish the verified driver installation and its required restart before connecting.");
         if (inspection.Binding is { } existing) NativeSetupReferenceProbe.ValidateReceiver(existing, current);
-        else if (!current.PrefersNtpAlac || !current.Online)
-            throw new InvalidOperationException("This HomePod model, firmware or group has not been qualified for native output.");
+        else if (!current.CanConnect)
+            throw new InvalidOperationException("The selected HomePod is offline or its connection details are incomplete.");
         try
         {
             await AcquireLegacyGuardAsync().ConfigureAwait(false);

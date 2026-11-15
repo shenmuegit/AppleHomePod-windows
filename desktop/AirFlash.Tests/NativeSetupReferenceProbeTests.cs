@@ -9,6 +9,17 @@ public sealed class NativeSetupReferenceProbeTests
     private static Receiver Mini => new("AA:BB:CC:DD:EE:FF", "Living room", "homepod.local")
         { Model = "AudioAccessory5,1", SoftwareVersion = "27.0", IsLeader = true, Codecs = [1] };
 
+    [Fact]
+    public async Task ReferencePreparationLetsTheProtocolHandleAnUnlistedReceiver()
+    {
+        var receiver = Mini with { Model = "FutureSpeaker", SoftwareVersion = "99.4", IsLeader = false, Codecs = [0] };
+        await using var wire = new ProbeWire([Volume(), Complete()]);
+        Assert.Equal(38, await NativeSetupReferenceProbe.ReadAsync(wire, Binding, receiver, "192.0.2.12", default));
+        Assert.True(wire.Parameters.Boolean("handshake_only"));
+        Assert.Equal("ptp", wire.Parameters.Text("timing"));
+        Assert.Equal(0, Assert.Single(wire.Parameters.GetProperty("peers")[0].GetProperty("codecs").EnumerateArray()).GetInt32());
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData(100)]
@@ -95,9 +106,9 @@ public sealed class NativeSetupReferenceProbeTests
     }
 
     [Fact]
-    public async Task DifferentOrUnqualifiedReceiverIsRejectedBeforeOpeningAHandshake()
+    public async Task DifferentOfflineOrUnusableReceiverIsRejectedBeforeOpeningAHandshake()
     {
-        foreach (var receiver in new[] { Mini with { Id = "another-id" }, Mini with { SoftwareVersion = "26.0" }, Mini with { Online = false }, Mini with { GroupId = "group" } })
+        foreach (var receiver in new[] { Mini with { Id = "another-id" }, Mini with { Port = 0 }, Mini with { Online = false }, Mini with { Address = "" } })
         {
             await using var wire = new ProbeWire([]);
             await Assert.ThrowsAsync<InvalidOperationException>(() => NativeSetupReferenceProbe.ReadAsync(wire, Binding, receiver, "192.0.2.12", default));

@@ -56,14 +56,14 @@ public sealed class SessionTests
     private static double EqGain(EngineCommand command) => command.Parameters.GetProperty("equalizer").GetProperty("band_gains_db")[0].GetDouble();
     [Theory]
     [InlineData("AudioAccessory5,1", "27.0", true, "", "", true)]
-    [InlineData("AudioAccessory5,1", "26.5", true, "", "", false)]
-    [InlineData("AudioAccessory5,1", "27.1", true, "", "", false)]
-    [InlineData("AudioAccessory6,1", "27.0", true, "", "", false)]
-    [InlineData("AudioAccessory5,1", "", true, "", "", false)]
-    [InlineData("AudioAccessory5,1", "27.0", false, "", "", false)]
+    [InlineData("AudioAccessory5,1", "26.5", true, "", "", true)]
+    [InlineData("AudioAccessory5,1", "27.1", true, "", "", true)]
+    [InlineData("AudioAccessory6,1", "27.0", true, "", "", true)]
+    [InlineData("AudioAccessory5,1", "", true, "", "", true)]
+    [InlineData("AudioAccessory5,1", "27.0", false, "", "", true)]
     [InlineData("AudioAccessory5,1", "27.0", true, "pair", "", false)]
     [InlineData("AudioAccessory5,1", "27.0", true, "", "tv-group", false)]
-    public async Task VerifiedMiniSelectsNtpAlacWithoutChangingOtherProfiles(string model, string version, bool leader, string stereo, string group, bool ntpAlac)
+    public async Task TransportHintsSelectTimingAndCodecsWithoutFirmwareQualification(string model, string version, bool leader, string stereo, string group, bool ntpAlac)
     {
         var process = new FakeConnection();
         await using var controller = new SessionController(new FakeFactory(process), new FakeAudio(), timing: Fast);
@@ -107,12 +107,12 @@ public sealed class SessionTests
         var first = new FakeConnection(); var second = new FakeConnection(); var factory = new FakeFactory(first, second);
         var audio = new FakeAudio();
         await using var controller = new SessionController(factory, audio, timing: Fast);
-        var incomplete = Pod() with { Model = "AudioAccessory5,1", IsLeader = true, Codecs = [0, 1] };
+        var incomplete = Pod() with { IsLeader = true, Codecs = [0, 1] };
         var settings = Settings();
         await controller.StartAsync(incomplete, settings); await Until(() => controller.Snapshot.State == PlaybackState.Streaming);
         first.Emit("capture_metrics", metrics: new { last_audio_qpc_ns = 10 }); await Until(() => audio.Muted);
         audio.Muted = false;
-        var identified = incomplete with { SoftwareVersion = "27.0" };
+        var identified = incomplete with { Model = "AudioAccessory5,1", SoftwareVersion = "27.0" };
         await controller.UpdateReceiverAsync(identified, settings);
         await second.Started.Task.WaitAsync(TimeSpan.FromSeconds(1)); await Until(() => controller.Snapshot.State == PlaybackState.Streaming);
         Assert.Equal("ntp", second.Commands.Single(c => c.Command == "start").Parameters.GetProperty("timing").GetString());

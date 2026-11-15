@@ -8,9 +8,8 @@ public static class NativeSetupReferenceProbe
     {
         if (NativeBindingPolicy.ValidateStored(binding) is { } invalid) throw new InvalidOperationException(invalid);
         if (ReceiverIdentity.Normalize(receiver.Id) != ReceiverIdentity.Normalize(binding.ReceiverId)
-            || !ReceiverIdentity.IsBroadcast(receiver.Id) || !receiver.Online || !receiver.Complete || !receiver.PrefersNtpAlac
-            || receiver.Port is < 1 or > 65535)
-            throw new InvalidOperationException("Select the bound, online HomePod with a qualified standalone profile before calibration.");
+            || !receiver.CanConnect)
+            throw new InvalidOperationException("Select the bound, online HomePod with complete connection details before calibration.");
     }
 
     public static async Task<int> ReadAsync(IEngineConnection connection, NativeBinding binding, Receiver receiver,
@@ -24,8 +23,8 @@ public static class NativeSetupReferenceProbe
         timeout.CancelAfter(TimeSpan.FromSeconds(15));
         var session = Guid.NewGuid().ToString("N"); int? reference = null;
         await connection.SendAsync(session, "probe", new {
-            peers = new[] { new { host, port = receiver.Port, codecs = new[] { 1 } } },
-            source = "loopback", duration_ms = 1, gain = .1, timing = "ntp", sample_rate = 44100,
+            peers = new[] { new { host, port = receiver.Port, codecs = receiver.PrefersNtpAlac ? new[] { 1 } : receiver.Codecs.Select(code => (int)code).ToArray() } },
+            source = "loopback", duration_ms = 1, gain = .1, timing = receiver.PrefersNtpAlac ? "ntp" : "ptp", sample_rate = 44100,
             handshake_only = true, latency_policy = "negotiate", latency_ms = NativeLatencyAdaptation.VerifiedPreference(binding, receiver, 44100)
         }, timeout.Token).ConfigureAwait(false);
         for (var count = 0; count < 64; count++)
