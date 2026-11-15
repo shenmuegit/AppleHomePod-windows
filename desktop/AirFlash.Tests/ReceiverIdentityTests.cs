@@ -7,14 +7,14 @@ public sealed class ReceiverIdentityTests
 {
     [Theory]
     [InlineData("AudioAccessory5,1", "27.0", true, "", "", true)]
-    [InlineData("AudioAccessory6,1", "27.1", true, "", "", false)]
-    [InlineData("AudioAccessory5,1", "26.5", true, "", "", false)]
-    [InlineData("AudioAccessory5,1", "", true, "", "", false)]
-    [InlineData("AudioAccessory5,1", "27.0", false, "", "", false)]
+    [InlineData("AudioAccessory6,1", "27.1", true, "", "", true)]
+    [InlineData("AudioAccessory5,1", "26.5", true, "", "", true)]
+    [InlineData("AudioAccessory5,1", "", true, "", "", true)]
+    [InlineData("AudioAccessory5,1", "27.0", false, "", "", true)]
     [InlineData("AudioAccessory5,1", "27.0", true, "pair", "", false)]
     [InlineData("AudioAccessory5,1", "27.0", true, "", "tv-group", false)]
     [InlineData("AppleTV14,1", "27.0", true, "", "", false)]
-    public void DiscoveredMiniMetadataSelectsOnlyTheVerifiedNtpAlacProfile(string model, string version, bool leader, string stereo, string group, bool prefersNtpAlac)
+    public void DiscoverySuppliesTransportHintsWithoutAFirmwareAllowlist(string model, string version, bool leader, string stereo, string group, bool prefersNtpAlac)
     {
         var service = Service(model: model, stereo: stereo);
         var txt = service.Txt.ToDictionary(p => p.Key, p => p.Value);

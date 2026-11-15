@@ -244,7 +244,6 @@ internal static class NativeVolumeCalibration
         discovery.Failed+=error=>found.TrySetException(new IOException(error));
         discovery.Start();
         var selected=await found.Task.WaitAsync(TimeSpan.FromSeconds(8),cancellation).ConfigureAwait(false);
-        if (!selected.PrefersNtpAlac) throw new InvalidOperationException("This receiver profile has not been qualified for native output.");
         var addresses=await Dns.GetHostAddressesAsync(selected.Address,cancellation).ConfigureAwait(false);
         var address=addresses.FirstOrDefault(a=>a.AddressFamily==AddressFamily.InterNetwork)
             ?? throw new IOException("The bound receiver has no current IPv4 address.");
@@ -255,8 +254,8 @@ internal static class NativeVolumeCalibration
             WaveFileWriter.CreateWaveFile16(wav,signal.Take(TimeSpan.FromSeconds(5)));
             await using var engine=new ProcessEngineConnection(AppPaths.ExtractEngine(),AppPaths.Log);
             var session=Guid.NewGuid().ToString("N"); int? reference=null;
-            await engine.SendAsync(session,"probe",new { peers=new[]{new { host=address.ToString(),port=selected.Port,codecs=new[]{1} }},
-                source="wav",wav_path=wav,duration_ms=5000,latency_ms=ReferenceBufferMs,gain=1.0,sample_rate=44100,timing="ntp" },cancellation).ConfigureAwait(false);
+            await engine.SendAsync(session,"probe",new { peers=new[]{new { host=address.ToString(),port=selected.Port,codecs=selected.PrefersNtpAlac ? new[]{1} : selected.Codecs.Select(code => (int)code).ToArray() }},
+                source="wav",wav_path=wav,duration_ms=5000,latency_ms=ReferenceBufferMs,gain=1.0,sample_rate=44100,timing=selected.PrefersNtpAlac ? "ntp" : "ptp" },cancellation).ConfigureAwait(false);
             while (true)
             {
                 var item=await engine.ReadAsync(cancellation).ConfigureAwait(false) ?? throw new IOException("The reference probe exited before completion.");

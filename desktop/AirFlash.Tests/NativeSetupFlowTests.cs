@@ -5,6 +5,17 @@ namespace AirFlash.Tests;
 public sealed class NativeSetupFlowTests
 {
     [Fact]
+    public async Task AutomaticSetupLetsAnUnlistedReceiverTryTheTransport()
+    {
+        var receiver = Mini with { Model = "FutureSpeaker", SoftwareVersion = "99.4", IsLeader = false, Codecs = [0] };
+        var platform = new Fake { Receivers = [receiver] };
+        await using var flow = new NativeSetupFlow(platform);
+        await flow.StartAutomaticAsync(default);
+        Assert.Equal(NativeSetupStep.Listening, flow.Step);
+        Assert.Equal(receiver, platform.PreviewReceiver);
+    }
+
+    [Fact]
     public async Task DiscoveryFailureOffersSearchRecoveryWithoutExposingLegacyInstructions()
     {
         var platform = new Fake { Discover = _ => Task.FromException<IReadOnlyList<Receiver>>(
@@ -169,12 +180,12 @@ public sealed class NativeSetupFlowTests
     [InlineData("undiscovered")]
     [InlineData("endpoint-id")]
     [InlineData("offline")]
-    [InlineData("unqualified")]
-    public async Task OnlyDiscoveredQualifiedStableReceiverCanStart(string problem)
+    [InlineData("invalid-port")]
+    public async Task OnlyDiscoveredOnlineReceiverWithStableIdentityAndConnectionDetailsCanStart(string problem)
     {
         var receiver = problem switch {
             "undiscovered" => Mini with { Id = "001122334455" }, "endpoint-id" => Mini with { Id = "192.0.2.10:7000" },
-            "offline" => Mini with { Online = false }, _ => Mini with { SoftwareVersion = "26.0" }
+            "offline" => Mini with { Online = false }, _ => Mini with { Port = 0 }
         };
         var platform = new Fake { Receivers = problem == "undiscovered" ? [Mini] : [receiver] };
         await using var flow = new NativeSetupFlow(platform); await flow.RefreshAsync(default); await flow.ConnectAsync(receiver, default);

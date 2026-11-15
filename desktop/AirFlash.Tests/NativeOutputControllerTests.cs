@@ -5,6 +5,24 @@ namespace AirFlash.Tests;
 
 public sealed class NativeOutputControllerTests
 {
+    [Theory]
+    [InlineData("AudioAccessory5,1", "27.2", true)]
+    [InlineData("AudioAccessory99,1", "99.4", true)]
+    [InlineData("FutureSpeaker", "1.0", false)]
+    [InlineData("", "", false)]
+    public async Task FirmwareUpgradeCanStartTheSelectedOutputWithoutAPlaybackAllowlist(string model, string firmware, bool ntp)
+    {
+        await using var f = await Fixture.Create(bufferMs: null);
+        f.Receiver = f.Receiver with { Model = model, SoftwareVersion = firmware };
+        f.Monitor.Select(true); f.Start();
+        await Until(() => f.Run!.IsCompleted || f.Gates.Any(command => command.Params.Boolean("open") == true));
+        Assert.False(f.Run!.IsCompleted, f.Run.Exception?.GetBaseException().Message);
+        var start = f.Starts.Last().Params;
+        Assert.Equal(ntp ? "ntp" : "ptp", start.Text("timing"));
+        Assert.Equal(1, Assert.Single(start.GetProperty("peers")[0].GetProperty("codecs").EnumerateArray()).GetInt32());
+        Assert.True(f.Controller.Status.GateOpen);
+    }
+
     [Fact]
     public async Task ReceiverRefreshInvalidatesReadyBeforeAwaitingSessionRestart()
     {
@@ -540,13 +558,13 @@ public sealed class NativeOutputControllerTests
         Assert.Single(f.Starts); Assert.Equal(0, f.Monitor.PhysicalMuteCalls);
     }
     [Fact]
-    public async Task BindingInvalidationAndUnsupportedProfileStopWithoutPhysicalFallback()
+    public async Task BindingInvalidationAndWrongReceiverStopWithoutPhysicalFallback()
     {
         await using var f = await Fixture.Create(); f.Monitor.Select(true); f.Start(); await Until(() => f.Starts.Count == 1);
         f.Monitor.Publish(f.Monitor.Snapshot with { Generation = 2, BindingValid = false });
         await Assert.ThrowsAsync<InvalidDataException>(() => f.Run!);
         Assert.Contains(f.Wire.Commands, c => c.Command == "stop"); Assert.Equal(0, f.Monitor.PhysicalMuteCalls);
-        await using var unsupported = await Fixture.Create(); unsupported.Receiver = unsupported.Receiver with { SoftwareVersion = "27.1" }; unsupported.Monitor.Select(true); unsupported.Start();
+        await using var unsupported = await Fixture.Create(); unsupported.Receiver = unsupported.Receiver with { Id = "different-receiver" }; unsupported.Monitor.Select(true); unsupported.Start();
         await Assert.ThrowsAsync<InvalidOperationException>(() => unsupported.Run!); Assert.Empty(unsupported.Starts);
     }
     [Fact]
@@ -579,7 +597,7 @@ public sealed class NativeOutputControllerTests
         await Until(() => f.Starts.Count == 2);
         Assert.Equal("127.0.0.2", f.Starts.Last().Params.GetProperty("peers")[0].Text("host"));
         Assert.Equal(2, f.Starts.Last().Params.Integer("capture_epoch"));
-        f.Receiver = f.Receiver with { SoftwareVersion = "27.1" }; f.Time.Advance(TimeSpan.FromSeconds(1));
+        f.Receiver = f.Receiver with { Id = "different-receiver" }; f.Time.Advance(TimeSpan.FromSeconds(1));
         await Assert.ThrowsAsync<InvalidOperationException>(() => f.Run!);
         Assert.Equal(2, f.Starts.Count);
     }
@@ -604,7 +622,7 @@ public sealed class NativeOutputControllerTests
         Assert.DoesNotContain(f.Wire.Commands, c => c.Session == next && c.Command == "set_device_volume");
     }
     [Theory]
-    [InlineData("metadata")]
+    [InlineData("incomplete-pair")]
     [InlineData("offline")]
     [InlineData("missing")]
     public async Task DiscoveryRefreshAfterLongIdleWaitsAndRecoversWithoutExiting(string unavailable)
@@ -615,7 +633,7 @@ public sealed class NativeOutputControllerTests
         f.Time.Advance(TimeSpan.FromHours(8)); await f.FlushVolume();
         Assert.Single(f.Starts);
         f.Found = unavailable != "missing";
-        f.Receiver = unavailable == "offline" ? complete with { Online = false } : complete with { SoftwareVersion = "" };
+        f.Receiver = unavailable == "offline" ? complete with { Online = false } : complete with { Members = [complete] };
         f.Time.Advance(TimeSpan.FromMilliseconds(250));
         await Until(() => !f.Controller.Status.GateOpen || f.Run!.IsCompleted);
         f.Time.Advance(TimeSpan.FromMinutes(5));
@@ -694,29 +712,15 @@ public sealed class NativeOutputControllerTests
     [InlineData("firmware")]
     [InlineData("model")]
     [InlineData("leader")]
-    public async Task PartialDiscoveryWaitsWithoutStartingPrerollOrExpiringWhileSelected(string missing)
+    public async Task OptionalDiscoveryMetadataCannotPreventASelectedReceiverFromStarting(string missing)
     {
-        await using var f = await Fixture.Create(); var complete = f.Receiver;
+        await using var f = await Fixture.Create(bufferMs: null); var complete = f.Receiver;
         f.Receiver = missing switch { "firmware" => complete with { SoftwareVersion = "" }, "model" => complete with { Model = "" }, _ => complete with { IsLeader = false } };
-        f.Monitor.Select(true); f.Start(); await Until(() => f.Resolutions > 0);
-        using (var pending = new CancellationTokenSource(50))
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => f.Run!.WaitAsync(pending.Token));
-        Assert.Empty(f.Starts);
-        Assert.DoesNotContain(f.Wire.Commands, command => command.Command == "begin_capture");
-        f.Time.Advance(TimeSpan.FromMilliseconds(1750));
-        await Until(() => f.Resolutions > 1);
-        Assert.DoesNotContain(f.Wire.Commands, command => command.Command == "begin_capture");
-        f.Time.Advance(TimeSpan.FromHours(8));
-        using (var pending = new CancellationTokenSource(50))
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => f.Run!.WaitAsync(pending.Token));
-        f.Monitor.Select(false); f.Time.Advance(TimeSpan.FromSeconds(3)); f.Monitor.Select(true);
-        await Until(() => f.Resolutions > 2 || f.Run!.IsCompleted);
-        using (var pending = new CancellationTokenSource(50))
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => f.Run!.WaitAsync(pending.Token));
-        f.Receiver = complete; f.Time.Advance(TimeSpan.FromMilliseconds(250));
-        await Until(() => f.Gates.Any(c => c.Params.Boolean("open") == true));
-        Assert.Single(f.Starts);
-        Assert.Single(f.Wire.Commands, command => command.Command == "begin_capture");
+        f.Monitor.Select(true); f.Start();
+        await Until(() => f.Run!.IsCompleted || f.Gates.Any(c => c.Params.Boolean("open") == true));
+        Assert.False(f.Run!.IsCompleted, f.Run.Exception?.GetBaseException().Message);
+        Assert.Equal(250, f.Session.Snapshot.TargetLatency);
+        Assert.True(f.Controller.Status.GateOpen);
     }
     [Fact]
     public async Task CaptureTimingReportsInitialAndBoundedSteadySamples()

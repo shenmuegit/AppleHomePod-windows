@@ -29,7 +29,7 @@ public static class NativeLatencyAdaptation
             || sampleRate is not (44100 or 48000)
             || ReceiverIdentity.Normalize(binding.ReceiverId) != ReceiverIdentity.Normalize(receiver.Id)) return null;
         if (binding.VerifiedBufferProfile is null)
-            return receiver.PrefersNtpAlac && sampleRate == 44100 ? binding.VerifiedBufferMs : null;
+            return HasModelBaseline(receiver, sampleRate) ? binding.VerifiedBufferMs : null;
         return binding.VerifiedBufferProfile.Equals(ProfileKey(receiver, sampleRate), StringComparison.OrdinalIgnoreCase)
             ? binding.VerifiedBufferMs : null;
     }
@@ -37,7 +37,7 @@ public static class NativeLatencyAdaptation
     public static NativeLatencyChoice SelectUnreported(Receiver receiver, int sampleRate, int? recoveryCandidateMs = null)
     {
         var profile = ProfileKey(receiver, sampleRate);
-        var model = receiver.PrefersNtpAlac && sampleRate == 44100;
+        var model = HasModelBaseline(receiver, sampleRate);
         // shortcut: this model/firmware has a normal-music baseline; add profiles only after hardware qualification.
         var initial = model ? 100 : 250;
         if (recoveryCandidateMs is { } candidate && (candidate < initial || candidate > 2000))
@@ -61,6 +61,9 @@ public static class NativeLatencyAdaptation
         if (VerifiedPreference(binding, receiver, sampleRate) is not null) return binding;
         return binding with { VerifiedBufferMs = appliedMs, VerifiedBufferProfile = ProfileKey(receiver, sampleRate) };
     }
+
+    private static bool HasModelBaseline(Receiver receiver, int sampleRate) => receiver.PrefersNtpAlac && receiver.IsLeader
+        && receiver.Model == "AudioAccessory5,1" && receiver.SoftwareVersion == "27.0" && sampleRate == 44100;
 
     private static bool Valid(Receiver receiver) => !string.IsNullOrWhiteSpace(receiver.Id)
         && new[] { receiver.Id, receiver.Model, receiver.SoftwareVersion, receiver.GroupId, receiver.StereoId }

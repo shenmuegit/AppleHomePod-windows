@@ -67,7 +67,7 @@ public sealed class NativeSetupFlow(INativeSetupPlatform platform) : IAsyncDispo
         Step = NativeSetupStep.Receiver;
         if (_automatic)
         {
-            var candidates = Receivers.Where(Qualified).Where(receiver => inspection.Binding is not { } bound
+            var candidates = Receivers.Where(receiver => receiver.CanConnect).Where(receiver => inspection.Binding is not { } bound
                 || SameReceiver(receiver.Id, bound.ReceiverId)).ToArray();
             if (candidates.Length == 1) await ConnectCoreAsync(candidates[0], token).ConfigureAwait(false);
         }
@@ -80,8 +80,8 @@ public sealed class NativeSetupFlow(INativeSetupPlatform platform) : IAsyncDispo
         var inspection = await platform.InspectAsync(token).ConfigureAwait(false); token.ThrowIfCancellationRequested();
         if (!CheckInspection(inspection)) return;
         var selected = Receivers.FirstOrDefault(candidate => SameReceiver(candidate.Id, receiver.Id));
-        if (selected is null || !Qualified(selected))
-            throw new InvalidOperationException("Select a discovered, online HomePod with a qualified standalone profile.");
+        if (selected?.CanConnect != true)
+            throw new InvalidOperationException("Select a discovered, online HomePod with complete connection details.");
         SelectedReceiver = selected;
         if (inspection.Binding is { } binding && !SameReceiver(binding.ReceiverId, selected.Id))
             throw new InvalidOperationException("An existing output is bound to another HomePod. Remove that binding before replacing it.");
@@ -162,8 +162,6 @@ public sealed class NativeSetupFlow(INativeSetupPlatform platform) : IAsyncDispo
     }
     private bool Block(string error) { Error = DiagnosticText.Protect(error); Step = NativeSetupStep.Blocked; return false; }
     private static bool SameReceiver(string left, string right) => ReceiverIdentity.Normalize(left) == ReceiverIdentity.Normalize(right);
-    private static bool Qualified(Receiver receiver) => ReceiverIdentity.IsBroadcast(receiver.Id) && receiver.Online
-        && receiver.Complete && receiver.PrefersNtpAlac && receiver.Port is >= 1 and <= 65535;
     private static bool SameEndpoint(EndpointIdentity left, EndpointIdentity right)
         => string.Equals(left.EndpointId, right.EndpointId, StringComparison.OrdinalIgnoreCase)
         && string.Equals(left.AdapterInstanceId, right.AdapterInstanceId, StringComparison.OrdinalIgnoreCase)

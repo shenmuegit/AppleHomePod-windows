@@ -9,6 +9,20 @@ public sealed class NativeLatencyAdaptationTests
     private static NativeBinding Binding => NativeEngineHostTests.Binding with { ReceiverId = Mini.Id };
 
     [Fact]
+    public void ANewFirmwareCanConnectWithoutInheritingTheOldAudibleLatencyBaseline()
+    {
+        var upgraded = Mini with { SoftwareVersion = "27.2" };
+        var previous = Binding with { VerifiedBufferMs = 100, VerifiedBufferProfile = NativeLatencyAdaptation.ProfileKey(Mini, 44100) };
+        Assert.Null(NativeLatencyAdaptation.VerifiedPreference(previous, upgraded, 44100));
+        Assert.Null(NativeLatencyAdaptation.VerifiedPreference(previous with { VerifiedBufferProfile = null }, upgraded, 44100));
+        var candidate = NativeLatencyAdaptation.SelectUnreported(upgraded, 44100);
+        Assert.Equal(250, candidate.Milliseconds);
+        Assert.Equal("compatibility_fallback", candidate.Source);
+        var confirmed = NativeLatencyAdaptation.ConfirmReference(previous, upgraded, 44100, 175);
+        Assert.Equal(175, NativeLatencyAdaptation.VerifiedPreference(confirmed, upgraded, 44100));
+    }
+
+    [Fact]
     public void UnreportedQualifiedMiniStartsFromItsModelHintWithoutInventingAReference()
     {
         var choice = NativeLatencyAdaptation.SelectUnreported(Mini, 44100);
@@ -154,10 +168,9 @@ public sealed class NativeLatencyAdaptationTests
         => Assert.Throws<ArgumentOutOfRangeException>(() => NativeLatencyAdaptation.ConfirmReference(Binding, Mini, 44100, applied));
 
     [Fact]
-    public void ConfirmationCannotAttachAReferenceToAnotherOrUnqualifiedReceiver()
+    public void ConfirmationRequiresTheBoundOnlineReceiverAndSupportedSampleRate()
     {
         Assert.Throws<InvalidOperationException>(() => NativeLatencyAdaptation.ConfirmReference(Binding, Changed("identity"), 44100, 100));
-        Assert.Throws<InvalidOperationException>(() => NativeLatencyAdaptation.ConfirmReference(Binding, Changed("firmware"), 44100, 100));
         Assert.Throws<InvalidOperationException>(() => NativeLatencyAdaptation.ConfirmReference(Binding, Mini with { Online = false }, 44100, 100));
         Assert.Throws<InvalidOperationException>(() => NativeLatencyAdaptation.ConfirmReference(Binding, Mini, 48000, 100));
     }
